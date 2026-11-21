@@ -6,7 +6,7 @@ export const bytes = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(n < 102
 export const stored = (file) => file.parts.reduce((sum, part) => sum + part[2], 0);
 
 const cache = new Map();
-/** Asks whatever is serving this site, a gateway or the extension, about Dash Platform. */
+/** Asks whatever is serving this site, the visitor's own browser or a gateway, about Dash Platform. */
 export function host(path) {
   if (!cache.has(path)) cache.set(path, fetch(HOST + path).then((response) => response.json()));
   return cache.get(path);
@@ -23,7 +23,7 @@ function set(id, text, title) {
 }
 
 const SERVED = {
-  gateway: 'A gateway read this from Dash Platform and proved it',
+  gateway: 'A gateway read this from Dash Platform and checked the proof',
   browser: 'Your browser read this from Dash Platform and checked the proof',
 };
 
@@ -49,7 +49,7 @@ async function fill() {
     if (stamp) stamp.dataset.state = 'proved';
     document.documentElement.dataset.served = r.servedBy;
   } catch {
-    set('r-by', 'The record shows when a Dash Sites gateway or the extension serves this site');
+    set('r-by', 'The record shows when this site is opened through a Dash Sites gateway');
     set('r-block', 'not read');
     if (stamp) stamp.dataset.state = 'failed';
   }

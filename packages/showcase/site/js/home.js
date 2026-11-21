@@ -10,5 +10,5 @@ Promise.all([drawPlan(document.getElementById('plan'), readout), record()])
     count.title = `${plan.documents} file chunks, ${manifestDocuments} manifest, the site record and the name`;
   })
   .catch(() => {
-    readout.textContent = 'The plan is drawn from the site manifest, which a Dash Sites gateway or the extension provides.';
+    readout.textContent = 'The plan is drawn from the site manifest, which is available when the site is opened through a Dash Sites gateway.';
   });

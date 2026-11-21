@@ -26,7 +26,7 @@
 <ol class="flow">
   <li>
     <div class="what">You ask for <span class="live" data-name>p2p.dash</span></div>
-    <p>Type the name with the extension installed, or open it through a gateway such as <code>p2p.id.dashhq.org</code>.</p>
+    <p>Open it through a gateway host such as <code>p2p.id.dashhq.org</code>, or type the name itself with the extension installed.</p>
   </li>
   <li>
     <div class="what">Name document <span class="live" id="r-domain">…</span><br>owned by <span class="live" id="r-owner">…</span></div>
@@ -46,21 +46,23 @@
   </li>
 </ol>
 
-<h2>Two ways to open a .dash site</h2>
+<h2>Who does the checking</h2>
 <div class="cols two">
   <div>
-    <h3>With the extension, by its real name</h3>
-    <p>Type <code>p2p.dash</code>. The extension takes you to a gateway of your choice, then asks Dash Platform itself and compares the answer, and the page's bytes, with what the gateway served.</p>
-    <figure>
-      <img class="shot" src="/img/extension.png" alt="The Dash Sites extension reporting a site as verified against Dash Platform" width="341" height="424" loading="lazy">
-      <figcaption>The extension reporting what it proved</figcaption>
-    </figure>
+    <h3>Your browser, in any browser</h3>
+    <p>Open <code>p2p.id.dashhq.org</code>. The gateway sends one small page, the same for every name, and a verifier. From then on your browser talks to Dash Platform nodes itself: it proves the name and the site record, fetches the files, checks each hash, and shows the site.</p>
+    <p class="via-browser">That is how you are reading this page. The server that sent the verifier has not seen or sent a byte of it.</p>
+    <p class="via-gateway">You are reading a copy rendered by the gateway instead, which it does for crawlers, link previews and command-line tools.</p>
+    <p>After the first visit the site keeps working even if the gateway disappears.</p>
   </div>
   <div>
-    <h3>In any browser, through a gateway</h3>
-    <p>Open <code>p2p.id.dashhq.org</code>. The gateway does the same lookups and checks, then serves the files over ordinary HTTPS. Nothing to install, and you are trusting the gateway to pass on what it read.</p>
-    <p class="via-gateway">That is how you are reading this page now. <a href="https://github.com/PastaPastaPasta/dash-sites/releases/latest" target="_blank" rel="noopener">Get the extension</a> to drop the gateway.</p>
-    <p>Anyone can run a gateway. The software is open source and holds no keys: it can only read what owners published.</p>
+    <h3>The extension, by its real name</h3>
+    <p>With the extension you type <code>p2p.dash</code> and land on the same verifier. Its button asks Dash Platform a second time, with its own copy of the SDK, and compares the answer with the page in front of you.</p>
+    <figure>
+      <img class="shot" src="/img/extension.png" alt="The Dash Sites extension reporting p2p.dash as verified against Dash Platform" width="340" height="420" loading="lazy">
+      <figcaption>The extension reporting what it proved</figcaption>
+    </figure>
+    <p style="margin-top:14px"><a href="https://github.com/PastaPastaPasta/dash-sites/releases/latest" target="_blank" rel="noopener">Get the extension</a></p>
   </div>
 </div>
 
@@ -69,6 +71,14 @@
   <div>
     <h3>The network's validators</h3>
     <p>A proof shows that a quorum of Dash masternodes signed the state a record belongs to. That is the same guarantee Dash Platform gives every application built on it.</p>
+  </div>
+  <div>
+    <h3>The list of validator keys</h3>
+    <p>To check a signature the verifier needs the quorums' public keys. Today the Dash SDK downloads them from a service run by Dash Core Group. Whoever controls that service is trusted not to lie about the keys.</p>
+  </div>
+  <div>
+    <h3>The verifier you were sent</h3>
+    <p>The checking code comes from the gateway's host. It is open source, the same file for every name, and its hash is published, but a dishonest host could send a different one. Running it from your own machine removes that.</p>
   </div>
   <div>
     <h3>The owner of the name</h3>

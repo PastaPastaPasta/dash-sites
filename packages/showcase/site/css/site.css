@@ -105,7 +105,8 @@ footer a{margin-left:auto}
 .flow .what::before{content:counter(step) ". ";color:var(--line)}
 .flow p{margin:0;font-size:16px}
 pre{font:14px/1.5 var(--mono);border:1.5px solid var(--paper);background:var(--deep);padding:14px 16px;margin:14px 0;overflow-x:auto;max-width:44rem}
-[data-served=extension] .via-gateway,[data-served=gateway] .via-extension,html:not([data-served]) .via-extension{display:none}
+.via-browser,.via-gateway{display:none}
+[data-served=browser] .via-browser,[data-served=gateway] .via-gateway{display:block}
 .steps{list-style:none;padding:0;margin:0;counter-reset:step}
 .steps>li{counter-increment:step;border-top:1.5px solid var(--paper);padding:26px 0 30px}
 .steps>li>h2{margin:0 0 .4em}
