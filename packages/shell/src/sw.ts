@@ -78,7 +78,7 @@ self.addEventListener('fetch', (event) => {
   }
   event.respondWith(
     host
-      .respond({ url, navigation: request.mode === 'navigate', range: request.headers.get('range'), waitUntil: (work) => event.waitUntil(work) })
+      .respond({ url, navigation: request.mode === 'navigate', topLevel: request.destination === 'document', range: request.headers.get('range'), waitUntil: (work) => event.waitUntil(work) })
       .then((reply) => toResponse(reply, request))
       .catch((error: unknown) => {
         console.error('dash-sites', error);

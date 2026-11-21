@@ -422,11 +422,14 @@ queries for browsers.
   - The previous owner's code cannot suppress this by deleting or corrupting
     the saved value: unknown means reset, and none of its code runs in a
     fresh worker before the check.
-  - Residual: a page of the previous owner's site that is open at the moment
-    of the transfer keeps running until the worker's next check (within 30 s
-    of the next request) navigates it away. In that window it can still
-    write to storage, including the saved epoch. Closing that fully needs an
-    origin per owner epoch rather than per name.
+  - Residual: a page of the previous owner's site that is still open when
+    the name is transferred. A well-behaved one is navigated to the reset
+    page by the worker's next check. A hostile one can avoid that: it stops
+    making requests so the browser stops the worker, watches Platform for
+    the transfer itself, and writes the new epoch into the saved state, so
+    the next worker sees nothing to reset. For as long as that tab stays
+    open the reset can be skipped. This cannot be fixed within one origin;
+    it needs an origin per owner epoch rather than per name.
   - Not cleared: permissions the visitor granted the origin (notifications,
     camera, location), which script cannot revoke, and cookies a site set
     with a `Path` other than `/`, which script can only see from under that

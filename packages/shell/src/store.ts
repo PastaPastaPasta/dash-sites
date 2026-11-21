@@ -5,6 +5,8 @@ const CACHE = 'dash-sites-host';
 export const SHELL_CACHE = 'dash-sites-shell';
 const STATE = '/state';
 const chunkKey = (hash: string): string => `/chunk/${hash}`;
+/** A step of a wipe that has not finished by then is left behind rather than holding up every request. */
+const WIPE_LIMIT_MS = 5000;
 
 /** Keeps host state and verified chunks in the origin's Cache Storage. */
 export class BrowserStore implements Store {
@@ -45,7 +47,7 @@ export class BrowserStore implements Store {
       },
       async () => {
         const root = (await navigator.storage.getDirectory()) as FileSystemDirectoryHandle & { keys(): AsyncIterable<string> };
-        for await (const name of root.keys()) await root.removeEntry(name, { recursive: true });
+        for await (const name of root.keys()) await root.removeEntry(name, { recursive: true }).catch(() => undefined);
       },
       async () => {
         const buckets = (navigator as { storageBuckets?: { keys(): Promise<string[]>; delete(name: string): Promise<void> } }).storageBuckets;
@@ -57,6 +59,7 @@ export class BrowserStore implements Store {
         for (const cookie of (await cookies?.getAll()) ?? []) await cookies?.delete(cookie.name);
       },
     ];
-    await Promise.all(steps.map((step) => step().catch(() => undefined)));
+    const limit = new Promise((resolve) => setTimeout(resolve, WIPE_LIMIT_MS));
+    await Promise.all(steps.map((step) => Promise.race([step().catch(() => undefined), limit])));
   }
 }

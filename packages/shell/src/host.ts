@@ -58,6 +58,8 @@ export interface HostRequest {
   url: URL;
   /** A page load, as opposed to a request made by a page. */
   navigation: boolean;
+  /** A page load in a tab or window of its own, not in a frame. Defaults to `navigation`. */
+  topLevel?: boolean;
   range?: string | null;
   /** Keeps the worker alive for work that outlives the reply. */
   waitUntil?: (work: Promise<unknown>) => void;
@@ -93,7 +95,7 @@ const resetPage = (nonce: string): string =>
 <script>
 try{localStorage.clear();sessionStorage.clear();}catch(e){}
 document.cookie.split(';').forEach(function(c){document.cookie=c.split('=')[0].trim()+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';});
-function back(){var to='/';try{var u=new URL(decodeURIComponent(location.hash.slice(1)),location.origin);if(u.origin===location.origin)to=u.pathname+u.search;}catch(e){}location.replace(to);}
+function back(){var to=location.origin+'/';try{var u=new URL(decodeURIComponent(location.hash.slice(1)),location.origin);if(u.origin===location.origin)to=u.href;}catch(e){}location.replace(to);}
 fetch('${RESET_PATH}?done=${nonce}',{cache:'no-store'}).then(back,back);
 </script>`,
   );
@@ -156,8 +158,9 @@ export class SiteHost {
 
   /**
    * The page that clears what only a page can reach. It is served, with a one-time code, only to
-   * a page load while a reset is pending, and the reset stays pending until that page reports back
-   * with the code, so a link to this address cannot erase a site's data and a frame cannot dismiss it.
+   * a top-level page load while a reset is pending, and the reset stays pending until that page
+   * reports back with the code, so a link to this address cannot erase a site's data and a frame can
+   * neither dismiss the reset nor replace the code of one in progress.
    */
   private async reset(request: HostRequest): Promise<Reply> {
     const done = request.url.searchParams.get('done');
@@ -169,8 +172,8 @@ export class SiteHost {
       }
       return { status: 204, headers: { 'Cache-Control': 'no-store' } };
     }
-    if (!request.navigation || !this.saved?.resetPending) return { status: 302, headers: { Location: '/', 'Cache-Control': 'no-store' } };
-    this.resetNonce = (this.options.nonce ?? (() => crypto.randomUUID()))();
+    if (!(request.topLevel ?? request.navigation) || !this.saved?.resetPending) return { status: 302, headers: { Location: '/', 'Cache-Control': 'no-store' } };
+    this.resetNonce ??= (this.options.nonce ?? (() => crypto.randomUUID()))();
     return {
       status: 200,
       headers: {
@@ -244,7 +247,10 @@ export class SiteHost {
       return this.page(503, 'Unavailable', 'Dash Platform could not be reached', `Your browser could not get a proved answer about <code>${dashName}</code> from Dash Platform. Reload to try again.`);
     }
     if (url.pathname === RESET_PATH) return this.reset(request);
-    if (request.navigation && this.saved?.resetPending) return { status: 302, headers: { Location: resetLocation(url), 'Cache-Control': 'no-store' } };
+    if (request.navigation && this.saved?.resetPending) {
+      if (request.topLevel ?? true) return { status: 302, headers: { Location: resetLocation(url), 'Cache-Control': 'no-store' } };
+      return this.page(503, 'Unavailable', `${dashName} cannot be shown in a frame yet`, 'Open it in a tab of its own first, so that data left in this browser by a previous owner of the name can be removed.');
+    }
     if (url.pathname.startsWith(HOST_API)) {
       const path = url.pathname.slice(HOST_API.length);
       if (path === 'site.json') return this.json(200, { ...describeResolution(resolution, this.options.network), servedBy: 'browser' });

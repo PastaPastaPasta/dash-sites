@@ -256,10 +256,27 @@ describe('site host', () => {
     await h.publish('alice-id', 'one');
     await h.get('/');
     const page = await h.get(RESET_PATH);
-    expect(await resetTarget(page, '#%2Fblog%2F%3Fx%3D1')).toBe('/blog/?x=1');
-    for (const hash of ['#%2F%5Cevil.example', '#%2F%2Fevil.example', '#%2F%09%2Fevil.example', '#https%3A%2F%2Fevil.example%2F', '#javascript%3Aalert(1)', '#%E0%A4%A', '']) {
-      expect(await resetTarget(page, hash), hash).toBe('/');
+    const origin = 'https://alice.id.example.org';
+    expect(await resetTarget(page, '#%2Fblog%2F%3Fx%3D1')).toBe(`${origin}/blog/?x=1`);
+    const hostile = ['#%2F%5Cevil.example', '#%2F%2Fevil.example', '#%2F.%2F%2Fevil.example%2Fx', '#%2F..%2F%2Fevil.example', `#${encodeURIComponent(`${origin}//evil.example`)}`, '#%2F%09%2Fevil.example', '#https%3A%2F%2Fevil.example%2F', '#javascript%3Aalert(1)', '#%E0%A4%A', ''];
+    for (const hash of hostile) {
+      const target = await resetTarget(page, hash);
+      expect(target.startsWith(`${origin}/`), `${hash} -> ${target}`).toBe(true);
+      expect(new URL(target).origin, hash).toBe(origin);
     }
+  });
+
+  it('does not let a frame take part in a reset', async () => {
+    const h = new Harness();
+    await h.publish('alice-id', 'one');
+    const framed = await h.get('/', { topLevel: false });
+    expect(framed.status).toBe(503);
+    expect(body(framed)).toContain('cannot be shown in a frame yet');
+    const page = await h.get(RESET_PATH);
+    expect((await h.get(RESET_PATH, { topLevel: false })).status).toBe(302);
+    expect(body(await h.get(RESET_PATH))).toBe(body(page));
+    await h.get(`${RESET_PATH}?done=nonce-1`);
+    expect((await h.get('/', { topLevel: false })).status).toBe(200);
   });
 
   it('never serves a stored chunk that does not match its hash', async () => {
