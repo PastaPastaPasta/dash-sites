@@ -1,5 +1,11 @@
 import type { Manifest } from './manifest.js';
 
+/**
+ * Paths under every site that its host answers itself: `site.json` (the proved record),
+ * `manifest.json`, and `resolve/<name>`. A site reads them the same way from the shell or a gateway.
+ */
+export const HOST_API = '/.well-known/dash/';
+
 export type ServeDecision =
   | { kind: 'file'; path: string; status: 200 | 404 }
   | { kind: 'redirect'; location: string }
@@ -16,7 +22,6 @@ export function decodePathname(pathname: string): string | undefined {
     } catch {
       return undefined;
     }
-    // eslint-disable-next-line no-control-regex
     if (segment === '.' || segment === '..' || /[\u0000-\u001f\u007f\\/]/.test(segment)) return undefined;
     segments.push(segment);
   }

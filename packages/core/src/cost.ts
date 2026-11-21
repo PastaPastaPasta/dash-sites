@@ -2,9 +2,12 @@ import type { SiteBundle } from './pack.js';
 
 export const CREDITS_PER_DASH = 100_000_000_000n;
 
-/** Measured on protocol 14: storage and processing per stored byte, and the fixed part of one chunk document. */
-const CREDITS_PER_BYTE = 27_700n;
-const CREDITS_PER_CHUNK = 140_000_000n;
+/**
+ * Measured on testnet, protocol 14: a chunk of 100 bytes cost 26.5 M credits and one of 14,700
+ * bytes 427 to 431 M; creating a site record cost about 59 M. The constants round those up.
+ */
+const CREDITS_PER_BYTE = 27_500n;
+const CREDITS_PER_CHUNK = 28_000_000n;
 const CREDITS_PER_SITE_RECORD = 60_000_000n;
 
 /** Upper estimate, in credits, of publishing `hashes` (the chunks not stored yet) and the site record. */

@@ -116,22 +116,8 @@ ReadWritePaths=/var/lib/dash-sites
 WantedBy=multi-user.target
 UNIT
 
-cat > /etc/caddy/Caddyfile <<CADDY
-{
-	auto_https off
-	admin localhost:2019
-}
-
-https://${DOMAIN}, https://*.${DOMAIN} {
-	tls /etc/dash-sites/tls/fullchain.pem /etc/dash-sites/tls/key.pem
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:8080
-}
-
-http://${DOMAIN}, http://*.${DOMAIN} {
-	redir https://{host}{uri} 308
-}
-CADDY
+mkdir -p /opt/dash-sites/shell
+touch /etc/dash-sites/denied.caddy
 
 ufw allow 22/tcp >/dev/null
 ufw allow 80/tcp >/dev/null
@@ -141,4 +127,4 @@ ufw --force enable >/dev/null
 
 systemctl daemon-reload
 systemctl enable --now dash-sites-cert.timer >/dev/null
-echo "provisioned ${DOMAIN}"
+echo "provisioned ${DOMAIN}; run deploy.sh to install the shell, the gateway process and the Caddy configuration"

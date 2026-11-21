@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Publish your own .dash site</title>
+<meta name="description" content="Check a name, see what storage costs, and publish a site to Dash Platform from your browser.">
+<link rel="icon" href="/img/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/publish.js"></script>
+</head>
+<body>
+<div class="sheet">
+<header class="top">
+  <a class="name" href="/">p2p<b>.dash</b></a>
+  <nav aria-label="Pages">
+    <a href="/how/">How it works</a>
+    <a href="/inside/">Check it yourself</a>
+    <a href="/publish/" aria-current="page">Publish your own</a>
+  </nav>
+</header>
+<main>
+<h1>Publish your own</h1>
+<p class="lede">You need a Dash Platform identity with a little credit. The builder does the rest in your browser, and your key never leaves it.</p>
+
+<ol class="steps">
+  <li>
+    <h2>Pick a name</h2>
+    <p>Names are 3 to 63 letters, digits and hyphens. Type one to see whether it is free.</p>
+    <div class="field">
+      <input type="text" id="name" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="alice" aria-label="Name to check" maxlength="63">
+    </div>
+    <p class="answer" id="answer" aria-live="polite"></p>
+  </li>
+  <li>
+    <h2>Know the cost</h2>
+    <p>Storage is paid once, when you publish, at about 0.3 DASH per megabyte. Text and code are compressed first.</p>
+    <input type="range" id="size" min="0" max="100" value="52" aria-label="Site size">
+    <p class="big" id="cost">0.075 DASH</p>
+    <p class="answer" id="cost-note"></p>
+  </li>
+  <li>
+    <h2>Publish</h2>
+    <p>Write a page with the builder's editor, or upload a folder or zip of a site you already have. You will see the exact fee before anything is sent.</p>
+    <div class="cta">
+      <a class="button solid" href="https://dash-sites.thepasta.org/" target="_blank" rel="noopener">Open the builder</a>
+      <a class="button" href="https://github.com/PastaPastaPasta/dash-sites/releases/latest" target="_blank" rel="noopener">Get the extension</a>
+    </div>
+    <p style="margin-top:22px">Prefer a terminal? The same publisher is a command:</p>
+    <pre>dash-sites publish ./my-site --name alice</pre>
+  </li>
+</ol>
+</main>
+<footer>
+  <span>owner <b class="live" id="f-owner">…</b></span>
+  <span>revision <b class="live" id="f-revision">…</b></span>
+  <span>read at block <b class="live" id="f-block">…</b></span>
+  <a href="https://github.com/PastaPastaPasta/dash-sites" target="_blank" rel="noopener">Source on GitHub</a>
+</footer>
+</div>
+</body>
+</html>

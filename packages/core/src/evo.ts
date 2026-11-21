@@ -200,6 +200,16 @@ async function signingKey(sdk: EvoSDK, credentials: Credentials, levels: string[
   return { identityKey: usable, signer };
 }
 
+/** Reads until `done` accepts the answer: a node can answer from the block before a write. */
+async function settled<T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> {
+  let value = await read();
+  for (let attempt = 0; attempt < 12 && !done(value); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    value = await read();
+  }
+  return value;
+}
+
 function field(data: Uint8Array, index: number): Uint8Array | undefined {
   const start = index * CHUNK_FIELD_SIZE;
   return start < data.length ? data.subarray(start, start + CHUNK_FIELD_SIZE) : undefined;
@@ -285,7 +295,10 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
       const properties = { domainId: base58.decode(domain.id), name: `${domain.normalizedLabel}.${DASH_TLD}`, content };
       await this.sdk.documents.create({ document: this.newDocument('site', properties), ...this.key });
     }
-    const stored = (await this.getSite(this.identityId, domain.id)).value;
+    const stored = await settled(
+      async () => (await this.getSite(this.identityId, domain.id)).value,
+      (site) => site?.content === content,
+    );
     if (!stored || stored.content !== content) throw new Error('the site record was not stored');
     return stored;
   }
@@ -322,7 +335,10 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     const identity = await this.sdk.identities.fetch(this.identityId);
     if (!identity) throw new Error(`identity ${this.identityId} does not exist`);
     await this.sdk.dpns.registerName({ label, identity, ...this.key });
-    const domain = (await this.getDomain(normalizeLabel(label))).value;
+    const domain = await settled(
+      async () => (await this.getDomain(normalizeLabel(label))).value,
+      (found) => found !== undefined,
+    );
     if (!domain || domain.ownerId !== this.identityId) throw new Error(`${label}.dash was not registered to this identity`);
     return domain;
   }

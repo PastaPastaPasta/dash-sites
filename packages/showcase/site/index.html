@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>p2p.dash: a website stored on Dash Platform</title>
+<meta name="description" content="A website with no web host. Every file of p2p.dash is a document on Dash Platform, published under a name its owner controls.">
+<link rel="icon" href="/img/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/home.js"></script>
+</head>
+<body>
+<div class="sheet">
+<header class="top">
+  <a class="name" href="/">p2p<b>.dash</b></a>
+  <nav aria-label="Pages">
+    <a href="/how/">How it works</a>
+    <a href="/inside/">Check it yourself</a>
+    <a href="/publish/">Publish your own</a>
+  </nav>
+</header>
+<main>
+<section class="hero">
+  <div>
+    <h1>This website is <span class="n" id="count">a stack of</span> documents</h1>
+    <p class="lede">Every page, font and script of <span data-name>p2p.dash</span> is stored on Dash Platform, a network run by thousands of masternodes, under a name its owner controls with a key. There is no hosting account, no domain registrar and no server to keep running.</p>
+    <div class="cta">
+      <a class="button solid" href="/publish/">Publish your own</a>
+      <a class="button" href="/how/">How it works</a>
+    </div>
+  </div>
+  <div>
+    <aside class="block" aria-label="This site's record on Dash Platform">
+      <dl>
+        <div><dt>Name</dt><dd id="r-name">…</dd></div>
+        <div><dt>Network</dt><dd id="r-network">…</dd></div>
+        <div class="wide"><dt>Owner identity</dt><dd id="r-owner">…</dd></div>
+        <div class="wide"><dt>Name document</dt><dd id="r-domain">…</dd></div>
+        <div class="wide"><dt>Site document</dt><dd id="r-site">…</dd></div>
+        <div><dt>Revision</dt><dd id="r-revision">…</dd></div>
+        <div><dt>Published</dt><dd id="r-published">…</dd></div>
+        <div class="wide"><dt>Content</dt><dd id="r-content">…</dd></div>
+      </dl>
+      <p class="stamp" id="stamp"><span id="r-by">Reading the record from Dash Platform</span><b id="r-block"></b></p>
+    </aside>
+    <p class="legend"><b>Yellow</b> was read from Dash Platform as this page loaded.</p>
+  </div>
+</section>
+
+<section>
+  <h2>The whole site, to scale</h2>
+  <p>Each room is one file, drawn in proportion to the space it takes on the network. Select a room to open the file.</p>
+  <svg class="plan" id="plan" viewBox="0 0 1000 600" role="group" aria-label="Floor plan of this site's files"></svg>
+  <p class="readout" id="readout">Drawing the plan from the site's manifest</p>
+</section>
+
+<section>
+  <h2>What is different here</h2>
+  <div class="cols">
+    <div>
+      <h3>The name is the account</h3>
+      <p><span data-name>p2p.dash</span> is a Dash Platform name owned by an identity. Whoever holds that identity's key decides what the name shows. When a name changes hands, the previous owner's site stops being served.</p>
+    </div>
+    <div>
+      <h3>The files are on the network</h3>
+      <p>Files are cut into pieces of up to 14.7 KB and stored as documents, each addressed by its SHA-256 hash. You pay a storage fee once, when you publish. There is no monthly bill.</p>
+    </div>
+    <div>
+      <h3>You can check what you were served</h3>
+      <p>Dash Platform answers with cryptographic proofs, so a reader does not have to trust the node it asked. Your own browser checks them: the gateway only supplies the code that does it. <a href="/inside/">Run the check yourself.</a></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Put a site on your own name</h2>
+  <p>Write a page in the builder or upload a folder. A site the size of this one costs a few hundredths of a DASH to store.</p>
+  <div class="cta"><a class="button solid" href="/publish/">See what it takes</a></div>
+</section>
+</main>
+<footer>
+  <span>owner <b class="live" id="f-owner">…</b></span>
+  <span>revision <b class="live" id="f-revision">…</b></span>
+  <span>read at block <b class="live" id="f-block">…</b></span>
+  <a href="https://github.com/PastaPastaPasta/dash-sites" target="_blank" rel="noopener">Source on GitHub</a>
+</footer>
+</div>
+</body>
+</html>

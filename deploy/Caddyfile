@@ -1,0 +1,58 @@
+# Rendered by deploy.sh from the host's gateway.env: __DOMAIN__ is the gateway domain and
+# __RESERVED_HOSTS__ its RESERVED_LABELS as hosts.
+{
+	auto_https off
+	admin localhost:2019
+}
+
+(dash_sites_tls) {
+	tls /etc/dash-sites/tls/fullchain.pem /etc/dash-sites/tls/key.pem
+}
+
+# The bare domain: landing page, name lookups and the health check.
+https://__DOMAIN__ {
+	import dash_sites_tls
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080
+}
+
+# Every name gets the same static shell. The visitor's browser reads the site from Dash
+# Platform and verifies it; this server holds no site content on that path.
+https://*.__DOMAIN__ {
+	import dash_sites_tls
+	import /etc/dash-sites/denied.caddy
+
+	# Hosts that are not names (RESERVED_LABELS) never get the shell.
+	@reserved host __RESERVED_HOSTS__
+	handle @reserved {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Clients that cannot run the shell (crawlers, link previews, command-line tools)
+	# get a copy rendered by the gateway process instead.
+	@rendered header_regexp User-Agent (?i)(bot|crawl|spider|slurp|preview|facebookexternalhit|embed|whatsapp|telegram|discord|slack|curl|wget|httpie|python|go-http|okhttp|lighthouse)
+	handle @rendered {
+		encode zstd gzip
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	handle {
+		root * /opt/dash-sites/shell
+		header X-Content-Type-Options nosniff
+		header Referrer-Policy strict-origin-when-cross-origin
+		header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		@verifier path /dash-sites-verifier-*.js
+		header @verifier Cache-Control "public, max-age=31536000, immutable"
+		@mutable not path /dash-sites-verifier-*.js
+		header @mutable Cache-Control "no-cache"
+		try_files {path} /index.html
+		encode zstd gzip
+		file_server {
+			precompressed br
+		}
+	}
+}
+
+http://__DOMAIN__, http://*.__DOMAIN__ {
+	redir https://{host}{uri} 308
+}

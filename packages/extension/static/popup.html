@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dash Sites</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+body{width:340px}
+header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+header img{width:20px;height:20px}
+header b{flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#state{padding:14px;border-bottom:1px solid var(--line)}
+#title{font-weight:650;font-size:15px;display:flex;align-items:center;gap:8px}
+#title::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--muted)}
+#state[data-kind=match] #title::before{background:var(--ok)}
+#state[data-kind=behind] #title::before{background:var(--warn)}
+#state[data-kind=mismatch] #title::before,#state[data-kind=error] #title::before{background:var(--bad)}
+#state[data-kind=checking] #title::before{animation:pulse 1s infinite alternate}
+@keyframes pulse{to{opacity:.25}}
+@media (prefers-reduced-motion:reduce){#state[data-kind=checking] #title::before{animation:none}}
+#detail{margin:6px 0 0;color:var(--muted)}
+#audit{margin:8px 0 0}
+#audit:empty{display:none}
+#audit[data-ok=true]{color:var(--ok)}
+#audit[data-ok=false]{color:var(--bad)}
+dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;padding:12px 14px}
+dl:empty{display:none}
+dt{color:var(--muted)}
+dd{margin:0;text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+form{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+footer{display:flex;justify-content:space-between;padding:0 14px 12px;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header><img src="icons/48.png" alt=""><b id="site">Dash Sites</b></header>
+<section id="state" data-kind="checking" aria-live="polite">
+  <div id="title">Checking…</div>
+  <p id="detail"></p>
+  <p id="audit"></p>
+</section>
+<dl id="facts"></dl>
+<form id="open"><input type="text" id="name" placeholder="alice.dash" autocapitalize="none" spellcheck="false" aria-label="Open a .dash name"><button>Open</button></form>
+<footer><span>Gateway: <span id="gateway" class="mono"></span></span><a id="options">Settings</a></footer>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

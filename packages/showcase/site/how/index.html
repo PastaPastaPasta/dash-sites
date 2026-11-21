@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How p2p.dash works</title>
+<meta name="description" content="From a name to a page: how a .dash site is looked up, proved and shown.">
+<link rel="icon" href="/img/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/how.js"></script>
+</head>
+<body>
+<div class="sheet">
+<header class="top">
+  <a class="name" href="/">p2p<b>.dash</b></a>
+  <nav aria-label="Pages">
+    <a href="/how/" aria-current="page">How it works</a>
+    <a href="/inside/">Check it yourself</a>
+    <a href="/publish/">Publish your own</a>
+  </nav>
+</header>
+<main>
+<h1>Name, record, files</h1>
+<p class="lede">A <code>.dash</code> site is three kinds of document on Dash Platform. Opening one means following them in order and checking each step.</p>
+
+<ol class="flow">
+  <li>
+    <div class="what">You ask for <span class="live" data-name>p2p.dash</span></div>
+    <p>Open it through a gateway host such as <code>p2p.id.dashhq.org</code>, or type the name itself with the extension installed.</p>
+  </li>
+  <li>
+    <div class="what">Name document <span class="live" id="r-domain">…</span><br>owned by <span class="live" id="r-owner">…</span></div>
+    <p>Names live in Dash Platform's name service, DPNS. The reader asks for the name's document and gets it with a proof signed by the network's validators. The document's owner is the only identity whose site will be shown.</p>
+  </li>
+  <li>
+    <div class="what">Site document <span class="live" id="r-site">…</span><br>revision <span class="live" id="r-revision">…</span>, content <span class="live" id="r-content">…</span></div>
+    <p>The owner keeps one site document per name. It holds a single line: the hash of the site's manifest. Publishing a new version replaces that line, and the revision goes up by one.</p>
+  </li>
+  <li>
+    <div class="what">Manifest: <span class="live" id="m-files">…</span> files in <span class="live" id="m-documents">…</span> chunk documents</div>
+    <p>The manifest lists every file with its type, size and SHA-256 hash, and says which chunks hold its bytes. Chunks are documents too, named by their own hash, so identical content is stored once.</p>
+  </li>
+  <li>
+    <div class="what">Files, checked against their hashes</div>
+    <p>The reader fetches the chunks a page needs, joins them, and compares the result with the hash in the manifest. Anything that does not match is refused rather than shown.</p>
+  </li>
+</ol>
+
+<h2>Who does the checking</h2>
+<div class="cols two">
+  <div>
+    <h3>Your browser, in any browser</h3>
+    <p>Open <code>p2p.id.dashhq.org</code>. The gateway sends one small page, the same for every name, and a verifier. From then on your browser talks to Dash Platform nodes itself: it proves the name and the site record, fetches the files, checks each hash, and shows the site.</p>
+    <p class="via-browser">That is how you are reading this page. The server that sent the verifier has not seen or sent a byte of it.</p>
+    <p class="via-gateway">You are reading a copy rendered by the gateway instead, which it does for crawlers, link previews and command-line tools.</p>
+    <p>After the first visit the site keeps working even if the gateway disappears.</p>
+  </div>
+  <div>
+    <h3>The extension, by its real name</h3>
+    <p>With the extension you type <code>p2p.dash</code> and land on the same verifier. Its button asks Dash Platform a second time, with its own copy of the SDK, and compares the answer with the page in front of you.</p>
+    <figure>
+      <img class="shot" src="/img/extension.png" alt="The Dash Sites extension reporting p2p.dash as verified against Dash Platform" width="340" height="420" loading="lazy">
+      <figcaption>The extension reporting what it proved</figcaption>
+    </figure>
+    <p style="margin-top:14px"><a href="https://github.com/PastaPastaPasta/dash-sites/releases/latest" target="_blank" rel="noopener">Get the extension</a></p>
+  </div>
+</div>
+
+<h2>What you still have to trust</h2>
+<div class="cols two">
+  <div>
+    <h3>The network's validators</h3>
+    <p>A proof shows that a quorum of Dash masternodes signed the state a record belongs to. That is the same guarantee Dash Platform gives every application built on it.</p>
+  </div>
+  <div>
+    <h3>The list of validator keys</h3>
+    <p>To check a signature the verifier needs the quorums' public keys. Today the Dash SDK downloads them from a service run by Dash Core Group. Whoever controls that service is trusted not to lie about the keys.</p>
+  </div>
+  <div>
+    <h3>The verifier you were sent</h3>
+    <p>The checking code comes from the gateway's host. It is open source, the same file for every name, and its hash is published, but a dishonest host could send a different one. Running it from your own machine removes that.</p>
+  </div>
+  <div>
+    <h3>The owner of the name</h3>
+    <p>Proofs show a site is what the owner published. They say nothing about whether the owner is honest. Treat a <code>.dash</code> site like any other site you have not visited before.</p>
+  </div>
+</div>
+</main>
+<footer>
+  <span>owner <b class="live" id="f-owner">…</b></span>
+  <span>revision <b class="live" id="f-revision">…</b></span>
+  <span>read at block <b class="live" id="f-block">…</b></span>
+  <a href="https://github.com/PastaPastaPasta/dash-sites" target="_blank" rel="noopener">Source on GitHub</a>
+</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+<meta name="robots" content="noindex">
+<title>Loading from Dash Platform</title>
+<style>/*STYLE*/
+.bar{height:3px;background:var(--line);overflow:hidden;margin:22px 0}
+.bar::after{content:"";display:block;height:100%;width:35%;background:var(--accent);animation:slide 1.4s ease-in-out infinite}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
+@media (prefers-reduced-motion:reduce){.bar::after{animation:none;width:100%}}
+.failed .bar{display:none}
+</style>
+</head>
+<body>
+<main>
+<div class="status">Dash Sites · __NETWORK__</div>
+<h1>Opening <span id="name">this site</span></h1>
+<p id="step">Your browser reads this site from Dash Platform and checks it itself. Starting the verifier.</p>
+<div class="bar"></div>
+<noscript><p>This site is checked in your browser, which needs JavaScript.</p></noscript>
+<footer>This page is the same for every name. It holds no site content: <a href="__SOURCE_URL__">how it works</a>.</footer>
+</main>
+<script>/*BOOT*/</script>
+</body>
+</html>

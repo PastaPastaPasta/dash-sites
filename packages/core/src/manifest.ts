@@ -46,7 +46,6 @@ export function isValidContentType(type: string): boolean {
 export function isValidPath(path: string): boolean {
   if (!path.startsWith('/') || path.length < 2) return false;
   if (utf8.encode(path).length > MAX_PATH_BYTES) return false;
-  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f\\?#%]/.test(path)) return false;
   return path
     .slice(1)

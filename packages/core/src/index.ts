@@ -8,6 +8,7 @@ export * from './manifest.js';
 export * from './mime.js';
 export * from './names.js';
 export * from './pack.js';
+export * from './pages.js';
 export * from './platform.js';
 export * from './publish.js';
 export * from './reader.js';

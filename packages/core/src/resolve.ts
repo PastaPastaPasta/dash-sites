@@ -47,3 +47,36 @@ export async function resolveName(reader: PlatformReader, input: string): Promis
   if (!content) return { status: 'unsupported', ...base, site: site.value };
   return { status: 'ok', ...base, site: site.value, content };
 }
+
+/**
+ * What a host tells a site about a name: the answer of `site.json` and `resolve/<name>` under
+ * `HOST_API`, the same whether a gateway or the visitor's own browser did the proving.
+ */
+export function describeResolution(resolution: Resolution, network: string): Record<string, unknown> {
+  if (resolution.status === 'invalid') return { status: 'invalid' };
+  const out: Record<string, unknown> = {
+    status: resolution.status,
+    network,
+    normalized: resolution.normalized,
+    proof: { height: resolution.meta.height, timeMs: resolution.meta.timeMs },
+  };
+  if (resolution.status === 'unregistered') return out;
+  out.name = `${resolution.canonicalLabel}.dash`;
+  out.ownerId = resolution.ownerId;
+  out.domainId = resolution.domain.id;
+  out.transferredAt = resolution.domain.transferredAt;
+  if (resolution.status === 'no-site') return out;
+  out.site = { id: resolution.site.id, revision: resolution.site.revision, updatedAt: resolution.site.updatedAt, content: resolution.site.content };
+  return out;
+}
+
+/** The proved facts a host attaches to every file of a site. The extension compares them with its own answer. */
+export function dashHeaders(resolution: Extract<Resolution, { status: 'ok' }>): Record<string, string> {
+  return {
+    'X-Dash-Name': `${resolution.canonicalLabel}.dash`,
+    'X-Dash-Owner': resolution.ownerId,
+    'X-Dash-Site-Revision': String(resolution.site.revision),
+    'X-Dash-Content': resolution.site.content,
+    'X-Dash-Proof-Height': String(resolution.meta.height),
+  };
+}

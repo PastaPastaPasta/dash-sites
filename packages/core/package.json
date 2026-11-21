@@ -21,13 +21,11 @@
   "files": [
     "dist"
   ],
-  "scripts": {
-    "build": "tsc -b"
-  },
   "dependencies": {
     "@dashevo/evo-sdk": "5.0.3",
     "@noble/hashes": "^1.6.1",
     "fflate": "^0.8.2",
     "@scure/base": "^1.2.1"
-  }
+  },
+  "sideEffects": false
 }
