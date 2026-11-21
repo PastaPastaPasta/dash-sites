@@ -3,6 +3,7 @@ import {
   CHUNK_SIZE,
   ContentError,
   decide,
+  describeResolution,
   HOST_API,
   loadManifest,
   ManifestError,
@@ -161,21 +162,8 @@ export function createGateway(options: GatewayOptions): RequestListener {
   });
 
   function describe(resolution: Resolution, domain: GatewayDomain): Record<string, unknown> {
-    if (resolution.status === 'invalid') return { status: 'invalid' };
-    const out: Record<string, unknown> = {
-      status: resolution.status,
-      network: config.network,
-      normalized: resolution.normalized,
-      proof: { height: resolution.meta.height, timeMs: resolution.meta.timeMs },
-    };
-    if (resolution.status === 'unregistered') return out;
-    out.name = `${resolution.canonicalLabel}.dash`;
-    out.ownerId = resolution.ownerId;
-    out.domainId = resolution.domain.id;
-    out.transferredAt = resolution.domain.transferredAt;
-    out.url = `${siteOrigin(domain, resolution.canonicalLabel)}/`;
-    if (resolution.status === 'no-site') return out;
-    out.site = { id: resolution.site.id, revision: resolution.site.revision, updatedAt: resolution.site.updatedAt, content: resolution.site.content };
+    const out = describeResolution(resolution, config.network);
+    if ('canonicalLabel' in resolution) out.url = `${siteOrigin(domain, resolution.canonicalLabel)}/`;
     return out;
   }
 

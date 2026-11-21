@@ -10,6 +10,7 @@ coverage/
 packages/extension/build/
 packages/builder/dist/
 packages/showcase/dist/
+packages/shell/dist/
 dist-types/
 *.zip
 *.crx

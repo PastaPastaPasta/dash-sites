@@ -2,14 +2,38 @@
   "manifest_version": 3,
   "name": "Dash Sites",
   "version": "0.1.0",
-  "description": "Open websites published on Dash Platform names: type alice.dash, and check what you are shown against Dash Platform.",
-  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "action": { "default_popup": "popup.html", "default_title": "Dash Sites" },
-  "options_ui": { "page": "options.html", "open_in_tab": true },
-  "omnibox": { "keyword": "dash" },
-  "background": { "service_worker": "background.js", "type": "module" },
-  "permissions": ["declarativeNetRequest", "storage", "webNavigation", "activeTab"],
-  "host_permissions": ["*://*.dash/*"],
+  "description": "Open websites published on Dash Platform names: type alice.dash. Your browser fetches the site from Dash Platform and verifies it.",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Dash Sites"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "omnibox": {
+    "keyword": "dash"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "webNavigation",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.dash/*"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

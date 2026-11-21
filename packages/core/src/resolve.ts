@@ -47,3 +47,25 @@ export async function resolveName(reader: PlatformReader, input: string): Promis
   if (!content) return { status: 'unsupported', ...base, site: site.value };
   return { status: 'ok', ...base, site: site.value, content };
 }
+
+/**
+ * What a host tells a site about a name: the answer of `site.json` and `resolve/<name>` under
+ * `HOST_API`, the same whether a gateway or the visitor's own browser did the proving.
+ */
+export function describeResolution(resolution: Resolution, network: string): Record<string, unknown> {
+  if (resolution.status === 'invalid') return { status: 'invalid' };
+  const out: Record<string, unknown> = {
+    status: resolution.status,
+    network,
+    normalized: resolution.normalized,
+    proof: { height: resolution.meta.height, timeMs: resolution.meta.timeMs },
+  };
+  if (resolution.status === 'unregistered') return out;
+  out.name = `${resolution.canonicalLabel}.dash`;
+  out.ownerId = resolution.ownerId;
+  out.domainId = resolution.domain.id;
+  out.transferredAt = resolution.domain.transferredAt;
+  if (resolution.status === 'no-site') return out;
+  out.site = { id: resolution.site.id, revision: resolution.site.revision, updatedAt: resolution.site.updatedAt, content: resolution.site.content };
+  return out;
+}

@@ -98,7 +98,7 @@ export function labelForUrl(tabUrl: string, gateway: Gateway): string | undefine
   return match.label;
 }
 
-/** What the gateway said about the site it served, from its `X-Dash-*` headers. */
+/** What the page was told about the site it shows, from the `X-Dash-*` headers of its own file. */
 export interface Claims {
   owner?: string;
   content?: string;
@@ -120,7 +120,7 @@ export type Verdict =
   | { kind: 'mismatch'; detail: string }
   | { kind: 'none'; detail: string };
 
-/** Compares what the gateway served with what Dash Platform proves. */
+/** Compares what the page was served with what the extension itself proves from Dash Platform. */
 export function compare(claims: Claims, resolution: Resolution): Verdict {
   const serves = claims.content !== undefined;
   switch (resolution.status) {
@@ -128,24 +128,24 @@ export function compare(claims: Claims, resolution: Resolution): Verdict {
       return { kind: 'none', detail: 'This is not a valid Dash Platform name.' };
     case 'unregistered':
       return serves
-        ? { kind: 'mismatch', detail: 'The gateway serves a site, but Dash Platform proves this name is not registered.' }
+        ? { kind: 'mismatch', detail: 'This page shows a site, but Dash Platform proves this name is not registered.' }
         : { kind: 'none', detail: 'Dash Platform proves this name is not registered.' };
     case 'no-site':
       return serves
-        ? { kind: 'mismatch', detail: 'The gateway serves a site, but Dash Platform proves the owner has published none.' }
+        ? { kind: 'mismatch', detail: 'This page shows a site, but Dash Platform proves the owner has published none.' }
         : { kind: 'none', detail: 'The name is registered and its owner has not published a site.' };
     case 'unsupported':
     case 'ok': {
       const site = resolution.site;
-      if (!serves) return { kind: 'none', detail: 'The owner has published a site, and this gateway is not serving it.' };
+      if (!serves) return { kind: 'none', detail: 'The owner has published a site, and this page is not showing it.' };
       if (claims.owner !== resolution.ownerId) {
-        return { kind: 'mismatch', detail: `The gateway names owner ${claims.owner ?? 'nobody'}; Dash Platform proves the owner is ${resolution.ownerId}.` };
+        return { kind: 'mismatch', detail: `This page was served for owner ${claims.owner ?? 'nobody'}; Dash Platform proves the owner is ${resolution.ownerId}.` };
       }
-      if (claims.content === site.content) return { kind: 'match', detail: 'The gateway serves the site record Dash Platform proves.' };
+      if (claims.content === site.content) return { kind: 'match', detail: 'This page shows the site record Dash Platform proves.' };
       if ((claims.revision ?? 0) < site.revision) {
-        return { kind: 'behind', detail: `The gateway serves revision ${claims.revision ?? '?'}; the owner has published revision ${site.revision}. Gateways catch up within a few minutes.` };
+        return { kind: 'behind', detail: `This page shows revision ${claims.revision ?? '?'}; the owner has published revision ${site.revision}. Reload to get it.` };
       }
-      return { kind: 'mismatch', detail: 'The gateway serves different content from the site record Dash Platform proves.' };
+      return { kind: 'mismatch', detail: 'This page shows different content from the site record Dash Platform proves.' };
     }
   }
 }

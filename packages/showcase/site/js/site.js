@@ -24,7 +24,7 @@ function set(id, text, title) {
 
 const SERVED = {
   gateway: 'A gateway read this from Dash Platform and proved it',
-  extension: 'Your extension read this from Dash Platform and proved it',
+  browser: 'Your browser read this from Dash Platform and checked the proof',
 };
 
 /** Fills the title block and the footer from the site's own record. */

@@ -21,10 +21,37 @@ function row(label: string, value: string, full = value): void {
 
 const TITLES: Record<Verdict['kind'], string> = {
   match: 'Verified against Dash Platform',
-  behind: 'Gateway is behind',
+  behind: 'Page is behind',
   mismatch: 'Does not match Dash Platform',
   none: 'No site',
 };
+
+interface Served {
+  headers: Record<string, string | null>;
+  sha256: string;
+}
+
+/**
+ * Fetches the tab's own address from the page's own script world, the only place a request takes the
+ * path the page did (through the shell's service worker), and returns what came back. A consistency
+ * check, not a defence against a hostile shell: whoever controls the worker also controls that world.
+ */
+async function inspect(tabId: number): Promise<Served | undefined> {
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async (): Promise<Served> => {
+      const response = await fetch(location.href, { cache: 'no-store' });
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await response.arrayBuffer()));
+      const names = ['x-dash-owner', 'x-dash-content', 'x-dash-site-revision'];
+      return {
+        headers: Object.fromEntries(names.map((name) => [name, response.headers.get(name)])),
+        sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
+      };
+    },
+  });
+  return injection?.result as Served | undefined;
+}
 
 async function main(): Promise<void> {
   const { settings, gateway } = await loadGateway();
@@ -38,7 +65,9 @@ async function main(): Promise<void> {
   });
 
   const override = new URLSearchParams(location.search).get('url');
-  const tabUrl = override ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.url ?? '';
+  const tabs = await chrome.tabs.query(override ? {} : { active: true, currentWindow: true });
+  const tab = override ? tabs.find((candidate) => candidate.url === override) : tabs[0];
+  const tabUrl = override ?? tab?.url ?? '';
   const label = labelForUrl(tabUrl, gateway);
   if (!label) {
     show('none', 'Not a .dash site', 'Open a site by name below, or type “dash”, a space and a name in the address bar.');
@@ -48,8 +77,9 @@ async function main(): Promise<void> {
   show('checking', 'Checking…', 'Reading the name and its site record from Dash Platform, with proofs.');
 
   const page = new URL(tabUrl);
-  const [response, verify] = await Promise.all([fetch(tabUrl, { method: 'GET', cache: 'no-store', credentials: 'omit' }), import('./verify.js')]);
-  const claims = claimsFromHeaders(response.headers);
+  const [served, verify] = await Promise.all([tab?.id === undefined ? undefined : inspect(tab.id), import('./verify.js')]);
+  if (!served) throw new Error('The extension could not read this tab. Reload the page and open the popup again.');
+  const claims = claimsFromHeaders({ get: (name) => served.headers[name] ?? null });
   const resolution = await verify.resolve(label, settings.network);
   const verdict = compare(claims, resolution);
   show(verdict.kind, TITLES[verdict.kind], verdict.detail);
@@ -63,7 +93,7 @@ async function main(): Promise<void> {
   row('Network', settings.network);
 
   if (verdict.kind !== 'match' || resolution.status !== 'ok') return;
-  const audit = await verify.auditFile(resolution, page.pathname, new Uint8Array(await response.arrayBuffer()), settings.network);
+  const audit = await verify.auditFile(resolution, page.pathname, served.sha256, settings.network);
   const line = $('audit');
   line.dataset.ok = String(audit.ok);
   line.textContent = audit.ok ? `This page's file (${audit.path}) matches the hash its owner published.` : audit.reason;
