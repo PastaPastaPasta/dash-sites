@@ -73,17 +73,16 @@ try {
   check(problems.length === 0, `no page errors${problems.length ? `: ${problems.join(' | ')}` : ''}`);
 
   const url = `https://${label}.${gateway}/`;
+  const live = await browser.newPage({ viewport: { width: 1100, height: 700 } });
   let body = '';
-  for (let i = 0; i < 40 && !body.includes(stamp); i++) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    body = await fetch(url).then((r) => r.text()).catch(() => '');
+  for (let i = 0; i < 20 && !body.includes(stamp); i++) {
+    await live.goto(url, { waitUntil: 'domcontentloaded' });
+    await live.waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 180000 });
+    body = await live.content();
+    if (!body.includes(stamp)) await live.waitForTimeout(5000);
   }
-  check(body.includes(stamp), `${url} serves the page that was just published`);
-  if (shots) {
-    const live = await browser.newPage({ viewport: { width: 1100, height: 700 } });
-    await live.goto(url);
-    await live.screenshot({ path: join(shots, 'builder-live.png') });
-  }
+  check(body.includes(stamp), `${url} shows the page that was just published, read from Dash Platform by the browser`);
+  if (shots) await live.screenshot({ path: join(shots, 'builder-live.png') });
 } finally {
   await browser.close();
   server.close();

@@ -8,8 +8,10 @@ export const documents = (file) => new Set(file.parts.map((part) => part[0])).si
 const cache = new Map();
 /** Asks whatever is serving this site, the visitor's own browser or a gateway, about Dash Platform. */
 export function host(path) {
-  if (!cache.has(path)) cache.set(path, fetch(HOST + path).then((response) => response.json()));
-  return cache.get(path);
+  const request = cache.get(path) ?? fetch(HOST + path).then((response) => response.json());
+  if (!path.startsWith('resolve/')) cache.set(path, request);
+  request.catch(() => cache.delete(path));
+  return request;
 }
 
 export const record = () => host('site.json').then((answer) => (answer.status === 'ok' ? answer : Promise.reject(new Error(answer.status))));

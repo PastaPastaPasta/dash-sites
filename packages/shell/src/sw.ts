@@ -40,8 +40,10 @@ const host = new SiteHost({
   log: (entry) => console.warn('dash-sites', entry),
 });
 
-function toResponse(reply: Reply, head: boolean): Response {
-  return new Response(head || reply.body === undefined ? null : (reply.body as BodyInit), { status: reply.status, headers: reply.headers });
+/** A response built in a worker has no address of its own, so a relative `Location` is made absolute here. */
+function toResponse(reply: Reply, request: Request): Response {
+  const headers = reply.headers.Location ? { ...reply.headers, Location: new URL(reply.headers.Location, request.url).href } : reply.headers;
+  return new Response(request.method === 'HEAD' || reply.body === undefined ? null : (reply.body as BodyInit), { status: reply.status, headers });
 }
 
 self.addEventListener('install', (event) => {
@@ -65,7 +67,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     host
       .respond({ url, navigation: request.mode === 'navigate', range: request.headers.get('range'), waitUntil: (work) => event.waitUntil(work) })
-      .then((reply) => toResponse(reply, request.method === 'HEAD'))
+      .then((reply) => toResponse(reply, request))
       .catch((error: unknown) => {
         console.error('dash-sites', error);
         return new Response('The verifier failed while loading this file.\n', { status: 500, headers: { 'Content-Type': 'text/plain' } });

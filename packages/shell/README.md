@@ -5,6 +5,7 @@ The three static files every name's host serves: `index.html` (bootstrap),
 and the Platform reader). `shell.json` lists their SHA-256.
 
 ```sh
+npm ci && npx tsc -b                   # the shell bundles packages/core
 npm run build -w @dash-sites/shell     # NETWORK=testnet|mainnet, BUILDER_URL, CONTRACT_ID
 npm run serve -w @dash-sites/shell     # http://<name>.localhost:8080/
 ```

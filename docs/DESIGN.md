@@ -423,7 +423,11 @@ queries for browsers.
     write to storage, including the saved epoch. Closing that fully needs an
     origin per owner epoch rather than per name.
   - Not cleared: permissions the visitor granted the origin (notifications,
-    camera, location). Script cannot revoke them.
+    camera, location), which script cannot revoke, and cookies a site set
+    with a `Path` other than `/`, which script can only see from under that
+    path. `Clear-Site-Data: "cookies"` would remove them, but it acts on the
+    whole registrable domain, so it has to wait for the gateway domain to be
+    on the Public Suffix List.
 - **Stored chunks are not trusted**: site code can write to the origin's
   Cache Storage, so the worker re-hashes every chunk it reads from there. A
   poisoned entry is a cache miss.

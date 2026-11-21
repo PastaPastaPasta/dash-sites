@@ -22,7 +22,13 @@ const profile = mkdtempSync(join(tmpdir(), 'dash-sites-shell-'));
 const context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, viewport: { width: 1280, height: 860 } });
 try {
   const contacted = new Set();
-  context.on('request', (request) => contacted.add(new URL(request.url()).host));
+  const workerFetched = new Set();
+  context.on('request', (request) => {
+    const url = new URL(request.url());
+    contacted.add(url.host);
+    if (request.serviceWorker() && url.origin === origin) workerFetched.add(url.pathname);
+  });
+  const isShell = (path) => path === '/' || path === '/sw.js' || /^\/dash-sites-verifier-[0-9a-f]+\.js$/.test(path);
   const page = await context.newPage();
   const fromServer = new Set();
   const elsewhere = new Set();
@@ -41,8 +47,6 @@ try {
   console.log(`     first visit took ${((Date.now() - started) / 1000).toFixed(1)} s`);
   const record = await page.evaluate(async () => (await fetch('/.well-known/dash/site.json')).json());
   check(record.status === 'ok' && record.servedBy === 'browser', `the browser proved ${record.name}: owner ${record.ownerId}, revision ${record.site?.revision}, block ${record.proof?.height}`);
-  const shellOnly = [...fromServer].every((path) => path === '/' || path === '/sw.js' || /^\/dash-sites-verifier-[0-9a-f]+\.js$/.test(path));
-  check(shellOnly, `the gateway host sent only the shell: ${[...fromServer].join(' ')}`);
   check(elsewhere.size === 0, `the page loaded nothing from other hosts ${[...elsewhere].join(' ')}`);
 
   await page.waitForLoadState('networkidle');
@@ -62,8 +66,8 @@ try {
   await page.reload({ waitUntil: 'load' });
   check((await page.evaluate(() => localStorage.getItem('dash-sites-e2e'))) === 'kept', 'the site has its own storage, and it survives a reload');
 
-  const next = assets.links[0];
-  if (next) {
+  const next = assets.links[0] ?? '/';
+  if (next !== '/') {
     await Promise.all([page.waitForURL(`${origin}${next}`), page.click(`a[href="${next}"]`)]);
     await page.waitForLoadState('load');
     check(true, `a link inside the site opens ${page.url()}`);
@@ -85,8 +89,13 @@ try {
   check(missing.status() === 404 && missing.fromServiceWorker(), 'a missing page is a 404 from the verified site, not from the server');
   check(errors.length === 0, `no script errors ${errors.join(' | ')}`);
 
+  const redirected = await page.goto(`${origin}${next.replace(/\/$/, '')}`, { waitUntil: 'load' });
+  check(redirected.ok() && page.url() === `${origin}${next}`, `a directory address without its slash redirects to ${page.url()}`);
+
+  const served = [...fromServer, ...workerFetched];
+  check(served.every(isShell), `through all of that the gateway host sent only the shell: ${[...new Set(served)].join(' ')}`);
   const others = [...contacted].filter((host) => host !== `${name}.${gateway}`).sort();
-  const expected = (host) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(host) || /^quorums\.(testnet|mainnet)\.networks\.dash\.org$/.test(host);
+  const expected = (host) => /^\d+\.\d+\.\d+\.\d+:1443$/.test(host) || /^quorums\.(testnet|mainnet)\.networks\.dash\.org$/.test(host);
   check(others.length > 0 && others.every(expected), `everything else the browser contacted is a Dash Platform node or the quorum key service: ${others.join(' ')}`);
 
   await context.route(`${scheme}://*.${gateway}/**`, (route) => route.abort());

@@ -33,6 +33,7 @@ const loadEvo = () => import('@dash-sites/core/evo');
 let writer: EvoWriter | undefined;
 let names: DomainRecord[] = [];
 let chosen: DomainRecord | undefined;
+let session = 0;
 let mode: 'write' | 'upload' = 'write';
 const draft: PageDraft = loadDraft();
 let upload: SiteFile[] = [];
@@ -58,7 +59,6 @@ function saveDraft(): void {
 }
 
 const label = (): string => chosen?.label.toLowerCase() ?? 'yourname';
-const siteUrl = (): string => `https://${label()}.${GATEWAY}/`;
 
 function files(): SiteFile[] {
   if (mode === 'upload') return upload;
@@ -158,6 +158,7 @@ async function choose(domain: DomainRecord): Promise<void> {
 async function signIn(identity: string, key: string): Promise<void> {
   const error = $('signin-error');
   const button = $<HTMLButtonElement>('signin-button');
+  const attempt = ++session;
   error.textContent = '';
   button.disabled = true;
   button.textContent = 'Signing in…';
@@ -172,20 +173,26 @@ async function signIn(identity: string, key: string): Promise<void> {
       if (!domain) throw new Error(`${name.label}.dash is not registered on ${NETWORK}.`);
       identityId = domain.ownerId;
     }
-    writer = await evo.EvoWriter.connectAs(config, { identityId, privateKeyWif: key.trim() });
+    const connected = await evo.EvoWriter.connectAs(config, { identityId, privateKeyWif: key.trim() });
+    if (attempt !== session) return;
+    writer = connected;
     $<HTMLInputElement>('key').value = '';
     $('who').textContent = identityId;
     $('signin').hidden = true;
     $('step-signin').querySelector<HTMLElement>('.done')!.hidden = false;
-    names = await writer.listOwnedNames(identityId);
+    const owned = await connected.listOwnedNames(identityId);
+    if (attempt !== session) return;
+    names = owned;
     chosen = undefined;
     renderNames();
     refresh();
     await refreshBalance();
     if (names.length === 1) await choose(names[0] as DomainRecord);
   } catch (caught) {
-    writer = undefined;
-    error.textContent = message(caught);
+    if (attempt === session) {
+      signOut();
+      error.textContent = message(caught);
+    }
   } finally {
     button.disabled = false;
     button.textContent = 'Sign in';
@@ -193,6 +200,7 @@ async function signIn(identity: string, key: string): Promise<void> {
 }
 
 function signOut(): void {
+  session += 1;
   writer = undefined;
   names = [];
   chosen = undefined;
@@ -332,6 +340,8 @@ async function fromDrop(items: DataTransferItemList): Promise<void> {
 
 async function publish(): Promise<void> {
   if (!writer || !chosen || !bundle || publishing) return;
+  const published = chosen.label.toLowerCase();
+  const url = `https://${published}.${GATEWAY}/`;
   const status = $('publish-status');
   const error = $('publish-error');
   const progress = $<HTMLProgressElement>('progress');
@@ -349,16 +359,16 @@ async function publish(): Promise<void> {
         progress.value = step.done;
         status.textContent = `Storing part ${step.done} of ${step.total}…`;
       } else if (step.step === 'record') {
-        status.textContent = `Pointing ${label()}.dash at the new site…`;
+        status.textContent = `Pointing ${published}.dash at the new site…`;
       }
     });
     status.textContent = `Stored ${result.uploaded} new ${result.uploaded === 1 ? 'part' : 'parts'}, reused ${result.reused}. Cost ${formatDash(result.creditsSpent)}.`;
     const link = $<HTMLAnchorElement>('result-link');
-    link.href = siteUrl();
-    link.textContent = siteUrl().replace(/^https:\/\//, '').replace(/\/$/, '');
-    $('result-dash').textContent = `${label()}.dash`;
+    link.href = url;
+    link.textContent = `${published}.${GATEWAY}`;
+    $('result-dash').textContent = `${published}.dash`;
     $('result').hidden = false;
-    $('site-status').textContent = `${label()}.dash has a site (revision ${result.site.revision}). Publishing again replaces it.`;
+    if (label() === published) $('site-status').textContent = `${published}.dash has a site (revision ${result.site.revision}). Publishing again replaces it.`;
   } catch (caught) {
     status.textContent = '';
     error.textContent = `Publishing stopped: ${message(caught)} What was stored is kept, so publishing again continues from here.`;

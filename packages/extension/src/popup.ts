@@ -29,6 +29,7 @@ const TITLES: Record<Verdict['kind'], string> = {
 interface Served {
   headers: Record<string, string | null>;
   sha256: string;
+  pathname: string;
 }
 
 /**
@@ -47,6 +48,7 @@ async function inspect(tabId: number): Promise<Served | undefined> {
       return {
         headers: Object.fromEntries(names.map((name) => [name, response.headers.get(name)])),
         sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
+        pathname: new URL(response.url).pathname,
       };
     },
   });
@@ -57,6 +59,7 @@ async function main(): Promise<void> {
   const { settings, gateway } = await loadGateway();
   $('gateway').textContent = gateway.host;
   $<HTMLAnchorElement>('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  $<HTMLInputElement>('name').addEventListener('input', (event) => (event.target as HTMLInputElement).setCustomValidity(''));
   $<HTMLFormElement>('open').addEventListener('submit', (event) => {
     event.preventDefault();
     const url = urlForInput($<HTMLInputElement>('name').value, gateway);
@@ -76,7 +79,6 @@ async function main(): Promise<void> {
   $('site').textContent = `${label}.dash`;
   show('checking', 'Checking…', 'Reading the name and its site record from Dash Platform, with proofs.');
 
-  const page = new URL(tabUrl);
   const [served, verify] = await Promise.all([tab?.id === undefined ? undefined : inspect(tab.id), import('./verify.js')]);
   if (!served) throw new Error('The extension could not read this tab. Reload the page and open the popup again.');
   const claims = claimsFromHeaders({ get: (name) => served.headers[name] ?? null });
@@ -93,7 +95,7 @@ async function main(): Promise<void> {
   row('Network', settings.network);
 
   if (verdict.kind !== 'match' || resolution.status !== 'ok') return;
-  const audit = await verify.auditFile(resolution, page.pathname, served.sha256, settings.network);
+  const audit = await verify.auditFile(resolution, served.pathname, served.sha256, settings.network);
   const line = $('audit');
   line.dataset.ok = String(audit.ok);
   line.textContent = audit.ok ? `This page's file (${audit.path}) matches the hash its owner published.` : audit.reason;
