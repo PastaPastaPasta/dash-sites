@@ -190,6 +190,13 @@ describe('gateway', () => {
     const body = JSON.parse(api.body.toString());
     expect(body).toMatchObject({ status: 'ok', name: 'alice.dash', ownerId: 'alice-id', url: 'https://alice.id.example.org/', site: { content: contentUri } });
     expect((await h.get('id.example.org', '/api/resolve/x')).status).toBe(400);
+    const own = JSON.parse((await h.get('alice.id.example.org', '/.well-known/dash/site.json')).body.toString());
+    expect(own).toMatchObject({ status: 'ok', name: 'alice.dash', servedBy: 'gateway', site: { content: contentUri } });
+    const manifest = await h.get('alice.id.example.org', '/.well-known/dash/manifest.json');
+    expect(Object.keys(JSON.parse(manifest.body.toString()).files)).toContain('/index.html');
+    const other = await h.get('alice.id.example.org', '/.well-known/dash/resolve/nobody');
+    expect(JSON.parse(other.body.toString())).toMatchObject({ status: 'unregistered' });
+    expect((await h.get('alice.id.example.org', '/.well-known/dash/other')).status).toBe(404);
     expect((await h.get('id.example.org', '/healthz')).body.toString()).toBe('ok\n');
   });
 

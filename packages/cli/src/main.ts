@@ -17,7 +17,9 @@ import {
   resolveName,
   type Network,
   type NetworkConfig,
+  type PlatformReader,
 } from '@dash-sites/core';
+import { MemoryPlatform } from '@dash-sites/core/memory';
 import { EvoReader, EvoWriter, registerContract, type Credentials } from '@dash-sites/core/evo';
 import { createGateway, emptyDenylist, parseDomain } from '@dash-sites/gateway';
 import { readSiteDirectory } from './files.js';
@@ -32,6 +34,7 @@ const USAGE = `dash-sites: websites on Dash Platform names
   dash-sites names                                             list the names this identity owns
   dash-sites resolve <name>                                    show what a name resolves to (JSON)
   dash-sites fetch <name> [path] [-o file]                     download one file, verified
+  dash-sites preview <dir> [--name <name>] [--port 8080]       serve a folder locally the way a gateway would
   dash-sites gateway [--port 8080] [--domain localhost]        serve *.localhost from this machine
   dash-sites contract register --schema <file>                 register the data contract (operators)
 
@@ -98,6 +101,28 @@ function requireName(): string {
 }
 
 const print = (value: unknown): void => console.log(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
+
+async function serve(reader: PlatformReader, announce?: string): Promise<never> {
+  const port = Number(values.port);
+  const config = {
+    domains: [parseDomain(`http://${values.domain}:${port}`)],
+    reservedLabels: new Set<string>(),
+    builderUrl: 'https://github.com/PastaPastaPasta/dash-sites',
+    extensionUrl: 'https://github.com/PastaPastaPasta/dash-sites/releases',
+    abuseContact: 'this is a local gateway',
+    network: values.network as string,
+    denylist: emptyDenylist(),
+    maxSiteBytes: 50 * 1024 * 1024,
+    maxFiles: 5000,
+    rateLimitPerMinute: 0,
+    trustProxy: false,
+    chunkCacheBytes: 256 * 1024 * 1024,
+  };
+  createServer(createGateway({ reader, config })).listen(port, '127.0.0.1', () => {
+    console.error(announce ?? `gateway on http://${values.domain}:${port}/ (sites at http://<name>.${values.domain}:${port}/)`);
+  });
+  return new Promise(() => {});
+}
 
 const commands: Record<string, () => Promise<void>> = {
   async publish() {
@@ -168,26 +193,18 @@ const commands: Record<string, () => Promise<void>> = {
   },
 
   async gateway() {
-    const port = Number(values.port);
-    const reader = await EvoReader.connect(network());
-    const config = {
-      domains: [parseDomain(`http://${values.domain}:${port}`)],
-      reservedLabels: new Set<string>(),
-      builderUrl: 'https://github.com/PastaPastaPasta/dash-sites',
-      extensionUrl: 'https://github.com/PastaPastaPasta/dash-sites/releases',
-      abuseContact: 'this is a local gateway',
-      network: values.network as string,
-      denylist: emptyDenylist(),
-      maxSiteBytes: 50 * 1024 * 1024,
-      maxFiles: 5000,
-      rateLimitPerMinute: 0,
-      trustProxy: false,
-      chunkCacheBytes: 256 * 1024 * 1024,
-    };
-    createServer(createGateway({ reader, config })).listen(port, '127.0.0.1', () => {
-      console.error(`gateway on http://${values.domain}:${port}/ (sites at http://<name>.${values.domain}:${port}/)`);
-    });
-    await new Promise(() => {});
+    await serve(await EvoReader.connect(network()));
+  },
+
+  async preview() {
+    const dir = positionals[1] ?? fail('preview needs a directory');
+    const label = values.name ?? 'preview';
+    if (!parseName(label)) fail('--name must be a DPNS name such as alice');
+    const platform = new MemoryPlatform();
+    platform.registerName(label, 'preview-identity');
+    const writer = platform.as('preview-identity');
+    await publishSite(writer, label, buildSite(await readSiteDirectory(dir), { spa: values.spa }));
+    await serve(writer, `http://${label.replace(/\.dash$/i, '').toLowerCase()}.${values.domain}:${values.port}/`);
   },
 
   async contract() {

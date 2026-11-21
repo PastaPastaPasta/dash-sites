@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check p2p.dash yourself</title>
+<meta name="description" content="List every file this site is made of and check it against Dash Platform from your own browser.">
+<link rel="icon" href="/img/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/site.css">
+<script type="module" src="/js/inside.js"></script>
+</head>
+<body>
+<div class="sheet">
+<header class="top">
+  <a class="name" href="/">p2p<b>.dash</b></a>
+  <nav aria-label="Pages">
+    <a href="/how/">How it works</a>
+    <a href="/inside/" aria-current="page">Check it yourself</a>
+    <a href="/publish/">Publish your own</a>
+  </nav>
+</header>
+<main>
+<h1>Check it yourself</h1>
+<p class="lede">You should not have to believe a web page about where it came from. This one lists what it is made of and lets you compare that with the network.</p>
+
+<h2>Every file, as published</h2>
+<div class="scroll">
+  <table>
+    <thead><tr><th>File</th><th>Type</th><th class="num">Size</th><th class="num">Stored</th><th class="num">Documents</th><th>SHA-256</th></tr></thead>
+    <tbody id="files"><tr><td colspan="6">Reading the manifest</td></tr></tbody>
+  </table>
+</div>
+
+<h2>Ask Dash Platform directly</h2>
+<p class="via-extension">Your extension already made these checks before it showed you this page. You can run them again here, inside the page.</p>
+<p>The check downloads the Dash SDK (about 9 MB, from the jsDelivr CDN) and connects to Dash Platform nodes from this browser tab. It proves who owns the name, proves the site record, reads every file from the network, and compares each one with what you were served.</p>
+<div class="cta"><button class="button" id="check" type="button">Check this site</button></div>
+<ol class="log" id="log" aria-live="polite"></ol>
+</main>
+<footer>
+  <span>owner <b class="live" id="f-owner">…</b></span>
+  <span>revision <b class="live" id="f-revision">…</b></span>
+  <span>read at block <b class="live" id="f-block">…</b></span>
+  <a href="https://github.com/PastaPastaPasta/dash-sites" target="_blank" rel="noopener">Source on GitHub</a>
+</footer>
+</div>
+</body>
+</html>

@@ -3,6 +3,7 @@ import {
   CHUNK_SIZE,
   ContentError,
   decide,
+  HOST_API,
   loadManifest,
   ManifestError,
   matchHost,
@@ -163,6 +164,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
     if (resolution.status === 'invalid') return { status: 'invalid' };
     const out: Record<string, unknown> = {
       status: resolution.status,
+      network: config.network,
       normalized: resolution.normalized,
       proof: { height: resolution.meta.height, timeMs: resolution.meta.timeMs },
     };
@@ -177,20 +179,22 @@ export function createGateway(options: GatewayOptions): RequestListener {
     return out;
   }
 
+  async function lookup(rawName: string, domain: GatewayDomain): Promise<Reply> {
+    let parsed: ReturnType<typeof parseName>;
+    try {
+      parsed = parseName(decodeURIComponent(rawName));
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed) return json(400, { status: 'invalid' }, domain);
+    return json(200, describe((await resolutions.get(parsed.normalized)).value, domain), domain);
+  }
+
   async function apex(req: IncomingMessage, url: URL, domain: GatewayDomain): Promise<Reply> {
     if (url.pathname === '/') return html(200, landingPage(config, new URL(domain.origin).host), domain);
     if (url.pathname === '/healthz') return { status: 200, headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }, body: 'ok\n' };
     const match = /^\/api\/resolve\/([^/]+)$/.exec(url.pathname);
-    if (match) {
-      let parsed: ReturnType<typeof parseName>;
-      try {
-        parsed = parseName(decodeURIComponent(match[1] as string));
-      } catch {
-        parsed = undefined;
-      }
-      if (!parsed) return json(400, { status: 'invalid' }, domain);
-      return json(200, describe((await resolutions.get(parsed.normalized)).value, domain), domain);
-    }
+    if (match) return lookup(match[1] as string, domain);
     return html(404, messagePage('404', 'Not found', 'There is nothing at this address.', config), domain);
   }
 
@@ -230,6 +234,13 @@ export function createGateway(options: GatewayOptions): RequestListener {
       ...(cached.stale ? { 'X-Dash-Stale': '1' } : {}),
     };
 
+    if (url.pathname.startsWith(HOST_API)) {
+      const path = url.pathname.slice(HOST_API.length);
+      if (path === 'site.json') return json(200, { ...describe(resolution, domain), servedBy: 'gateway' }, domain);
+      if (path.startsWith('resolve/')) return lookup(path.slice('resolve/'.length), domain);
+      if (path !== 'manifest.json') return json(404, { status: 'not-found' }, domain);
+    }
+
     const epoch = `${resolution.ownerId}.${resolution.domain.transferredAt}`;
     const isDocument = req.headers['sec-fetch-dest'] === 'document';
     const isWorkerScript = req.headers['service-worker'] === 'script' || req.headers['sec-fetch-dest'] === 'serviceworker';
@@ -248,6 +259,8 @@ export function createGateway(options: GatewayOptions): RequestListener {
       log({ event: 'bad-manifest', name: normalized, error: error.message });
       return html(502, messagePage('Unavailable', `${dashName} cannot be served`, 'Its published content is incomplete or does not match the hashes its owner published.', config), domain);
     }
+
+    if (url.pathname === `${HOST_API}manifest.json`) return json(200, manifest, domain);
 
     const decision = decide(manifest, url.pathname, url.search);
     if (decision.kind === 'redirect') return { status: 301, headers: { ...headers, Location: decision.location, 'Cache-Control': cacheControl } };

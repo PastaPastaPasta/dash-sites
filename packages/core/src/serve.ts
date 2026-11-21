@@ -1,5 +1,11 @@
 import type { Manifest } from './manifest.js';
 
+/**
+ * Paths under every site that its host answers itself: `site.json` (the proved record),
+ * `manifest.json`, and `resolve/<name>`. A site reads them the same way from a gateway or the extension.
+ */
+export const HOST_API = '/.well-known/dash/';
+
 export type ServeDecision =
   | { kind: 'file'; path: string; status: 200 | 404 }
   | { kind: 'redirect'; location: string }
