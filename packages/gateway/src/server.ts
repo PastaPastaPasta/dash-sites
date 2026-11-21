@@ -2,14 +2,17 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import {
   CHUNK_SIZE,
   ContentError,
+  dashHeaders,
   decide,
   describeResolution,
+  escapeHtml,
   HOST_API,
   loadManifest,
   ManifestError,
   matchHost,
+  messagePage,
+  nameFromPath,
   normalizeLabel,
-  parseName,
   readFile,
   resolveName,
   sha256Hex,
@@ -21,7 +24,7 @@ import {
 } from '@dash-sites/core';
 import { LruCache, RefreshingCache } from './cache.js';
 import { siteOrigin, type GatewayConfig, type GatewayDomain } from './config.js';
-import { escapeHtml, landingPage, messagePage } from './pages.js';
+import { landingPage } from './pages.js';
 
 const EPOCH_COOKIE = '__Host-dash-epoch';
 const SECOND = 1000;
@@ -168,12 +171,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
   }
 
   async function lookup(rawName: string, domain: GatewayDomain): Promise<Reply> {
-    let parsed: ReturnType<typeof parseName>;
-    try {
-      parsed = parseName(decodeURIComponent(rawName));
-    } catch {
-      parsed = undefined;
-    }
+    const parsed = nameFromPath(rawName);
     if (!parsed) return json(400, { status: 'invalid' }, domain);
     return json(200, describe((await resolutions.get(parsed.normalized)).value, domain), domain);
   }
@@ -214,11 +212,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Expose-Headers': 'ETag, X-Dash-Name, X-Dash-Owner, X-Dash-Site-Revision, X-Dash-Content, X-Dash-Proof-Height, X-Dash-Stale',
       'Accept-Ranges': 'none',
-      'X-Dash-Name': `${resolution.canonicalLabel}.dash`,
-      'X-Dash-Owner': resolution.ownerId,
-      'X-Dash-Site-Revision': String(resolution.site.revision),
-      'X-Dash-Content': resolution.site.content,
-      'X-Dash-Proof-Height': String(resolution.meta.height),
+      ...dashHeaders(resolution),
       ...(cached.stale ? { 'X-Dash-Stale': '1' } : {}),
     };
 

@@ -22,6 +22,15 @@ export interface ParsedName {
   normalized: string;
 }
 
+/** Parses a name taken from a URL path segment, which may be percent-encoded. */
+export function nameFromPath(raw: string): ParsedName | undefined {
+  try {
+    return parseName(decodeURIComponent(raw));
+  } catch {
+    return undefined;
+  }
+}
+
 /** Accepts `alice`, `alice.dash` or `Alice.DASH.`; rejects subdomains and other TLDs. */
 export function parseName(input: string): ParsedName | undefined {
   let name = input.trim().toLowerCase();

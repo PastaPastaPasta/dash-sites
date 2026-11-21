@@ -2,13 +2,14 @@ import {
   ContentError,
   HOST_API,
   ManifestError,
+  dashHeaders,
   decide,
   describeResolution,
   escapeHtml,
   hostPage,
   loadManifest,
   messagePage,
-  parseName,
+  nameFromPath,
   readFile,
   resolveName,
   sha256Hex,
@@ -62,13 +63,14 @@ export interface HostOptions {
   log?: (entry: Record<string, unknown>) => void;
 }
 
-type Owned = Exclude<Resolution, { status: 'invalid' | 'unregistered' }>;
 type Ok = Extract<Resolution, { status: 'ok' }>;
 
 const FRESH_MS = 30_000;
 /** How long after showing a saved site a newer one may replace it by reloading the page. */
 const RELOAD_WINDOW_MS = 20_000;
 export const RESET_PATH = `${HOST_API}reset`;
+/** Where a page goes to have its storage cleared before returning to `url`. */
+export const resetLocation = (url: URL): string => `${RESET_PATH}#${encodeURIComponent(url.pathname + url.search)}`;
 
 const epochOf = (resolution: Resolution): string | undefined =>
   'ownerId' in resolution ? `${resolution.ownerId}.${resolution.domain.transferredAt}` : undefined;
@@ -198,17 +200,8 @@ export class SiteHost {
     return { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, body: JSON.stringify(value) };
   }
 
-  private describe(resolution: Resolution): Record<string, unknown> {
-    return { ...describeResolution(resolution, this.options.network), servedBy: 'browser' };
-  }
-
   private async lookup(rawName: string): Promise<Reply> {
-    let parsed: ReturnType<typeof parseName>;
-    try {
-      parsed = parseName(decodeURIComponent(rawName));
-    } catch {
-      parsed = undefined;
-    }
+    const parsed = nameFromPath(rawName);
     if (!parsed) return this.json(400, { status: 'invalid' });
     return this.json(200, describeResolution(await resolveName(await this.options.reader(), parsed.normalized), this.options.network));
   }
@@ -229,32 +222,31 @@ export class SiteHost {
     if (request.navigation && this.saved?.resetPending) {
       this.saved = { ...this.saved, resetPending: false };
       await this.options.store.saveState(this.saved).catch(() => undefined);
-      return { status: 302, headers: { Location: `${RESET_PATH}#${encodeURIComponent(url.pathname + url.search)}`, 'Cache-Control': 'no-store' } };
+      return { status: 302, headers: { Location: resetLocation(url), 'Cache-Control': 'no-store' } };
     }
     if (url.pathname.startsWith(HOST_API)) {
       const path = url.pathname.slice(HOST_API.length);
-      if (path === 'site.json') return this.json(200, this.describe(resolution));
+      if (path === 'site.json') return this.json(200, { ...describeResolution(resolution, this.options.network), servedBy: 'browser' });
       if (path.startsWith('resolve/')) return this.lookup(path.slice('resolve/'.length));
       if (path !== 'manifest.json') return this.json(404, { status: 'not-found' });
     }
     if (resolution.status === 'invalid') return this.page(404, '404', 'Not a DPNS name', 'This host is not a valid Dash Platform name.');
     if (resolution.status === 'unregistered') return this.page(404, 'Not registered', `${dashName} is not registered`, 'Nobody owns this name on Dash Platform yet.');
-    const owned: Owned = resolution;
-    if (owned.canonicalLabel !== this.options.label) {
+    if (resolution.canonicalLabel !== this.options.label) {
       const target = new URL(url.href);
-      target.hostname = [owned.canonicalLabel, ...url.hostname.split('.').slice(1)].join('.');
+      target.hostname = [resolution.canonicalLabel, ...url.hostname.split('.').slice(1)].join('.');
       return { status: 308, headers: { Location: target.href } };
     }
-    if (owned.status === 'no-site') {
+    if (resolution.status === 'no-site') {
       return this.page(404, 'No site', `${dashName} has no site yet`, `The name is registered, and its owner has not published a site. If it is yours, <a href="${escapeHtml(this.options.builderUrl)}">publish one</a>.`);
     }
-    if (owned.status === 'unsupported' || owned.content.scheme !== 'dash-manifest') {
-      return this.page(502, 'Unsupported', `${dashName} cannot be shown here`, `Its site record points at <code>${escapeHtml(owned.site.content.slice(0, 80))}</code>, which this gateway does not load.`);
+    if (resolution.status === 'unsupported' || resolution.content.scheme !== 'dash-manifest') {
+      return this.page(502, 'Unsupported', `${dashName} cannot be shown here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this gateway does not load.`);
     }
 
     let manifest: Manifest;
     try {
-      manifest = await this.manifestFor(owned);
+      manifest = await this.manifestFor(resolution);
     } catch (error) {
       if (!(error instanceof ContentError) && !(error instanceof ManifestError)) throw error;
       return this.page(502, 'Unavailable', `${dashName} cannot be shown`, 'Its published content is incomplete or does not match the hashes its owner published.');
@@ -266,7 +258,7 @@ export class SiteHost {
     if (decision.kind === 'not-found') return this.page(404, '404', 'Page not found', `<code>${dashName}</code> has no page at this address.`);
     let file: Awaited<ReturnType<typeof readFile>>;
     try {
-      file = await readFile(manifest, decision.path, this.chunks(owned.ownerId));
+      file = await readFile(manifest, decision.path, this.chunks(resolution.ownerId));
     } catch (error) {
       if (!(error instanceof ContentError)) throw error;
       return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');
@@ -277,11 +269,7 @@ export class SiteHost {
       'Cache-Control': 'no-store',
       'Accept-Ranges': 'bytes',
       'X-Content-Type-Options': 'nosniff',
-      'X-Dash-Name': `${owned.canonicalLabel}.dash`,
-      'X-Dash-Owner': owned.ownerId,
-      'X-Dash-Site-Revision': String(owned.site.revision),
-      'X-Dash-Content': owned.site.content,
-      'X-Dash-Proof-Height': String(owned.meta.height),
+      ...dashHeaders(resolution),
     };
     const range = decision.status === 200 ? parseRange(request.range, file.bytes.length) : undefined;
     if (range === 'unsatisfiable') return { status: 416, headers: { ...headers, 'Content-Range': `bytes */${file.bytes.length}` } };

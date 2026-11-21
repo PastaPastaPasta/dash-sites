@@ -1,4 +1,4 @@
-import { bytes, manifest, record, short, stored } from './site.js';
+import { bytes, documents, manifest, record, short, stored } from './site.js';
 
 const cell = (text, className) => Object.assign(document.createElement('td'), { textContent: text, className: className ?? '' });
 
@@ -8,8 +8,7 @@ manifest().then((data) => {
     const link = Object.assign(document.createElement('a'), { href: path, textContent: path });
     const name = document.createElement('td');
     name.append(link);
-    const documents = new Set(file.parts.map((part) => part[0])).size;
-    row.append(name, cell(file.type.split(';')[0]), cell(bytes(file.size), 'num'), cell(file.enc ? `${bytes(stored(file))} gzip` : bytes(stored(file)), 'num'), cell(String(documents), 'num'), cell(short(file.sha256, 8)));
+    row.append(name, cell(file.type.split(';')[0]), cell(bytes(file.size), 'num'), cell(file.enc ? `${bytes(stored(file))} gzip` : bytes(stored(file)), 'num'), cell(String(documents(file)), 'num'), cell(short(file.sha256, 8)));
     row.lastChild.title = file.sha256;
     return row;
   });

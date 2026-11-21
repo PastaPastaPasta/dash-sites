@@ -198,13 +198,12 @@ const commands: Record<string, () => Promise<void>> = {
 
   async preview() {
     const dir = positionals[1] ?? fail('preview needs a directory');
-    const label = values.name ?? 'preview';
-    if (!parseName(label)) fail('--name must be a DPNS name such as alice');
+    const label = (parseName(values.name ?? 'preview') ?? fail('--name must be a DPNS name such as alice')).label;
     const platform = new MemoryPlatform();
     platform.registerName(label, 'preview-identity');
     const writer = platform.as('preview-identity');
     await publishSite(writer, label, buildSite(await readSiteDirectory(dir), { spa: values.spa }));
-    await serve(writer, `http://${label.replace(/\.dash$/i, '').toLowerCase()}.${values.domain}:${values.port}/`);
+    await serve(writer, `http://${label.toLowerCase()}.${values.domain}:${values.port}/`);
   },
 
   async contract() {

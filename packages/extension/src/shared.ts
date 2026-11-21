@@ -1,4 +1,4 @@
-import { matchHost, parseName, type Resolution } from '@dash-sites/core';
+import { matchHost, parseName, type Network, type Resolution } from '@dash-sites/core';
 
 export const RULE_ID = 1;
 export const DEFAULT_GATEWAY = 'https://id.dashhq.org';
@@ -8,7 +8,7 @@ export interface Settings {
   gateway: string;
   /** Turn a search for `alice.dash` into a visit to the site. */
   catchSearches: boolean;
-  network: 'testnet' | 'mainnet';
+  network: Network;
 }
 
 export const DEFAULT_SETTINGS: Settings = { gateway: DEFAULT_GATEWAY, catchSearches: true, network: 'testnet' };
@@ -114,11 +114,10 @@ export function claimsFromHeaders(headers: { get(name: string): string | null })
   };
 }
 
-export type Verdict =
-  | { kind: 'match'; detail: string }
-  | { kind: 'behind'; detail: string }
-  | { kind: 'mismatch'; detail: string }
-  | { kind: 'none'; detail: string };
+export interface Verdict {
+  kind: 'match' | 'behind' | 'mismatch' | 'none';
+  detail: string;
+}
 
 /** Compares what the page was served with what the extension itself proves from Dash Platform. */
 export function compare(claims: Claims, resolution: Resolution): Verdict {

@@ -1,9 +1,9 @@
-export const BUILDER = 'https://dash-sites.thepasta.org/';
 const HOST = '/.well-known/dash/';
 
 export const short = (text, keep = 6) => (text.length > keep * 2 + 1 ? `${text.slice(0, keep)}…${text.slice(-keep)}` : text);
 export const bytes = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`);
 export const stored = (file) => file.parts.reduce((sum, part) => sum + part[2], 0);
+export const documents = (file) => new Set(file.parts.map((part) => part[0])).size;
 
 const cache = new Map();
 /** Asks whatever is serving this site, the visitor's own browser or a gateway, about Dash Platform. */

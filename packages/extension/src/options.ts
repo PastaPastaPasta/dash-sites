@@ -1,4 +1,5 @@
 import { loadSettings, saveSettings } from './settings.js';
+import type { Network } from '@dash-sites/core';
 import { DEFAULT_GATEWAY, parseGateway } from './shared.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -23,7 +24,7 @@ async function main(): Promise<void> {
       status.textContent = 'A gateway is an https address, or http on localhost, with no path.';
       return;
     }
-    void saveSettings({ gateway: parsed.origin, catchSearches: searches.checked, network: network.value as 'testnet' | 'mainnet' }).then(() => {
+    void saveSettings({ gateway: parsed.origin, catchSearches: searches.checked, network: network.value as Network }).then(() => {
       gateway.value = parsed.origin;
       status.dataset.ok = 'true';
       status.textContent = `Saved. alice.dash now opens ${parsed.protocol}//alice.${parsed.host}/`;

@@ -1,4 +1,4 @@
-import { escapeHtml, hostPage, messagePage } from '@dash-sites/core';
+import { escapeHtml, hostPage } from '@dash-sites/core';
 import type { GatewayConfig } from './config.js';
 
 export function landingPage(config: GatewayConfig, domainHost: string): string {
@@ -19,5 +19,3 @@ else this.name.focus();});
 </script>`,
   );
 }
-
-export { escapeHtml, messagePage };

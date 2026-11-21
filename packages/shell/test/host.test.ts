@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildSite, normalizeLabel, publishSite, utf8, type PlatformReader, type Resolution, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
-import { parseRange, RESET_PATH, SiteHost, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
+import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
 const text = (s: string) => utf8.encode(s);
 const site = (title: string): SiteFile[] => [
@@ -186,7 +186,8 @@ describe('site host', () => {
     expect(h.changes).toEqual(['owner']);
     const reset = await h.get('/blog/?x=1');
     expect(reset.status).toBe(302);
-    expect(reset.headers.Location).toBe(`${RESET_PATH}#${encodeURIComponent('/blog/?x=1')}`);
+    expect(reset.headers.Location).toBe(resetLocation(new URL('https://alice.id.example.org/blog/?x=1')));
+    expect(reset.headers.Location).toBe('/.well-known/dash/reset#%2Fblog%2F%3Fx%3D1');
     expect(body(await h.get(RESET_PATH))).toContain('localStorage.clear()');
     expect(body(await h.get('/'))).toContain('has no site yet');
     await h.publish('bob-id', 'bob');

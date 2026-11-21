@@ -69,3 +69,14 @@ export function describeResolution(resolution: Resolution, network: string): Rec
   out.site = { id: resolution.site.id, revision: resolution.site.revision, updatedAt: resolution.site.updatedAt, content: resolution.site.content };
   return out;
 }
+
+/** The proved facts a host attaches to every file of a site. The extension compares them with its own answer. */
+export function dashHeaders(resolution: Extract<Resolution, { status: 'ok' }>): Record<string, string> {
+  return {
+    'X-Dash-Name': `${resolution.canonicalLabel}.dash`,
+    'X-Dash-Owner': resolution.ownerId,
+    'X-Dash-Site-Revision': String(resolution.site.revision),
+    'X-Dash-Content': resolution.site.content,
+    'X-Dash-Proof-Height': String(resolution.meta.height),
+  };
+}

@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import { networkConfig, type Network, type PlatformReader } from '@dash-sites/core';
-import { RESET_PATH, SiteHost, type Reply } from './host.js';
+import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore } from './store.js';
 import type { Connect } from './verifier.js';
 
@@ -26,8 +26,7 @@ function connect(): Promise<PlatformReader> {
 
 async function reloadClients(kind: 'content' | 'owner'): Promise<void> {
   for (const client of await self.clients.matchAll({ type: 'window' })) {
-    const url = new URL(client.url);
-    const target = kind === 'owner' ? `${RESET_PATH}#${encodeURIComponent(url.pathname + url.search)}` : client.url;
+    const target = kind === 'owner' ? resetLocation(new URL(client.url)) : client.url;
     await client.navigate(target).catch(() => undefined);
   }
 }
@@ -43,8 +42,7 @@ const host = new SiteHost({
 });
 
 function toResponse(reply: Reply, head: boolean): Response {
-  const bodiless = head || reply.status === 204 || reply.status === 304 || reply.body === undefined;
-  return new Response(bodiless ? null : (reply.body as BodyInit), { status: reply.status, headers: reply.headers });
+  return new Response(head || reply.body === undefined ? null : (reply.body as BodyInit), { status: reply.status, headers: reply.headers });
 }
 
 self.addEventListener('install', () => {

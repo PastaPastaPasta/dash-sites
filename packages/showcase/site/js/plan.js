@@ -1,4 +1,4 @@
-import { bytes, manifest, short, stored } from './site.js';
+import { bytes, documents, manifest, short, stored } from './site.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const el = (name, attrs = {}) => {
@@ -46,7 +46,7 @@ export async function drawPlan(svg, readout) {
   svg.append(defs);
 
   const describe = (room) => {
-    const count = new Set(room.file.parts.map((part) => part[0])).size;
+    const count = documents(room.file);
     const size = room.file.enc ? `${bytes(room.file.size)}, stored as ${bytes(room.size)} of gzip` : bytes(room.file.size);
     readout.replaceChildren(
       Object.assign(document.createElement('b'), { textContent: room.path }),
