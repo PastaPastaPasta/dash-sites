@@ -12,7 +12,7 @@ import { base58 } from '@scure/base';
 import { concat, fromHex, sha256, toHex } from './bytes.js';
 import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
 import { CHUNK_FIELD_SIZE, CHUNK_SIZE } from './limits.js';
-import { DASH_TLD } from './names.js';
+import { DASH_TLD, isValidLabel, normalizeLabel } from './names.js';
 import type { DomainRecord, PlatformReader, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
 
 const PAGE = 100;
@@ -308,6 +308,23 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
 
   balance(): Promise<bigint> {
     return this.identityBalance(this.identityId);
+  }
+
+  /**
+   * Registers `label`.dash for this identity. Contested names (3 to 19 characters of letters,
+   * 0, 1 and -) go to a masternode vote and cost a deposit, so they are refused unless asked for.
+   */
+  async registerName(label: string, options: { allowContested?: boolean } = {}): Promise<DomainRecord> {
+    if (!isValidLabel(label)) throw new Error(`${label} is not a name Dash Sites can serve`);
+    if (!options.allowContested && (await this.sdk.dpns.isContestedUsername(label))) {
+      throw new Error(`${label}.dash is a contested name: it needs a masternode vote and a deposit. Names with a digit from 2 to 9, or 20 characters or more, register at once.`);
+    }
+    const identity = await this.sdk.identities.fetch(this.identityId);
+    if (!identity) throw new Error(`identity ${this.identityId} does not exist`);
+    await this.sdk.dpns.registerName({ label, identity, ...this.key });
+    const domain = (await this.getDomain(normalizeLabel(label))).value;
+    if (!domain || domain.ownerId !== this.identityId) throw new Error(`${label}.dash was not registered to this identity`);
+    return domain;
   }
 }
 

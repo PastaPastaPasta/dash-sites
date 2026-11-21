@@ -1,0 +1,16 @@
+{
+  "name": "@dash-sites/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "bin": { "dash-sites": "./dist/main.js" },
+  "scripts": {
+    "build": "tsc -b",
+    "bundle": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=bundle/dash-sites.mjs --banner:js=\"#!/usr/bin/env node\nimport{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);\""
+  },
+  "dependencies": {
+    "@dash-sites/core": "0.1.0",
+    "@dash-sites/gateway": "0.1.0"
+  }
+}
