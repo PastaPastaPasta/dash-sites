@@ -264,8 +264,10 @@ and the extension all call the same functions.
 
 The gateway is a static shell. Every host `<label>.<domain>` serves the same
 three files, whatever the name: a bootstrap page, a small service worker, and
-the verifier (the Dash SDK, about 9 MB compressed, content-hashed and cached
-as immutable). The server holds no site content and makes no Platform
+the verifier (the Dash SDK, about 9 MB compressed, cached as immutable). The
+worker fetches the verifier itself, checks it against a SHA-256 built into
+the worker, and keeps it in Cache Storage; browsers will not store a worker
+script that large for a private window. The server holds no site content and makes no Platform
 queries for browsers.
 
 - **First visit**: the bootstrap page registers the service worker for that
@@ -384,15 +386,18 @@ queries for browsers.
   use. What remains trusted:
   1. **The shell.** The code that verifies is delivered by the gateway host. A
      dishonest or compromised host could send a different worker, to new
-     visitors or as an update. Mitigations: the shell is the same for every
-     name and built reproducibly from the repository; `shell.json` beside it
-     lists the SHA-256 of each file; the bootstrap page carries a CSP that
-     allows only its own script by hash; the verifier file is content-hashed.
-     None of these binds the host. Subresource Integrity cannot pin a
-     service-worker script, and browsers offer no way to pin one. The fix
-     available today is to serve the shell from a host the user controls
-     (their own machine). Signed, pinned web bundles would close it for
-     public hosts if browsers ship them.
+     visitors or as an update. What narrows this: the shell is the same for
+     every name and built reproducibly from the repository; `sw.js` (about
+     30 KB) contains the SHA-256 of the verifier and refuses to run one that
+     does not match, so `sw.js` is the only file whose honesty matters, and
+     browsers replace an installed worker only when `sw.js` itself changes;
+     `shell.json` beside it lists the SHA-256 of each file for anyone
+     comparing a host against a build; the bootstrap page carries a CSP that
+     allows only its own script by hash. None of these binds the host: a
+     browser cannot be told to pin a service-worker script, and Subresource
+     Integrity does not apply to one. The fix available today is to serve the
+     shell from a host the user controls (their own machine). Signed, pinned
+     web bundles would close it for public hosts if browsers ship them.
   2. **Quorum public keys.** SDK 5.0.3 verifies proofs against quorum public
      keys it downloads from `quorums.<network>.networks.dash.org`, a service
      run by Dash Core Group, over TLS. Whoever controls that service, together

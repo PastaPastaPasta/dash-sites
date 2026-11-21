@@ -25,7 +25,7 @@ function controlled(registration: ServiceWorkerRegistration): Promise<void> {
     navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true });
     const worker = registration.installing ?? registration.waiting;
     worker?.addEventListener('statechange', () => {
-      if (worker.state === 'redundant') reject(new Error('the verifier could not be downloaded. Reload to try again.'));
+      if (worker.state === 'redundant') reject(new Error('the verifier could not be downloaded or did not match its expected hash. Reload to try again.'));
     });
   });
 }

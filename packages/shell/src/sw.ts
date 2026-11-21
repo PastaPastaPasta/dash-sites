@@ -1,20 +1,40 @@
 /// <reference lib="webworker" />
-import { networkConfig, type Network, type PlatformReader } from '@dash-sites/core';
+import { networkConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
 import { resetLocation, SiteHost, type Reply } from './host.js';
-import { BrowserStore } from './store.js';
+import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Connect } from './verifier.js';
 
 declare const self: ServiceWorkerGlobalScope & { dashSitesConnect?: Connect };
 declare const __VERIFIER__: string;
+declare const __VERIFIER_SHA256__: string;
 declare const __NETWORK__: string;
 declare const __CONTRACT_ID__: string;
 declare const __BUILDER_URL__: string;
 
+const matches = async (bytes: ArrayBuffer): Promise<boolean> => toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) === __VERIFIER_SHA256__;
+
+/**
+ * The verifier's source, checked against the hash this worker was built with. It is fetched by the
+ * worker and kept in Cache Storage rather than imported as a worker script, because browsers refuse
+ * to store a script this large for a private window. Site code can write to that cache, hence the check.
+ */
+async function verifierSource(): Promise<string> {
+  const cache = await caches.open(SHELL_CACHE).catch(() => undefined);
+  const kept = await (await cache?.match(__VERIFIER__))?.arrayBuffer();
+  if (kept && (await matches(kept))) return new TextDecoder().decode(kept);
+  const response = await fetch(__VERIFIER__);
+  if (!response.ok) throw new Error(`the verifier could not be downloaded (${response.status})`);
+  const bytes = await response.arrayBuffer();
+  if (!(await matches(bytes))) throw new Error('the verifier does not match the hash this worker was built with');
+  await cache?.put(__VERIFIER__, new Response(bytes, { headers: { 'Content-Type': 'text/javascript' } })).catch(() => undefined);
+  return new TextDecoder().decode(bytes);
+}
+
 let reader: Promise<PlatformReader> | undefined;
 function connect(): Promise<PlatformReader> {
   reader ??= Promise.resolve()
-    .then(() => {
-      if (!self.dashSitesConnect) importScripts(__VERIFIER__);
+    .then(async () => {
+      if (!self.dashSitesConnect) (0, eval)(await verifierSource());
       return (self.dashSitesConnect as Connect)(networkConfig(__NETWORK__ as Network, __CONTRACT_ID__ || undefined));
     })
     .catch((error: unknown) => {
@@ -34,7 +54,7 @@ const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,
   network: __NETWORK__,
   reader: connect,
-  store: new BrowserStore(),
+  store: new BrowserStore(__VERIFIER__),
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
   log: (entry) => console.warn('dash-sites', entry),
@@ -46,15 +66,7 @@ function toResponse(reply: Reply, request: Request): Response {
   return new Response(request.method === 'HEAD' || reply.body === undefined ? null : (reply.body as BodyInit), { status: reply.status, headers });
 }
 
-self.addEventListener('install', (event) => {
-  try {
-    importScripts(__VERIFIER__);
-  } catch (error) {
-    event.waitUntil(Promise.reject(error));
-    return;
-  }
-  void self.skipWaiting();
-});
+self.addEventListener('install', (event) => event.waitUntil(verifierSource().then(() => self.skipWaiting())));
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', (event) => {
   const { request } = event;

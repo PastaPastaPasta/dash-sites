@@ -1,11 +1,16 @@
 import type { Saved, Store } from './host.js';
 
 const CACHE = 'dash-sites-host';
+/** Holds the verifier, which the worker checks against a pinned hash every time it reads it. */
+export const SHELL_CACHE = 'dash-sites-shell';
 const STATE = '/state';
 const chunkKey = (hash: string): string => `/chunk/${hash}`;
 
 /** Keeps host state and verified chunks in the origin's Cache Storage. */
 export class BrowserStore implements Store {
+  /** `verifierPath` is the one entry a wipe keeps, so that a reset does not download the verifier again. */
+  constructor(private readonly verifierPath: string) {}
+
   private cache(): Promise<Cache> {
     return caches.open(CACHE);
   }
@@ -30,7 +35,11 @@ export class BrowserStore implements Store {
 
   async wipe(): Promise<void> {
     const steps: Array<() => Promise<unknown>> = [
-      async () => Promise.all((await caches.keys()).map((name) => caches.delete(name))),
+      async () => Promise.all((await caches.keys()).filter((name) => name !== SHELL_CACHE).map((name) => caches.delete(name))),
+      async () => {
+        const shell = await caches.open(SHELL_CACHE);
+        for (const request of await shell.keys()) if (new URL(request.url).pathname !== this.verifierPath) await shell.delete(request);
+      },
       async () => {
         for (const { name } of (await indexedDB.databases?.()) ?? []) if (name) indexedDB.deleteDatabase(name);
       },

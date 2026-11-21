@@ -25,6 +25,7 @@ await build({
     __CONTRACT_ID__: JSON.stringify(process.env.CONTRACT_ID ?? ''),
     __BUILDER_URL__: JSON.stringify(process.env.BUILDER_URL ?? 'https://dash-sites.thepasta.org/'),
     __VERIFIER__: JSON.stringify(`/${verifierName}`),
+    __VERIFIER_SHA256__: JSON.stringify(sha256(verifier)),
   },
 });
 copyFileSync(join(root, 'src', 'denied-sw.js'), join(out, 'denied-sw.js'));

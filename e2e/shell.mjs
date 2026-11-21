@@ -107,3 +107,16 @@ try {
   await context.close();
   rmSync(profile, { recursive: true, force: true });
 }
+
+// A private window keeps everything in memory, with tighter limits on what a worker may store.
+const browser = await chromium.launch({ channel: 'chromium', headless: true });
+try {
+  const page = await browser.newPage();
+  await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded' });
+  const loaded = await page
+    .waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 120000 })
+    .then(() => true, () => false);
+  check(loaded, `the site loads in a private window: ${loaded ? await page.title() : await page.textContent('#step')}`);
+} finally {
+  await browser.close();
+}
