@@ -5,15 +5,19 @@ Status: implemented on testnet. Date: 2026-11-21. Testnet contract: `3JRHRkyYZiw
 Dash Sites lets the owner of a DPNS name (`alice.dash`) publish a static website
 under that name, and lets anyone open it:
 
-- in any browser, through a DNS gateway: `https://alice.<gateway-domain>/`
-  (interim `alice.id.dashhq.org`, later `alice.dash.dev`);
+- in any browser, at `https://alice.<gateway-domain>/` (interim
+  `alice.id.dashhq.org`, later `alice.dash.dev`). The gateway host sends a
+  static shell; the visitor's browser reads the site from Dash Platform and
+  verifies it. The server does not serve site content on that path;
 - in a browser with the extension, by typing `alice.dash` or following a
   `http://alice.dash/` link;
-- from the command line or their own gateway, with no trusted third party.
+- from the command line or a shell served from their own machine, with no
+  third party's server involved.
 
 It has three parts that share one protocol library: a **builder** (web app and
-CLI) that publishes, a **gateway** that serves, and an **extension** that
-resolves `.dash` names.
+CLI) that publishes, a **gateway** (a static shell with a service worker, plus
+a small server-rendered fallback) that opens sites in any browser, and an
+**extension** that resolves `.dash` names.
 
 ## 1. Prior art
 
@@ -33,6 +37,12 @@ resolves `.dash` names.
   there is one, else to a public gateway.
 - Gateway domains go on the **Public Suffix List** so browsers treat each
   subdomain as its own site for cookies.
+- **Service Worker Gateway** (`inbrowser.link`, helia-service-worker-gateway):
+  every subdomain serves the same static page, which installs a service
+  worker. The worker runs the IPFS client in the browser, fetches and verifies
+  blocks itself, and answers every request on that origin. The server hosts
+  only the static files, and trust in content moves from the gateway operator
+  to verification in the browser. Dash Sites' gateway follows this model.
 
 ### ENS (eth.limo, eth.link)
 
@@ -245,113 +255,193 @@ and the extension all call the same functions.
   cost estimate; publish with per-chunk progress.
 - **CLI** `dash-sites`: `publish <dir> --name alice`, `point --content
   ipfs://<cid>`, `register`, `names`, `resolve`, `fetch`, `unpublish`, `gc`
-  (delete unreferenced chunks), `gateway` (run a local gateway).
+  (delete unreferenced chunks), `preview` (serve a folder locally as a
+  gateway would), `gateway` (run the server-rendered gateway locally).
 - Both use `@dashevo/evo-sdk` (wasm) directly against DAPI. There is no
   publishing server.
 
 ### Gateway
 
-A Node HTTP service behind Caddy, which terminates TLS.
+The gateway is a static shell. Every host `<label>.<domain>` serves the same
+three files, whatever the name: a bootstrap page, a small service worker, and
+the verifier (the Dash SDK, about 9 MB compressed, content-hashed and cached
+as immutable). The server holds no site content and makes no Platform
+queries for browsers.
 
-- **Hosts**: `GATEWAY_DOMAINS` is a list (`id.dashhq.org`, later `dash.dev`).
-  `<label>.<domain>` serves the site; the bare domain serves a landing page and
-  a JSON resolve API. Moving domains is a config and DNS change.
-- **DNS**: wildcard `*.id.dashhq.org` and the apex, DNS-only, to the gateway.
-- **TLS**: one wildcard certificate (`id.dashhq.org`, `*.id.dashhq.org`) by
-  ACME DNS-01. The gateway host answers the challenge itself:
-  `_acme-challenge.id.dashhq.org` is delegated to a challenge-only DNS
-  responder on the host, so no DNS-provider credentials live there.
-- **Resolution**: §4 with proof verification (`trusted` quorum keys today;
-  the SDK's `verified` mode, which proves quorum keys from a checkpoint, when
-  it ships in a release).
-- **Caching**: name and site record for 30 s (stale-while-revalidate 5 min);
-  verified chunks and files in bounded in-memory caches, keyed by hash.
-  Responses carry `ETag` (the file hash) and `Cache-Control: public,
-  max-age=60`. A change shows up within about a minute.
+- **First visit**: the bootstrap page registers the service worker for that
+  origin and reloads. From then on the worker answers every navigation and
+  subresource request on the origin, so relative links, CSS, scripts, images
+  and back/forward work as on any site, and the address bar shows a real
+  `https://alice.<domain>/` URL.
+- **What the worker does**: §4, in the browser. It takes the name from its
+  own hostname, proves the DPNS document and the owner's site record over
+  DAPI, loads the manifest, fetches the chunks a request needs, and checks
+  every chunk and file against its SHA-256 before answering. Anything that
+  does not verify is refused.
+- **What the browser contacts**: the gateway host for the shell; Dash Platform
+  evonodes (`<ip>:1443`, from the address list compiled into the SDK); and
+  the quorum key service `quorums.<network>.networks.dash.org` (see §6).
+  Nothing else. `e2e/shell.mjs` asserts this list in Chromium.
+- **Caching**: a proved answer is reused for 30 s, then served while a fresh
+  one is fetched. Verified chunks are kept in the origin's Cache Storage and
+  re-hashed on every read. The worker's saved state (the last record) is only
+  a hint: after a restart the worker shows the saved site at once and checks
+  it against Platform every time, whatever the saved state says about its own
+  age, and reloads the page if the site changed. Site code shares the origin
+  and could have written that state, so nothing in it is believed (§6).
 - **Serving**: GET/HEAD only. `/` → `/index.html`; `/dir/` →
   `/dir/index.html`; `/page` → `/page.html` when present; missing → the site's
-  `/404.html` with status 404; `spa` fallback. Content type from the manifest.
-- **Headers**: `X-Content-Type-Options: nosniff`, `Referrer-Policy`, HSTS,
-  `Origin-Agent-Cluster: ?1`, and the proved facts `X-Dash-Name`,
-  `X-Dash-Owner`, `X-Dash-Site-Revision`, `X-Dash-Content`,
-  `X-Dash-Proof-Height`. The only cookie is the owner-epoch cookie of §6.
-- **ACME**: `/.well-known/acme-challenge/` is never served from a site, and a
-  CAA record limits issuance to DNS-01, so a site cannot obtain a certificate
-  for its own gateway hostname.
-- **Abuse**: a denylist (name, owner identity, or content hash) answers 451;
-  per-IP rate limits; size limits; an abuse contact on the landing page. A
-  takedown removes a site from this gateway, not from Platform.
+  `/404.html` with status 404; `spa` fallback; single byte ranges. Content
+  type from the manifest, with `nosniff`.
+- **Host API**: under `/.well-known/dash/` on its own origin a site can read
+  `site.json` (its proved record, and `servedBy`: `browser` or `gateway`),
+  `manifest.json`, and `resolve/<name>`. A page therefore does not need to
+  know which host serves it. The showcase site uses this to show its own
+  record.
+- **After the first visit** the gateway is not needed: the worker is installed
+  and keeps serving from Platform if the gateway host is unreachable.
+  Browsers re-fetch `/sw.js` to look for updates, at most daily.
+- **Limits of the model**: a site cannot register its own service worker (the
+  origin's worker is the shell), and requests other than GET and HEAD get 405.
+  Private windows in Firefox have no service workers; the bootstrap page says
+  so.
+- **Server-rendered fallback**: the earlier design, a Node process that
+  resolves, verifies and serves content itself, still runs behind the same
+  hosts for clients that cannot run the shell: crawlers, link previews and
+  command-line tools, selected by `User-Agent`. It also serves the landing
+  page and a JSON resolve API on the bare domain. Browsers never reach it for
+  site content; stopping the process leaves sites working (`e2e/shell.mjs`
+  passes against a host whose process is stopped).
+- **Hosts, DNS, TLS**: wildcard `*.<domain>` and the apex, DNS-only, to the
+  host. One wildcard certificate by ACME DNS-01; the host answers the
+  challenge itself through an NS delegation of `_acme-challenge`, so no
+  DNS-provider credentials live there. A CAA record limits issuance to DNS-01
+  and `/.well-known/acme-challenge/` is never served from a site, so a site
+  cannot obtain a certificate for its own hostname.
+- **Abuse**: the shell holds no content, so the operator refuses a name by
+  host: a 451 notice, and a replacement `/sw.js` that removes the installed
+  worker (`deploy/denied.caddy.example`). The fallback process keeps its
+  denylist by name, owner and content hash. A takedown removes a site from
+  this gateway, not from Platform, and a browser that never checks back for
+  a worker update keeps its copy.
+- **Self-hosting**: the shell is three static files and works from any static
+  host with a wildcard name, including `*.localhost`
+  (`npm run serve -w @dash-sites/shell`).
 
 ### Extension (Chromium MV3; Firefox MV3 build from the same source)
 
 - **Navigation**: a declarativeNetRequest rule redirects `http(s)://<label>.dash/…`
-  to `https://<label>.<gateway>/…`, for page and frame navigations only. The
+  to `https://<label>.<gateway>/…`, for page and frame navigations only. That
+  host is the shell, so the site is fetched from Platform and verified in the
+  browser; the extension does not route content through anyone's server. The
   omnibox keyword `dash` opens a name directly. Chrome treats a bare
   `alice.dash` as a search because `.dash` is not a TLD it knows, so the
   extension also watches navigations (the `webNavigation` permission) and
   turns a search for exactly a `.dash` name into a visit. That can be turned
   off in the settings.
-- **Gateway choice**: default public gateway; the user can set another,
-  including a local one (`dash-sites gateway` on `*.localhost`), which is the
-  trustless setup, as with IPFS Companion and a local node.
-- **Independent check**: the popup resolves the current site itself, with
-  proofs over DAPI, compares the gateway's `X-Dash-*` claims (owner, revision,
-  content URI) with the proved record, and checks the page's file against the
-  hash in the proved manifest. This catches a gateway that is stale, broken or
-  serving a different site. It is an audit, not enforcement: the popup fetches
-  the page again, so a gateway built to deceive could answer that fetch
-  honestly, and MV3 cannot inspect the bytes a tab received.
-- Rejected: a PAC proxy that keeps `http://alice.dash` in the address bar. It
-  gives an insecure context (no service workers, no WebCrypto) and no TLS.
+- **Why not serve sites from the extension itself.** Bundling the shell would
+  remove the dependency on a static host, and was evaluated:
+  - An extension page (`chrome-extension://<id>/…`) is one origin for every
+    site. Site code there would have the extension's privileges, so it must
+    be sandboxed, and a sandboxed frame has an opaque origin: no storage, no
+    cookies, no service worker, and its requests are not seen by the
+    extension's worker, so every URL in HTML, CSS and scripts would have to
+    be rewritten to blobs. The address bar would show the extension URL.
+  - Chrome gives extensions no way to answer a request for a web origin with
+    their own bytes, and a service-worker script cannot be redirected, so an
+    extension cannot install the shell on `alice.<gateway>` without that host
+    answering.
+  - Firefox can rewrite response bodies (`webRequest.filterResponseData`) and
+    proxy `*.dash` (`proxy.onRequest`), which would keep `alice.dash` in the
+    address bar. It still needs some server to answer the proxied request,
+    and `http://alice.dash` is not a secure context (no service workers, no
+    WebCrypto), so the extension would have to answer every request itself.
+    Not built.
+  Real per-name origins with storage, a real URL, and verification in the
+  browser were judged worth more than removing the static host, whose role is
+  now three public files. The remaining dependency is bounded: the gateway
+  setting accepts any shell host, including one on the user's own machine
+  (`http://localhost:8080`), which is the no-third-party setup; and after
+  the first visit a site works without the host.
+- **Independent check**: the popup resolves the current site with its own
+  copy of the SDK, with proofs over DAPI, and compares the result with what
+  the page was served: the `X-Dash-*` facts (owner, revision, content URI)
+  and the SHA-256 of the page's file against the proved manifest. It reads
+  those from inside the tab, the only place a request takes the path the page
+  did. This catches a shell that is stale or broken. It is not a defence
+  against a hostile shell, which controls that same path.
 
 ## 6. Security
 
 - **Who controls a site**: the DPNS name's current `$ownerId`, proved. A site
   document from anyone else is never read.
-- **Proofs vs trust**: the gateway verifies proofs, so a lying DAPI node cannot
-  change a site. A browser user without the extension trusts the gateway
-  operator and its TLS, exactly as with eth.limo and dweb.link. Users who do
-  not want that run a local gateway (`dash-sites gateway`, on `*.localhost`).
-  One trusted party remains in every setup today: SDK 5.0.3 takes the quorum
-  public keys that proofs are checked against from the network's quorum
-  service. The SDK's `verified` mode, which proves those keys from a
-  checkpoint, removes it once it is in a release.
+- **Where trust sits.** Content trust rests on verification in the visitor's
+  browser, not on the gateway's server. A lying DAPI node cannot change a
+  site, and neither can the gateway's fallback process, which browsers do not
+  use. What remains trusted:
+  1. **The shell.** The code that verifies is delivered by the gateway host. A
+     dishonest or compromised host could send a different worker, to new
+     visitors or as an update. Mitigations: the shell is the same for every
+     name and built reproducibly from the repository; `shell.json` beside it
+     lists the SHA-256 of each file; the bootstrap page carries a CSP that
+     allows only its own script by hash; the verifier file is content-hashed.
+     None of these binds the host. Subresource Integrity cannot pin a
+     service-worker script, and browsers offer no way to pin one. The fix
+     available today is to serve the shell from a host the user controls
+     (their own machine). Signed, pinned web bundles would close it for
+     public hosts if browsers ship them.
+  2. **Quorum public keys.** SDK 5.0.3 verifies proofs against quorum public
+     keys it downloads from `quorums.<network>.networks.dash.org`, a service
+     run by Dash Core Group, over TLS. Whoever controls that service, together
+     with a lying DAPI node, could forge a proof. The evonode addresses are
+     compiled into the SDK, so no seed service is contacted. The SDK's
+     `verified` mode, which proves quorum keys from the Core chain, removes
+     this once it is in a release; until then it is the one centralized
+     service in the path, and it is not ours.
+  3. **Dash Platform's validators**, as for every Platform application.
 - **A name that changes hands**: one origin per name means a buyer's site would
-  inherit what browsers stored for the seller's site, and the seller's service
-  worker would keep running. The gateway sets one host-only cookie,
-  `__Host-dash-epoch=<owner>.<transferredAt>`. A page or service-worker
-  request whose cookie is missing or different is answered with
-  `Clear-Site-Data: "cache", "storage"`, which also unregisters service
-  workers. A visitor who returns after a sale starts clean on first load; an
-  old service worker dies at the browser's next update check (within a day).
+  inherit what browsers stored for the seller's site. The worker keeps the
+  owner epoch (`<owner>.<transferredAt>`) of the site it last proved. When a
+  check against Platform finds a different epoch it deletes the origin's
+  Cache Storage, IndexedDB databases and script-visible cookies, then sends
+  every open page through a reset page that clears `localStorage` and
+  `sessionStorage`. The previous owner's code cannot prevent the check: saved
+  state never delays it, and the worker is the shell's, not the site's. The
+  window is one page view: a returning visitor may see the saved site for the
+  seconds the check takes, then the page reloads onto the new owner's site.
+- **Stored chunks are not trusted**: site code can write to the origin's
+  Cache Storage, so the worker re-hashes every chunk it reads from there. A
+  poisoned entry is a cache miss.
 - **Origin isolation**: one site per subdomain, so `localStorage`, IndexedDB,
-  service workers and permissions are per name. The canonical-host redirect
-  keeps a name from having several origins.
+  and permissions are per name. The canonical-host redirect keeps a name from
+  having several origins.
 - **Cookies and the parent domain**: until the gateway domain is on the Public
   Suffix List, every site is same-site with everything else under the
   registrable domain. A site can set a cookie for the parent domain
   (`Domain=dashhq.org`) that sibling hosts then receive, read such cookies, or
-  set so many that sibling hosts reject requests. The gateway itself reads
-  only its `__Host-` cookie, which a subdomain cannot overwrite. The builder,
-  which handles identity keys, is therefore on a different registrable domain
-  (`thepasta.org`). The interim domain shares `dashhq.org` with other apps;
-  the lasting fix is a dedicated registrable domain for user content, on the
-  PSL (see §8).
+  set so many that sibling hosts reject requests. The shell reads no cookies.
+  The builder, which handles identity keys, is therefore on a different
+  registrable domain (`thepasta.org`). The interim domain shares `dashhq.org`
+  with other apps; the lasting fix is a dedicated registrable domain for user
+  content, on the PSL (see §8). The PSL has a cost here: browsers partition
+  the HTTP cache by site, so once each name is its own site, each name's
+  first visit downloads the verifier again.
 - **Phishing and reputation**: user content under `dash.dev` shares its
   reputation with it (Safe Browsing flags by registrable domain unless the
   suffix is on the PSL). Recommendation for the final domain: PSL entry before
   launch, or a dedicated domain.
 - **Homographs**: DPNS normalization collapses `o/0`, `i/l/1`. Labels are
   ASCII, but DPNS allows `xn--…` labels, which browsers display as Unicode;
-  the gateway, CLI, builder and extension refuse them.
+  the shell, gateway, CLI, builder and extension refuse them.
 - **Contested names**: resolve only after the masternode vote awards them.
 - **Builder keys**: the key stays in the page's memory and is never stored;
   the builder is on a different registrable domain from user sites and sets a
   strict CSP (no inline or third-party script, no third-party requests except
   to Dash Platform nodes).
-- **Gateway hardening**: bounded sizes everywhere, paths normalized before
-  lookup, no filesystem paths derived from requests, runs as an unprivileged systemd
-  service with a locked-down sandbox, holds no keys or DNS credentials.
+- **Gateway host hardening**: the fallback process has bounded sizes
+  everywhere, normalizes paths before lookup, derives no filesystem paths
+  from requests, runs as an unprivileged systemd service with a locked-down
+  sandbox, and holds no keys or DNS credentials.
 
 ## 7. Networks
 
@@ -365,18 +455,18 @@ DASH), then the contract id in `packages/core/src/config.ts` and
 
 | Piece | Where | Why |
 | --- | --- | --- |
-| Gateway | DigitalOcean droplet `dash-sites-gateway` (1 GB, nyc3): the gateway as a systemd service, Caddy, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org` |
+| Gateway | DigitalOcean droplet `dash-sites-gateway` (1 GB, nyc3): Caddy serving the static shell on every name's host, the fallback process as a systemd service, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org`. The shell alone could sit on any static host with wildcard names |
 | DNS | Cloudflare zone `dashhq.org`: `id` and `*.id` to the droplet (DNS-only), `_acme-challenge.id` delegated to the droplet, CAA for Let's Encrypt DNS-01 | Existing access |
 | Certificate | Let's Encrypt wildcard for `id.dashhq.org` and `*.id.dashhq.org`, renewed daily-checked by a systemd timer. `agnos` answers the DNS-01 challenge itself on port 53 during a renewal, so the host holds no DNS credentials | |
 | Builder | GitHub Pages from the repo, `dash-sites.thepasta.org` | Static, free, deploys from CI, different registrable domain from user sites |
 | Extension | Zip on GitHub Releases; store listing later | Store accounts are the user's |
 
-`deploy/provision.sh` sets up a fresh host and `deploy/deploy.sh` installs a
-new gateway build.
+`deploy/provision.sh` sets up a fresh host and `deploy/deploy.sh` installs
+the shell, the fallback process and the Caddy configuration.
 
-**Moving to `dash.dev`.** The gateway serves every domain in
-`GATEWAY_DOMAINS`, and the builder and extension take the gateway domain as a
-build setting and a user setting.
+**Moving to `dash.dev`.** The shell reads the name from whatever host it is
+served on, so it needs no change. The gateway domain is `GATEWAY_DOMAINS` on
+the host, a build setting of the builder, and a user setting of the extension.
 
 1. Decide the host. Serving sites directly under `dash.dev` puts user content
    on the same registrable domain as dash.dev's own pages, with the cookie and
@@ -385,15 +475,19 @@ build setting and a user setting.
    must be `dash.dev`, reserve its existing hostnames in `RESERVED_LABELS`.
 2. DNS for the new domain: wildcard and apex records to the gateway, and the
    `_acme-challenge` NS delegation and CAA records as for `id.dashhq.org`.
-3. Add the domain to `GATEWAY_DOMAINS` and to `deploy/provision.sh`'s
-   certificate, redeploy.
-4. Rebuild the builder with `GATEWAY_DOMAIN`, release the extension with the
-   new default, and redirect the old domain's hosts to the new one so that a
-   name keeps a single origin.
+3. Provision the certificate for the new domain (`deploy/provision.sh
+   <domain> <ip>`), put the domain first in `GATEWAY_DOMAINS`, and run
+   `deploy/deploy.sh`, which renders the Caddy configuration for it.
+4. Rebuild the builder with `GATEWAY_DOMAIN` and release the extension with
+   the new default.
+5. Retire the old domain: serve `denied-sw.js` as its `/sw.js` so installed
+   workers remove themselves, and redirect its hosts to the new domain. What
+   a site stored in the browser under the old origin does not move with it.
 
 ## 9. Out of scope for v1
 
 Subdomain names (`blog.alice.dash`), custom DNS domains pointing at a name
 (DNSLink in reverse), serving `ipfs://` content from the gateway, Arweave,
-private sites, a site directory, a service-worker verifying client, starting
-contested-name votes from the builder.
+private sites, a site directory, a site's own service worker, form posts,
+serving sites from inside the extension, starting contested-name votes from
+the builder.
