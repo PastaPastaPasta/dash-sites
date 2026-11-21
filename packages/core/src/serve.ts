@@ -16,7 +16,6 @@ export function decodePathname(pathname: string): string | undefined {
     } catch {
       return undefined;
     }
-    // eslint-disable-next-line no-control-regex
     if (segment === '.' || segment === '..' || /[\u0000-\u001f\u007f\\/]/.test(segment)) return undefined;
     segments.push(segment);
   }

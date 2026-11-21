@@ -12,16 +12,20 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "tsc -b && npm run bundle -w @dash-sites/gateway && npm run bundle -w @dash-sites/cli && node packages/extension/build.mjs && node packages/builder/build.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "e2e:extension": "node e2e/extension.mjs",
+    "e2e:builder": "node e2e/builder.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "esbuild": "^0.25.0",
     "playwright": "^1.65.1",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "eslint": "^9.17.0",
+    "typescript-eslint": "^8.18.0"
   }
 }

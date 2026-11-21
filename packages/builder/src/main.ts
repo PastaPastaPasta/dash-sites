@@ -34,7 +34,7 @@ let writer: EvoWriter | undefined;
 let names: DomainRecord[] = [];
 let chosen: DomainRecord | undefined;
 let mode: 'write' | 'upload' = 'write';
-let draft: PageDraft = loadDraft();
+const draft: PageDraft = loadDraft();
 let upload: SiteFile[] = [];
 let bundle: SiteBundle | undefined;
 let publishing = false;

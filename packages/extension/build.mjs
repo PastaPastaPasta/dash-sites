@@ -1,27 +1,22 @@
-import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { zipSync } from 'fflate';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const out = join(root, 'build');
 const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 rmSync(out, { recursive: true, force: true });
 
-function icons(dir) {
-  mkdirSync(join(dir, 'icons'), { recursive: true });
-  for (const size of [16, 32, 48, 128]) {
-    const s = size / 128;
-    const n = (v) => (v * s).toFixed(2);
-    execFileSync('magick', [
-      '-size', `${size}x${size}`, 'xc:none',
-      '-fill', '#008de4', '-draw', `roundrectangle 0,0 ${size - 1},${size - 1} ${n(28)},${n(28)}`,
-      '-fill', 'none', '-stroke', 'white', '-strokewidth', n(11), '-draw', `circle ${n(56)},${n(56)} ${n(56)},${n(27)}`,
-      '-stroke', 'none', '-fill', 'white', '-draw', `circle ${n(102)},${n(100)} ${n(102)},${n(89)}`,
-      join(dir, 'icons', `${size}.png`),
-    ]);
+function tree(dir, prefix = '') {
+  const out = {};
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) Object.assign(out, tree(path, `${prefix}${entry.name}/`));
+    else out[`${prefix}${entry.name}`] = [new Uint8Array(readFileSync(path)), { mtime: new Date('2026-01-01T00:00:00Z') }];
   }
+  return out;
 }
 
 for (const target of ['chrome', 'firefox']) {
@@ -40,7 +35,6 @@ for (const target of ['chrome', 'firefox']) {
     logLevel: 'warning',
   });
   cpSync(join(root, 'static'), dir, { recursive: true });
-  icons(dir);
   const manifest = JSON.parse(readFileSync(join(root, 'static', 'manifest.json'), 'utf8'));
   manifest.version = version;
   if (target === 'firefox') {
@@ -50,6 +44,6 @@ for (const target of ['chrome', 'firefox']) {
   }
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   const zip = join(out, `dash-sites-extension-${target}-${version}.zip`);
-  execFileSync('zip', ['-q', '-r', '-X', zip, '.'], { cwd: dir });
+  writeFileSync(zip, zipSync(tree(dir), { level: 9 }));
   console.log(zip);
 }
