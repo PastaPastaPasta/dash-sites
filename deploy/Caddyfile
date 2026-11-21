@@ -1,4 +1,5 @@
-# Rendered by deploy.sh: __DOMAIN__ is the gateway domain.
+# Rendered by deploy.sh from the host's gateway.env: __DOMAIN__ is the gateway domain and
+# __RESERVED_HOSTS__ its RESERVED_LABELS as hosts.
 {
 	auto_https off
 	admin localhost:2019
@@ -20,6 +21,12 @@ https://__DOMAIN__ {
 https://*.__DOMAIN__ {
 	import dash_sites_tls
 	import /etc/dash-sites/denied.caddy
+
+	# Hosts that are not names (RESERVED_LABELS) never get the shell.
+	@reserved host __RESERVED_HOSTS__
+	handle @reserved {
+		reverse_proxy 127.0.0.1:8080
+	}
 
 	# Clients that cannot run the shell (crawlers, link previews, command-line tools)
 	# get a copy rendered by the gateway process instead.

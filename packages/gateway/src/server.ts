@@ -192,6 +192,14 @@ export function createGateway(options: GatewayOptions): RequestListener {
 
     const cached = await resolutions.get(normalized);
     const resolution = cached.value;
+    const blocked =
+      'ownerId' in resolution && (config.denylist.owners.has(resolution.ownerId) || ('site' in resolution && config.denylist.content.has(resolution.site.content)));
+    if (url.pathname.startsWith(HOST_API) && !blocked) {
+      const path = url.pathname.slice(HOST_API.length);
+      if (path === 'site.json') return json(200, { ...describe(resolution, domain), servedBy: 'gateway' }, domain);
+      if (path.startsWith('resolve/')) return lookup(path.slice('resolve/'.length), domain);
+      if (path !== 'manifest.json') return json(404, { status: 'not-found' }, domain);
+    }
     if (resolution.status === 'invalid') return html(404, messagePage('404', 'Not a DPNS name', 'This host is not a valid Dash Platform name.', config), domain);
     if (resolution.status === 'unregistered') {
       return html(404, messagePage('Not registered', `${dashName} is not registered`, 'Nobody owns this name on Dash Platform yet.', config), domain);
@@ -215,13 +223,6 @@ export function createGateway(options: GatewayOptions): RequestListener {
       ...dashHeaders(resolution),
       ...(cached.stale ? { 'X-Dash-Stale': '1' } : {}),
     };
-
-    if (url.pathname.startsWith(HOST_API)) {
-      const path = url.pathname.slice(HOST_API.length);
-      if (path === 'site.json') return json(200, { ...describe(resolution, domain), servedBy: 'gateway' }, domain);
-      if (path.startsWith('resolve/')) return lookup(path.slice('resolve/'.length), domain);
-      if (path !== 'manifest.json') return json(404, { status: 'not-found' }, domain);
-    }
 
     const epoch = `${resolution.ownerId}.${resolution.domain.transferredAt}`;
     const isDocument = req.headers['sec-fetch-dest'] === 'document';

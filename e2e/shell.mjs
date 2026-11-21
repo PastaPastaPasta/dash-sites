@@ -58,6 +58,10 @@ try {
   check(assets.fonts > 0, `${assets.fonts} fonts loaded`);
   if (shots) await page.screenshot({ path: join(shots, 'shell-home.png') });
 
+  await page.evaluate(() => localStorage.setItem('dash-sites-e2e', 'kept'));
+  await page.reload({ waitUntil: 'load' });
+  check((await page.evaluate(() => localStorage.getItem('dash-sites-e2e'))) === 'kept', 'the site has its own storage, and it survives a reload');
+
   const next = assets.links[0];
   if (next) {
     await Promise.all([page.waitForURL(`${origin}${next}`), page.click(`a[href="${next}"]`)]);

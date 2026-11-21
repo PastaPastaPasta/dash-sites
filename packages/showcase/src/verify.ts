@@ -4,9 +4,9 @@ import { EvoReader } from '@dash-sites/core/evo';
 export type Report = (ok: boolean, text: string) => void;
 
 /**
- * Checks the site this page belongs to without trusting the gateway that served it: proves the
- * name and the site record against Dash Platform, reads every file from Platform, and compares
- * each one with what the gateway serves.
+ * Checks the site this page belongs to a second time, from inside the page: proves the name and
+ * the site record against Dash Platform with a separate copy of the SDK, reads every file from
+ * Platform, and compares each one with what the page is served.
  */
 export async function verify(label: string, network: Network, report: Report): Promise<boolean> {
   const reader = await EvoReader.connect(networkConfig(network));
@@ -28,8 +28,8 @@ export async function verify(label: string, network: Network, report: Report): P
     const response = await fetch(path, { cache: 'no-store' });
     const served = sha256Hex(new Uint8Array(await response.arrayBuffer()));
     if (response.ok && served === published) good++;
-    else report(false, `${path}: the gateway served different bytes than the owner published`);
+    else report(false, `${path}: this page was served different bytes than the owner published`);
   }
-  if (good === paths.length) report(true, `All ${good} files read from Platform match what this gateway served, byte for byte`);
+  if (good === paths.length) report(true, `All ${good} files read from Platform match what this page is served, byte for byte`);
   return good === paths.length;
 }

@@ -6,8 +6,9 @@ TARGET=${1:?ssh target, e.g. root@gateway-host}
 shift
 cd "$(dirname "$0")/.."
 
-read -r DOMAIN NETWORK BUILDER_URL CONTRACT_ID < <(ssh "$@" "$TARGET" '. /etc/dash-sites/gateway.env; echo "${GATEWAY_DOMAINS%%,*} ${NETWORK:-testnet} ${BUILDER_URL:--} ${CONTRACT_ID:-}"')
+read -r DOMAIN NETWORK BUILDER_URL RESERVED CONTRACT_ID < <(ssh "$@" "$TARGET" '. /etc/dash-sites/gateway.env; echo "${GATEWAY_DOMAINS%%,*} ${NETWORK:-testnet} ${BUILDER_URL:--} ${RESERVED_LABELS:-www} ${CONTRACT_ID:-}"')
 [ "$BUILDER_URL" = - ] && unset BUILDER_URL
+RESERVED_HOSTS=$(echo "$RESERVED" | tr ',' '\n' | sed "s/\$/.$DOMAIN/" | tr '\n' ' ')
 
 npx tsc -b
 npm run bundle -w @dash-sites/gateway
@@ -21,7 +22,7 @@ for (const file of readdirSync("packages/shell/dist").filter((name) => name.ends
   const data = readFileSync(`packages/shell/dist/${file}`);
   writeFileSync(`packages/shell/dist/${file}.br`, brotliCompressSync(data, { params: { [constants.BROTLI_PARAM_QUALITY]: 11, [constants.BROTLI_PARAM_SIZE_HINT]: data.length } }));
 }'
-sed "s/__DOMAIN__/$DOMAIN/g" deploy/Caddyfile > packages/shell/dist/Caddyfile
+sed -e "s/__RESERVED_HOSTS__/$RESERVED_HOSTS/" -e "s/__DOMAIN__/$DOMAIN/g" deploy/Caddyfile > packages/shell/dist/Caddyfile
 
 ssh "$@" "$TARGET" 'rm -rf /opt/dash-sites/shell.new && mkdir -p /opt/dash-sites/shell.new && touch /etc/dash-sites/denied.caddy'
 scp "$@" packages/gateway/bundle/gateway.mjs "$TARGET:/opt/dash-sites/gateway.mjs.new"

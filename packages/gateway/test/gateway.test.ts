@@ -197,6 +197,9 @@ describe('gateway', () => {
     const other = await h.get('alice.id.example.org', '/.well-known/dash/resolve/nobody');
     expect(JSON.parse(other.body.toString())).toMatchObject({ status: 'unregistered' });
     expect((await h.get('alice.id.example.org', '/.well-known/dash/other')).status).toBe(404);
+    const nobody = await h.get('nobody.id.example.org', '/.well-known/dash/site.json');
+    expect(nobody.status).toBe(200);
+    expect(JSON.parse(nobody.body.toString())).toMatchObject({ status: 'unregistered', servedBy: 'gateway' });
     expect((await h.get('id.example.org', '/healthz')).body.toString()).toBe('ok\n');
   });
 

@@ -19,15 +19,28 @@ import {
   type Resolution,
 } from '@dash-sites/core';
 
-/** What the host keeps between runs. Site code shares the origin and can rewrite it, so nothing here is trusted: see `current`. */
+/**
+ * What the host keeps between runs. Site code shares the origin and can rewrite or delete it,
+ * so it is never the source of what is served: it only tells a new worker which owner the
+ * browser's stored data belongs to. Missing or malformed state means "unknown", which is
+ * treated as a change of owner.
+ */
 export interface Saved {
-  resolution: Resolution;
-  /** Page storage the worker cannot reach still holds the previous owner's data. */
+  /** Owner and transfer time of the name when its data was last cleared. */
+  epoch: string;
+  /** Page storage the worker cannot reach still holds a previous owner's data. */
   resetPending: boolean;
 }
 
+export function parseSaved(value: unknown): Saved | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { epoch, resetPending } = value as Record<string, unknown>;
+  return typeof epoch === 'string' && typeof resetPending === 'boolean' ? { epoch, resetPending } : undefined;
+}
+
 export interface Store {
-  loadState(): Promise<Saved | undefined>;
+  /** Whatever was saved, unchecked. */
+  loadState(): Promise<unknown>;
   saveState(state: Saved): Promise<void>;
   getChunk(hash: string): Promise<Uint8Array | undefined>;
   putChunk(hash: string, data: Uint8Array): Promise<void>;
@@ -58,34 +71,32 @@ export interface HostOptions {
   store: Store;
   builderUrl: string;
   now?: () => number;
-  /** A check against Platform found a different site than the one already shown. */
-  onChange?: (kind: 'content' | 'owner') => void;
+  /** The name changed owner while this worker was serving it: open pages show the previous owner's site. */
+  onOwnerChange?: () => void;
+  nonce?: () => string;
   log?: (entry: Record<string, unknown>) => void;
 }
 
 type Ok = Extract<Resolution, { status: 'ok' }>;
 
 const FRESH_MS = 30_000;
-/** How long after showing a saved site a newer one may replace it by reloading the page. */
-const RELOAD_WINDOW_MS = 20_000;
 export const RESET_PATH = `${HOST_API}reset`;
 /** Where a page goes to have its storage cleared before returning to `url`. */
 export const resetLocation = (url: URL): string => `${RESET_PATH}#${encodeURIComponent(url.pathname + url.search)}`;
 
-const epochOf = (resolution: Resolution): string | undefined =>
-  'ownerId' in resolution ? `${resolution.ownerId}.${resolution.domain.transferredAt}` : undefined;
-const contentOf = (resolution: Resolution): string => ('site' in resolution ? resolution.site.content : resolution.status);
+const epochOf = (resolution: Resolution): string => ('ownerId' in resolution ? `${resolution.ownerId}.${resolution.domain.transferredAt}` : '');
 
-const RESET_PAGE = hostPage(
-  'Clearing old data',
-  `<h1>One moment</h1><p>This name has a new owner. Data the previous owner's site stored in this browser is being removed.</p>
+const resetPage = (nonce: string): string =>
+  hostPage(
+    'Clearing old data',
+    `<h1>One moment</h1><p>Data a previous owner of this name may have stored in this browser is being removed.</p>
 <script>
 try{localStorage.clear();sessionStorage.clear();}catch(e){}
 document.cookie.split(';').forEach(function(c){document.cookie=c.split('=')[0].trim()+'=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';});
-var to=decodeURIComponent(location.hash.slice(1));
-location.replace(to.charAt(0)==='/'&&to.charAt(1)!=='/'?to:'/');
+function back(){var to='/';try{var u=new URL(decodeURIComponent(location.hash.slice(1)),location.origin);if(u.origin===location.origin)to=u.pathname+u.search;}catch(e){}location.replace(to);}
+fetch('${RESET_PATH}?done=${nonce}',{cache:'no-store'}).then(back,back);
 </script>`,
-);
+  );
 
 /**
  * Serves one name's site from Dash Platform. Runs wherever the proofs are checked: in the
@@ -93,12 +104,10 @@ location.replace(to.charAt(0)==='/'&&to.charAt(1)!=='/'?to:'/');
  */
 export class SiteHost {
   private readonly now: () => number;
-  /** Set once Platform has answered in this run; saved state never counts. */
   private proved?: { resolution: Resolution; at: number };
   private saved?: Saved;
-  private loaded = false;
   private refreshing?: Promise<Resolution>;
-  private shownSavedAt = 0;
+  private resetNonce?: string;
   private readonly manifests = new Map<string, Promise<Manifest>>();
 
   constructor(private readonly options: HostOptions) {
@@ -106,27 +115,18 @@ export class SiteHost {
   }
 
   /**
-   * The site to serve now. Saved state is shown at once and checked against Platform in the
-   * background every time, whatever its age says, because the previous owner's code could have written it.
+   * The site to serve now. A new worker serves nothing until Platform has answered: a site kept
+   * from an earlier run could be a previous owner's, and running its code would let it tamper
+   * with the saved state before the check finishes. After that, answers are reused for 30
+   * seconds and then refreshed without making the page wait.
    */
   private async current(request: HostRequest): Promise<Resolution> {
-    if (this.proved) {
-      if (this.now() - this.proved.at >= FRESH_MS) this.background(request);
-      return this.proved.resolution;
+    if (!this.proved) return this.refresh();
+    if (this.now() - this.proved.at >= FRESH_MS) {
+      const work = this.refresh().catch((error: unknown) => this.options.log?.({ event: 'refresh-failed', error: String(error) }));
+      request.waitUntil?.(work);
     }
-    if (!this.loaded) {
-      this.saved = await this.options.store.loadState().catch(() => undefined);
-      this.loaded = true;
-    }
-    if (!this.saved) return this.refresh();
-    if (request.navigation) this.shownSavedAt = this.now();
-    this.background(request);
-    return this.saved.resolution;
-  }
-
-  private background(request: HostRequest): void {
-    const work = this.refresh().catch((error: unknown) => this.options.log?.({ event: 'refresh-failed', error: String(error) }));
-    request.waitUntil?.(work);
+    return this.proved.resolution;
   }
 
   private refresh(): Promise<Resolution> {
@@ -138,22 +138,48 @@ export class SiteHost {
 
   private async check(): Promise<Resolution> {
     const resolution = await resolveName(await this.options.reader(), this.options.label);
-    if (this.proved && 'meta' in resolution && 'meta' in this.proved.resolution && resolution.meta.height < this.proved.resolution.meta.height) {
-      return this.proved.resolution;
-    }
-    const before = this.proved?.resolution ?? this.saved?.resolution;
-    const ownerChanged = before !== undefined && epochOf(before) !== undefined && epochOf(before) !== epochOf(resolution);
-    const contentChanged = before !== undefined && contentOf(before) !== contentOf(resolution);
+    const before = this.proved?.resolution;
+    if (before && 'meta' in resolution && 'meta' in before && resolution.meta.height < before.meta.height) return before;
+    if (!before) this.saved = parseSaved(await this.options.store.loadState().catch(() => undefined));
+    const epoch = epochOf(resolution);
+    const ownerChanged = (before ? epochOf(before) : this.saved?.epoch) !== epoch;
     if (ownerChanged) {
-      await this.options.store.wipe();
+      await this.options.store.wipe().catch((error: unknown) => this.options.log?.({ event: 'wipe-failed', error: String(error) }));
       this.manifests.clear();
+      this.saved = { epoch, resetPending: true };
+      await this.options.store.saveState(this.saved).catch(() => undefined);
     }
     this.proved = { resolution, at: this.now() };
-    this.saved = { resolution, resetPending: ownerChanged || (this.saved?.resetPending ?? false) };
-    await this.options.store.saveState(this.saved).catch(() => undefined);
-    if (ownerChanged) this.options.onChange?.('owner');
-    else if (contentChanged && this.now() - this.shownSavedAt < RELOAD_WINDOW_MS) this.options.onChange?.('content');
+    if (ownerChanged && before) this.options.onOwnerChange?.();
     return resolution;
+  }
+
+  /**
+   * The page that clears what only a page can reach. It is served, with a one-time code, only to
+   * a page load while a reset is pending, and the reset stays pending until that page reports back
+   * with the code, so a link to this address cannot erase a site's data and a frame cannot dismiss it.
+   */
+  private async reset(request: HostRequest): Promise<Reply> {
+    const done = request.url.searchParams.get('done');
+    if (done !== null) {
+      if (this.saved?.resetPending && done === this.resetNonce) {
+        this.saved = { ...this.saved, resetPending: false };
+        this.resetNonce = undefined;
+        await this.options.store.saveState(this.saved).catch(() => undefined);
+      }
+      return { status: 204, headers: { 'Cache-Control': 'no-store' } };
+    }
+    if (!request.navigation || !this.saved?.resetPending) return { status: 302, headers: { Location: '/', 'Cache-Control': 'no-store' } };
+    this.resetNonce = (this.options.nonce ?? (() => crypto.randomUUID()))();
+    return {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+      },
+      body: resetPage(this.resetNonce),
+    };
   }
 
   private chunks(ownerId: string): ChunkSource {
@@ -208,22 +234,17 @@ export class SiteHost {
 
   async respond(request: HostRequest): Promise<Reply> {
     const { url } = request;
-    if (url.pathname === RESET_PATH) {
-      return { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, body: RESET_PAGE };
-    }
     const dashName = `${escapeHtml(this.options.label)}.dash`;
     let resolution: Resolution;
     try {
       resolution = await this.current(request);
     } catch (error) {
       this.options.log?.({ event: 'resolve-failed', error: String(error) });
+      if (url.pathname.startsWith(HOST_API)) return this.json(503, { status: 'unavailable' });
       return this.page(503, 'Unavailable', 'Dash Platform could not be reached', `Your browser could not get a proved answer about <code>${dashName}</code> from Dash Platform. Reload to try again.`);
     }
-    if (request.navigation && this.saved?.resetPending) {
-      this.saved = { ...this.saved, resetPending: false };
-      await this.options.store.saveState(this.saved).catch(() => undefined);
-      return { status: 302, headers: { Location: resetLocation(url), 'Cache-Control': 'no-store' } };
-    }
+    if (url.pathname === RESET_PATH) return this.reset(request);
+    if (request.navigation && this.saved?.resetPending) return { status: 302, headers: { Location: resetLocation(url), 'Cache-Control': 'no-store' } };
     if (url.pathname.startsWith(HOST_API)) {
       const path = url.pathname.slice(HOST_API.length);
       if (path === 'site.json') return this.json(200, { ...describeResolution(resolution, this.options.network), servedBy: 'browser' });
@@ -280,7 +301,7 @@ export class SiteHost {
   }
 }
 
-/** Parses a single `bytes=` range. Anything else is answered with the whole file. */
+/** Parses a single `bytes=` range. Anything else, including a range that ends before it starts, is answered with the whole file. */
 export function parseRange(header: string | null | undefined, size: number): [number, number] | 'unsatisfiable' | undefined {
   const match = /^bytes=(\d*)-(\d*)$/.exec(header?.trim() ?? '');
   if (!match || (match[1] === '' && match[2] === '')) return undefined;
@@ -289,6 +310,7 @@ export function parseRange(header: string | null | undefined, size: number): [nu
     return length > 0 ? [size - length, size - 1] : 'unsatisfiable';
   }
   const start = Number(match[1]);
+  if (match[2] !== '' && Number(match[2]) < start) return undefined;
   const end = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1);
-  return start < size && start <= end ? [start, end] : 'unsatisfiable';
+  return start < size ? [start, end] : 'unsatisfiable';
 }

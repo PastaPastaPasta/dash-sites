@@ -24,10 +24,9 @@ function connect(): Promise<PlatformReader> {
   return reader;
 }
 
-async function reloadClients(kind: 'content' | 'owner'): Promise<void> {
+async function resetClients(): Promise<void> {
   for (const client of await self.clients.matchAll({ type: 'window' })) {
-    const target = kind === 'owner' ? resetLocation(new URL(client.url)) : client.url;
-    await client.navigate(target).catch(() => undefined);
+    await client.navigate(resetLocation(new URL(client.url))).catch(() => undefined);
   }
 }
 
@@ -37,7 +36,7 @@ const host = new SiteHost({
   reader: connect,
   store: new BrowserStore(),
   builderUrl: __BUILDER_URL__,
-  onChange: (kind) => void reloadClients(kind),
+  onOwnerChange: () => void resetClients(),
   log: (entry) => console.warn('dash-sites', entry),
 });
 
@@ -45,8 +44,13 @@ function toResponse(reply: Reply, head: boolean): Response {
   return new Response(head || reply.body === undefined ? null : (reply.body as BodyInit), { status: reply.status, headers: reply.headers });
 }
 
-self.addEventListener('install', () => {
-  importScripts(__VERIFIER__);
+self.addEventListener('install', (event) => {
+  try {
+    importScripts(__VERIFIER__);
+  } catch (error) {
+    event.waitUntil(Promise.reject(error));
+    return;
+  }
   void self.skipWaiting();
 });
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));

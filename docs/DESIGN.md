@@ -284,11 +284,12 @@ queries for browsers.
   Nothing else. `e2e/shell.mjs` asserts this list in Chromium.
 - **Caching**: a proved answer is reused for 30 s, then served while a fresh
   one is fetched. Verified chunks are kept in the origin's Cache Storage and
-  re-hashed on every read. The worker's saved state (the last record) is only
-  a hint: after a restart the worker shows the saved site at once and checks
-  it against Platform every time, whatever the saved state says about its own
-  age, and reloads the page if the site changed. Site code shares the origin
-  and could have written that state, so nothing in it is believed (§6).
+  re-hashed on every read. A worker that has just started serves nothing
+  until Platform has answered: it keeps no record of the last site, because
+  site code shares the origin and could have rewritten it, and showing a
+  remembered site would run that code before the check (§6). The cost is one
+  proof query (about a second) on the first page load after the browser has
+  stopped the worker, and no offline viewing.
 - **Serving**: GET/HEAD only. `/` → `/index.html`; `/dir/` →
   `/dir/index.html`; `/page` → `/page.html` when present; missing → the site's
   `/404.html` with status 404; `spa` fallback; single byte ranges. Content
@@ -369,7 +370,9 @@ queries for browsers.
   and the SHA-256 of the page's file against the proved manifest. It reads
   those from inside the tab, the only place a request takes the path the page
   did. This catches a shell that is stale or broken. It is not a defence
-  against a hostile shell, which controls that same path.
+  against a hostile shell, which controls that same path, and a site's own
+  script could interfere with the reading; the owner, revision and proof
+  height the popup shows come from the extension's own query either way.
 
 ## 6. Security
 
@@ -400,15 +403,27 @@ queries for browsers.
      service in the path, and it is not ours.
   3. **Dash Platform's validators**, as for every Platform application.
 - **A name that changes hands**: one origin per name means a buyer's site would
-  inherit what browsers stored for the seller's site. The worker keeps the
-  owner epoch (`<owner>.<transferredAt>`) of the site it last proved. When a
-  check against Platform finds a different epoch it deletes the origin's
-  Cache Storage, IndexedDB databases and script-visible cookies, then sends
-  every open page through a reset page that clears `localStorage` and
-  `sessionStorage`. The previous owner's code cannot prevent the check: saved
-  state never delays it, and the worker is the shell's, not the site's. The
-  window is one page view: a returning visitor may see the saved site for the
-  seconds the check takes, then the page reloads onto the new owner's site.
+  inherit what browsers stored for the seller's site. The worker saves one
+  fact between runs: the owner epoch (`<owner>.<transferredAt>`) the origin's
+  stored data belongs to. On start it proves the current epoch before serving
+  anything and compares. If they differ, or the saved value is missing or
+  malformed, it deletes the origin's Cache Storage, IndexedDB databases,
+  private file system, storage buckets, push subscription and script-visible
+  cookies, then sends the next page load through a reset page that clears
+  `localStorage` and `sessionStorage`. The reset stays pending until that
+  page reports back with a one-time code, and the page is served only while a
+  reset is pending, so a link cannot erase a site's data and a frame cannot
+  dismiss the reset. A first visit goes through the same reset once.
+  - The previous owner's code cannot suppress this by deleting or corrupting
+    the saved value: unknown means reset, and none of its code runs in a
+    fresh worker before the check.
+  - Residual: a page of the previous owner's site that is open at the moment
+    of the transfer keeps running until the worker's next check (within 30 s
+    of the next request) navigates it away. In that window it can still
+    write to storage, including the saved epoch. Closing that fully needs an
+    origin per owner epoch rather than per name.
+  - Not cleared: permissions the visitor granted the origin (notifications,
+    camera, location). Script cannot revoke them.
 - **Stored chunks are not trusted**: site code can write to the origin's
   Cache Storage, so the worker re-hashes every chunk it reads from there. A
   poisoned entry is a cache miss.
