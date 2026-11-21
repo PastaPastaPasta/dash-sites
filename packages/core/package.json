@@ -1,0 +1,33 @@
+{
+  "name": "@dash-sites/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./evo": {
+      "types": "./dist/evo.d.ts",
+      "import": "./dist/evo.js"
+    },
+    "./memory": {
+      "types": "./dist/memory.d.ts",
+      "import": "./dist/memory.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@dashevo/evo-sdk": "5.0.3",
+    "@noble/hashes": "^1.6.1",
+    "fflate": "^0.8.2",
+    "@scure/base": "^1.2.1"
+  }
+}
