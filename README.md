@@ -76,8 +76,7 @@ dash-sites resolve alice
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
 ```
 
-`--identity-file` takes the JSON that [dash-bridge](https://bridge.thepasta.org)
-writes; `--identity <id>` with `DASH_SITES_KEY=<WIF>` works too. Storage costs
+`--identity-file` takes the identity JSON that dash-bridge writes; `--identity <id>` with `DASH_SITES_KEY=<WIF>` works too. Storage costs
 about 0.3 DASH per megabyte, paid once; deleting old chunks refunds most of it.
 Testnet funds: https://faucet.thepasta.org.
 
