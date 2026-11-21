@@ -1,0 +1,16 @@
+{
+  "name": "@dash-sites/builder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -b && node build.mjs"
+  },
+  "dependencies": {
+    "@dash-sites/core": "0.1.0",
+    "@fontsource-variable/bricolage-grotesque": "^5.1.0",
+    "fflate": "^0.8.2",
+    "marked": "^15.0.0"
+  }
+}

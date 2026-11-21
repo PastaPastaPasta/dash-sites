@@ -12,6 +12,9 @@
     },
     {
       "path": "packages/extension"
+    },
+    {
+      "path": "packages/builder"
     }
   ]
 }
