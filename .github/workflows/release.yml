@@ -18,8 +18,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
       - run: npm run build
+      - run: npm test
       - name: Package the shell
         run: tar -C packages/shell/dist -czf dash-sites-shell.tar.gz .
       - name: Publish
