@@ -5,8 +5,12 @@
   "description": "Websites on Dash Platform DPNS names: builder, gateway and browser extension",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=22" },
-  "workspaces": ["packages/*"],
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "tsc -b",
@@ -16,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "esbuild": "^0.25.0",
+    "playwright": "^1.65.1",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

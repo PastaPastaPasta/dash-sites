@@ -220,6 +220,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
     const headers: Record<string, string> = {
       ...baseHeaders(domain),
       'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers': 'ETag, X-Dash-Name, X-Dash-Owner, X-Dash-Site-Revision, X-Dash-Content, X-Dash-Proof-Height, X-Dash-Stale',
       'Accept-Ranges': 'none',
       'X-Dash-Name': `${resolution.canonicalLabel}.dash`,
       'X-Dash-Owner': resolution.ownerId,
