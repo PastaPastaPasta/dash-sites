@@ -6,7 +6,7 @@ import { base58 } from '@scure/base';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { toHex } from '../src/bytes.js';
 import { networkConfig } from '../src/config.js';
-import { EvoWriter, KeyRefused } from '../src/evo.js';
+import { EvoWriter, KeyRefused, withReadDeadline } from '../src/evo.js';
 
 const CONFIG = networkConfig('testnet');
 const IDENTITY = base58.encode(new Uint8Array(32).fill(4));
@@ -77,5 +77,39 @@ describe('signing key', () => {
     expect(await writer.keyLive()).toBe(true);
     keys[0] = key({ disabledAt: 9n });
     expect(await writer.keyLive()).toBe(false);
+  });
+});
+
+describe('Platform read deadline', () => {
+  const silent: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+  const node = 'https://203.0.113.9:443/org.dash.platform.dapi.v0.Platform';
+
+  it('fails a read that gets no answer in time, naming the node', async () => {
+    await expect(withReadDeadline(silent, 20)(`${node}/getDocuments`, { method: 'POST' })).rejects.toThrow('no answer from 203.0.113.9 within 20 ms');
+  });
+
+  it('leaves writes and other requests alone', async () => {
+    let calls = 0;
+    const answered: typeof fetch = async (_input, init) => {
+      calls += 1;
+      expect(init?.signal).toBeUndefined();
+      return new Response('ok');
+    };
+    const guarded = withReadDeadline(answered, 20);
+    await guarded(`${node}/waitForStateTransitionResult`, { method: 'POST' });
+    await guarded(`${node}/broadcastStateTransition`, { method: 'POST' });
+    await guarded('https://quorums.mainnet.networks.dash.org/quorums');
+    expect(calls).toBe(3);
+  });
+
+  it('keeps the caller able to cancel, and does not cut off an answer that came in time', async () => {
+    const caller = new AbortController();
+    const pending = withReadDeadline(silent, 10_000)(`${node}/getDataContract`, { signal: caller.signal });
+    caller.abort(new Error('cancelled'));
+    await expect(pending).rejects.toThrow('cancelled');
+    const answered = await withReadDeadline(async () => new Response('proof'), 20)(`${node}/getDocuments`);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(await answered.text()).toBe('proof');
   });
 });
