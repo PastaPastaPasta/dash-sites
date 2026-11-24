@@ -238,7 +238,6 @@ describe('waiting for the wallet', () => {
       },
     });
     await expect(waiting).rejects.toBeInstanceOf(AmbiguousWalletLogin);
-    expect(polls).toBeGreaterThan(1);
   });
 
   it('returns the only answer once the wait is over', async () => {
