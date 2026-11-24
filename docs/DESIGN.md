@@ -542,35 +542,77 @@ mainnet until the contract is registered.
 
 ## 8. Hosting
 
-| Network | Gateway | Droplet |
+| Network | Gateway | Runs on |
 | --- | --- | --- |
-| Mainnet | `dash.site`, `*.dash.site` | `dash-site-mainnet` (DigitalOcean, nyc3, IPv4 + IPv6) |
-| Testnet | `id.dashhq.org`, `*.id.dashhq.org` | `dash-sites-gateway` |
-
-Each landing page links the other (`PEER_GATEWAY` in `gateway.env`).
+| Mainnet | `dash.site`, `*.dash.site` | Cloudflare Worker `dash-site`, static assets only (testnet data until the mainnet contract is registered) |
+| Testnet | `id.dashhq.org`, `*.id.dashhq.org` | DigitalOcean droplet `dash-sites-gateway` (Caddy + fallback process) |
 
 | Piece | Where | Why |
 | --- | --- | --- |
-| Gateway | DigitalOcean droplets (1 GB, nyc3), one per network: Caddy serving the static shell on every name's host, the fallback process as a systemd service, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org`. The shell alone could sit on any static host with wildcard names |
-| DNS | Cloudflare zone `dash.site`: apex and `*` A + AAAA to the mainnet droplet. Cloudflare zone `dashhq.org`: `id` and `*.id` to the testnet droplet (DNS-only), `_acme-challenge.id` delegated to the droplet, CAA for Let's Encrypt DNS-01 | Existing access |
-| Certificate | Let's Encrypt wildcard for `id.dashhq.org` and `*.id.dashhq.org`, renewed daily-checked by a systemd timer. `agnos` answers the DNS-01 challenge itself on port 53 during a renewal, so the host holds no DNS credentials | |
+| `dash.site` | An assets-only Cloudflare Worker (`deploy/cloudflare`): no Worker script, so no request runs code and static asset requests are free and unmetered. Routes `dash.site/*` and `*.dash.site/*`; `not_found_handling: single-page-application` answers every path with the shell | No server to run. Cloudflare's free certificate covers `dash.site` and `*.dash.site` |
+| `id.dashhq.org` | A 1 GB droplet: Caddy serving the static shell on every name's host, the fallback process as a systemd service, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org` |
+| DNS | Zone `dash.site`: apex and `*` proxied A `192.0.2.1` and AAAA `100::` (placeholders; the Worker routes answer, over IPv4 and IPv6). Zone `dashhq.org`: `id` and `*.id` to the testnet droplet (DNS-only), `_acme-challenge.id` delegated to the droplet, CAA for Let's Encrypt DNS-01 | Existing access |
 | Builder | GitHub Pages from the repo, `dash-sites.thepasta.org` | Static, free, deploys from CI, different registrable domain from user sites |
 | Extension | Zip on GitHub Releases; store listing later | Store accounts are the user's |
 
-`deploy/provision.sh` sets up a fresh host and `deploy/deploy.sh` installs
-the shell, the fallback process and the Caddy configuration.
+`deploy/cloudflare/deploy.sh` builds the shell for `dash.site` and deploys the
+Worker (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`; `NETWORK=mainnet` once
+the mainnet contract is in `DEPLOYMENTS`). `deploy/provision.sh` sets up a
+droplet and `deploy/deploy.sh` installs the shell, the fallback process and the
+Caddy configuration on it.
 
-### Operator denylist
+### dash.site: static files only
 
-The hosted gateways can stop serving a name, an owner identity or a content
+Every host under `dash.site` gets the same files: `index.html` (the boot page),
+`sw.js` (the service worker) and the verifier. The boot page installs the
+worker, which reads and verifies the site in the browser, exactly as on a
+droplet gateway. What changes without a server:
+
+- **Origins stay separate.** Each name is still its own host,
+  `alice.dash.site`, so each site has its own origin, storage and service
+  worker (§6). Only the bare `dash.site` and `www.dash.site` are not names: the
+  boot page shows the landing page there and installs nothing.
+- **No fallback process.** Crawlers, link previews and command-line clients
+  get the boot page, not a rendered copy of the site. A browser without
+  service workers (a Firefox private window, for one) gets a plain page saying
+  so and pointing at the extension.
+- **No operator denylist in the build.** The `dash.site` build leaves the
+  denylist out (`DENYLIST` unset). Blocking is done in front of it instead.
+- **Caching.** `_headers` sends `Cache-Control: no-cache` for everything but
+  the content-addressed verifier, so a browser revalidates `/sw.js` on every
+  navigation and a new worker, or a kill-switch worker, takes effect on the
+  next visit.
+
+**Blocking a name on dash.site, when needed.** Route the exact host,
+`badname.dash.site/*`, to a second assets-only Worker; Cloudflare uses the
+most specific route, so it wins over `*.dash.site/*`. That Worker serves two
+files and runs no script:
+
+- `/sw.js`: `packages/shell/src/denied-sw.js`, a worker that deletes the
+  site's caches, unregisters itself and reloads open pages. A visitor whose
+  browser already has the site's worker gets this on its next update check:
+  a browser keeps an installed worker when an update fails, so the blocked
+  host must answer `/sw.js` with this file rather than an error.
+- everything else: a plain "unavailable on this gateway" page
+  (`not_found_handling: single-page-application` with that page as
+  `index.html`).
+
+Adding a name is a PR that adds its route to that Worker's `wrangler.jsonc`,
+then a deploy. Look-alike spellings (`o`/`0`, `i`/`l`/`1`) are separate hosts
+and need their own routes. The site stays on Platform and other gateways may
+serve it.
+
+### Operator denylist (droplet gateways)
+
+A droplet gateway can stop serving a name, an owner identity or a content
 URI. On the host:
 
 ```sh
-ssh root@dash.site dash-sites-deny add name foo "reason"
-ssh root@dash.site dash-sites-deny add owner <identity id> "reason"
-ssh root@dash.site dash-sites-deny add content <content URI> "reason"
-ssh root@dash.site dash-sites-deny list
-ssh root@dash.site dash-sites-deny remove name foo
+ssh root@id.dashhq.org dash-sites-deny add name foo "reason"
+ssh root@id.dashhq.org dash-sites-deny add owner <identity id> "reason"
+ssh root@id.dashhq.org dash-sites-deny add content <content URI> "reason"
+ssh root@id.dashhq.org dash-sites-deny list
+ssh root@id.dashhq.org dash-sites-deny remove name foo
 ```
 
 The list is `DENYLIST_FILE` (`/etc/dash-sites/denylist.txt`). Each change

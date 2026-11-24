@@ -8,16 +8,17 @@ Platform; there is no web host.
 | | |
 | --- | --- |
 | Showcase site | https://p2p.id.dashhq.org/ (`p2p.dash`, testnet) |
-| Gateway, mainnet | https://dash.site/ (names resolve; publishing opens once the contract is registered on mainnet) |
+| Gateway, dash.site | https://dash.site/ (static files on Cloudflare; serves testnet names until the mainnet contract is registered) |
 | Gateway, testnet | https://id.dashhq.org/ |
 | Builder | https://dash-sites.thepasta.org/ |
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
 Sites are published on **testnet** today; the testnet data contract is
-`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. `dash.site` is the mainnet
-gateway: every mainnet DPNS name already has its address there
-(`alice.dash.site`), and shows its site as soon as mainnet publishing opens.
+`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. `dash.site` is the
+gateway for mainnet names (`alice.dash.site`); it is static files on a
+Cloudflare Worker with no server, and serves testnet names until the mainnet
+contract is registered.
 
 ## How a site is opened
 

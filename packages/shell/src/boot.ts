@@ -1,13 +1,34 @@
+declare const __GATEWAY_DOMAIN__: string;
+
 const label = location.hostname.split('.')[0] as string;
 const step = document.getElementById('step') as HTMLElement;
 const say = (text: string): void => {
   step.textContent = text;
 };
-const fail = (text: string): void => {
+const fail = (text: string, title?: string): void => {
   document.body.classList.add('failed');
+  if (title) {
+    (document.getElementById('title') as HTMLElement).textContent = title;
+    document.title = title;
+  }
   say(text);
 };
-(document.getElementById('name') as HTMLElement).textContent = `${label}.dash`;
+
+/** The gateway domain itself is not a name: the same static files show the landing page there. */
+function landing(): boolean {
+  const host = location.hostname;
+  if (!__GATEWAY_DOMAIN__ || (host !== __GATEWAY_DOMAIN__ && host !== `www.${__GATEWAY_DOMAIN__}`)) return false;
+  document.title = 'Dash Sites';
+  (document.getElementById('shell') as HTMLElement).hidden = true;
+  (document.getElementById('landing') as HTMLElement).hidden = false;
+  const form = document.getElementById('go') as HTMLFormElement;
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const name = String(new FormData(form).get('name') ?? '').trim().toLowerCase().replace(/\.dash\.?$/, '');
+    if (/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(name)) location.href = `https://${name}.${__GATEWAY_DOMAIN__}/`;
+  });
+  return true;
+}
 
 const TRIES = 'dash-sites-boot';
 const RETRY_WINDOW_MS = 30_000;
@@ -31,8 +52,12 @@ function controlled(registration: ServiceWorkerRegistration): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  (document.getElementById('name') as HTMLElement).textContent = `${label}.dash`;
   if (!('serviceWorker' in navigator)) {
-    return fail('This browser cannot run the verifier here: service workers are unavailable, as in a Firefox private window.');
+    return fail(
+      'Sites here are read from Dash Platform and checked by your browser, which needs service workers. They are unavailable in this browser or window (for example a Firefox private window). Open the site in a regular window of Chrome, Edge, Firefox or Safari, or use the Dash Sites browser extension.',
+      'This browser cannot open Dash Sites',
+    );
   }
   say('Downloading the verifier, about 9 MB. This happens once.');
   const registration = await navigator.serviceWorker.register('/sw.js');
@@ -46,4 +71,4 @@ async function start(): Promise<void> {
   reload();
 }
 
-start().catch((error: unknown) => fail(`The verifier could not start: ${error instanceof Error ? error.message : String(error)}`));
+if (!landing()) start().catch((error: unknown) => fail(`The verifier could not start: ${error instanceof Error ? error.message : String(error)}`));
