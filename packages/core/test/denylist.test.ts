@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSite,
+  DEPLOYMENTS,
   denylistFromJson,
   emptyDenylist,
   isDenied,
@@ -79,10 +80,21 @@ describe('denylist', () => {
 
 describe('networks without a dash-sites contract', () => {
   it('gives readers a config with no contract instead of throwing', () => {
-    expect(() => networkConfig('mainnet')).toThrow(/no contract on mainnet/);
-    expect(readerConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '' });
-    expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
+    const mainnet = DEPLOYMENTS.mainnet;
+    delete DEPLOYMENTS.mainnet;
+    try {
+      expect(() => networkConfig('mainnet')).toThrow(/no contract on mainnet/);
+      expect(readerConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '' });
+      expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
+    } finally {
+      DEPLOYMENTS.mainnet = mainnet;
+    }
     expect(readerConfig('testnet').contractId).toBe(networkConfig('testnet').contractId);
+  });
+
+  it('knows the mainnet contract', () => {
+    expect(networkConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s' });
+    expect(readerConfig('mainnet')).toEqual(networkConfig('mainnet'));
   });
 
   it('resolves registered names to no-site without asking for a site record', async () => {

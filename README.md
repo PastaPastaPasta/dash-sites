@@ -8,17 +8,17 @@ Platform; there is no web host.
 | | |
 | --- | --- |
 | Showcase site | https://p2p.id.dashhq.org/ (`p2p.dash`, testnet) |
-| Gateway, dash.site | https://dash.site/ (static files on Cloudflare; serves testnet names until the mainnet contract is registered) |
+| Gateway, mainnet | https://dash.site/ (static files on Cloudflare) |
 | Gateway, testnet | https://id.dashhq.org/ |
 | Builder | https://dash-sites.thepasta.org/ |
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
-Sites are published on **testnet** today; the testnet data contract is
-`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. `dash.site` is the
-gateway for mainnet names (`alice.dash.site`); it is static files on a
-Cloudflare Worker with no server, and serves testnet names until the mainnet
-contract is registered.
+The testnet data contract is
+`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. The mainnet contract is
+`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, and `dash.site` is the mainnet
+gateway (`alice.dash.site`): static files on a Cloudflare Worker with no
+server.
 
 ## How a site is opened
 
@@ -62,6 +62,9 @@ npm run serve -w @dash-sites/shell     # http://<name>.localhost:8080/
 and set the extension's gateway to `http://localhost:8080`.
 
 ## Publish a site
+
+The hosted builder publishes on testnet. To publish on mainnet, use the CLI
+below with `--network mainnet`.
 
 **In the browser**: open the [builder](https://dash-sites.thepasta.org/) and
 choose **Sign in with DashPay**. Scan the code with the DashPay app (More,
@@ -146,10 +149,9 @@ owner or content (`dash-sites-deny`, see
 (`DENYLIST=1`, set by `deploy.sh` when the host's `gateway.env` has
 `DENYLIST_FILE`) includes that check; a self-hosted shell leaves it out.
 
-Mainnet needs the contract registered once by a funded mainnet identity
-(`dash-sites contract register --schema contract/dash-sites.v1.json --network
-mainnet`), its id added to `packages/core/src/config.ts`, and `NETWORK=mainnet`
-on the gateway host and in the builder's build.
+The contract is registered on both networks (`DEPLOYMENTS` in
+`packages/core/src/config.ts`); a gateway or builder picks one with
+`NETWORK=testnet|mainnet`.
 
 ## License
 

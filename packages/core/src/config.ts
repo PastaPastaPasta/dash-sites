@@ -8,9 +8,10 @@ export interface NetworkConfig {
   contractId: string;
 }
 
-/** Where the dash-sites contract is registered. Mainnet has no deployment yet. */
+/** Where the dash-sites contract is registered. */
 export const DEPLOYMENTS: Partial<Record<Network, NetworkConfig>> = {
   testnet: { network: 'testnet', contractId: '3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx' },
+  mainnet: { network: 'mainnet', contractId: '5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s' },
 };
 
 /**
