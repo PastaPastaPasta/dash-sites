@@ -12,12 +12,18 @@
 @keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
 @media (prefers-reduced-motion:reduce){.bar::after{animation:none;width:100%}}
 .failed .bar{display:none}
+form{display:flex;gap:8px;margin:22px 0}
+input{flex:1;min-width:0;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
+button{font:inherit;font-weight:600;padding:10px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer}
 </style>
 </head>
 <body>
-<main>
+<main id="landing" hidden>
+<!--LANDING-->
+</main>
+<main id="shell">
 <div class="status">Dash Sites · __NETWORK__</div>
-<h1>Opening <span id="name">this site</span></h1>
+<h1 id="title">Opening <span id="name">this site</span></h1>
 <p id="step">Your browser reads this site from Dash Platform and checks it itself. Starting the verifier.</p>
 <div class="bar"></div>
 <noscript><p>This site is checked in your browser, which needs JavaScript.</p></noscript>

@@ -1,0 +1,17 @@
+// dash.site: an assets-only Worker (no script, so no request ever runs code). Every host gets the
+// same static shell; the visitor's browser reads and verifies the site. Deploy with deploy.sh.
+{
+  "name": "dash-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "../../packages/shell/dist",
+    "not_found_handling": "single-page-application",
+    "html_handling": "none"
+  },
+  "routes": [
+    { "pattern": "dash.site/*", "zone_name": "dash.site" },
+    { "pattern": "*.dash.site/*", "zone_name": "dash.site" }
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}
