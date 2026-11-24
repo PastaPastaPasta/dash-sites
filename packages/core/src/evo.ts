@@ -417,6 +417,15 @@ function contractIdFor(ownerId: string, nonce: bigint): string {
   return base58.encode(sha256(sha256(concat([base58.decode(ownerId), encoded]))));
 }
 
+/**
+ * The contract as it is registered: version 1, with no `config`, so Platform's defaults apply.
+ * Throws when Platform's rules for the protocol version refuse the schemas.
+ */
+export function parseContract(ownerId: string, id: string, documentSchemas: unknown): DataContract {
+  const json = { $formatVersion: '1', id, ownerId, version: 1, documentSchemas };
+  return DataContract.fromJSON(json as never, true, PROTOCOL_VERSION as never);
+}
+
 /** Registers the dash-sites contract and returns its id. Needs a CRITICAL authentication key. */
 export async function registerContract(
   network: NetworkConfig['network'],
@@ -429,8 +438,7 @@ export async function registerContract(
   const key = await signingKey(sdk, config, credentials, ['CRITICAL']);
   const nonce = (BigInt((await sdk.identities.nonce(credentials.identityId)) ?? 0n) & 0xffffffffffn) + 1n;
   const id = contractIdFor(credentials.identityId, nonce);
-  const json = { $formatVersion: '1', id, ownerId: credentials.identityId, version: 1, documentSchemas };
-  const dataContract = DataContract.fromJSON(json as never, true, PROTOCOL_VERSION as never);
+  const dataContract = parseContract(credentials.identityId, id, documentSchemas);
   await sdk.contracts.publish({ dataContract, ...key });
   return id;
 }
