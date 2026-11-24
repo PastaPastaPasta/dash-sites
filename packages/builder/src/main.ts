@@ -15,6 +15,7 @@ import {
   type SiteFile,
 } from '@dash-sites/core';
 import type { EvoWriter } from '@dash-sites/core/evo';
+import { allowanceText, clearSession, connectionId, countdown, loadSession, qrShape, quietly, saveSession, type KeyValue } from './wallet.js';
 import { dataUrl, normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { EMPTY_DRAFT, isBlank, renderPage, THEMES, type PageDraft, type Theme } from './template.js';
 
@@ -29,11 +30,21 @@ const PICTURE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg'
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const message = (error: unknown): string => String((error as Error)?.message ?? error);
 const loadEvo = () => import('@dash-sites/core/evo');
+const loadConnect = () => import('@dash-sites/core/connect');
+const SVG = 'http://www.w3.org/2000/svg';
+const EXPIRY_MARGIN_MS = 5 * 60_000;
+const storage = (kind: 'localStorage' | 'sessionStorage'): KeyValue | undefined => quietly(() => window[kind]);
+
+function expiring(key: EvoWriter): boolean {
+  const { expiresAt } = key.keyLimits;
+  return expiresAt !== undefined && expiresAt <= Date.now() + EXPIRY_MARGIN_MS;
+}
 
 let writer: EvoWriter | undefined;
 let names: DomainRecord[] = [];
 let chosen: DomainRecord | undefined;
 let session = 0;
+let walletRequest: AbortController | undefined;
 let mode: 'write' | 'upload' = 'write';
 const draft: PageDraft = loadDraft();
 let upload: SiteFile[] = [];
@@ -120,7 +131,15 @@ function renderPreview(): void {
 }
 
 async function refreshBalance(): Promise<void> {
-  if (writer) $('balance').textContent = formatDash(await writer.balance());
+  const current = writer;
+  if (!current) return;
+  const [balance, remaining] = await Promise.all([current.balance(), current.remainingBudget()]);
+  if (current !== writer) return;
+  $('balance').textContent = formatDash(balance);
+  const { expiresAt } = current.keyLimits;
+  const limited = remaining !== undefined && expiresAt !== undefined;
+  $('allowance').hidden = !limited;
+  if (limited) $('allowance-left').textContent = allowanceText(remaining, expiresAt);
 }
 
 function renderNames(): void {
@@ -136,7 +155,7 @@ function renderNames(): void {
       return button;
     }),
   );
-  $('names-empty').hidden = names.length > 0;
+  $('names-empty').hidden = names.length > 0 || !writer;
 }
 
 async function choose(domain: DomainRecord): Promise<void> {
@@ -155,9 +174,32 @@ async function choose(domain: DomainRecord): Promise<void> {
     : `${label()}.dash has no site yet.`;
 }
 
+function showRegistration(offered: boolean): void {
+  $('register').hidden = !offered;
+  $('register-hint').hidden = !offered;
+  $('wallet-names').hidden = offered;
+}
+
+async function enter(connected: EvoWriter, attempt: number): Promise<void> {
+  const owned = await connected.listOwnedNames(connected.identityId);
+  if (attempt !== session) return;
+  writer = connected;
+  $('who').textContent = connected.identityId;
+  $('signin-ways').hidden = true;
+  $('step-signin').querySelector<HTMLElement>('.done')!.hidden = false;
+  showRegistration(!connected.keyLimits.bound);
+  names = owned;
+  chosen = undefined;
+  renderNames();
+  refresh();
+  await refreshBalance().catch(() => {});
+  if (names.length === 1) await choose(names[0] as DomainRecord).catch(() => {});
+}
+
 async function signIn(identity: string, key: string): Promise<void> {
   const error = $('signin-error');
   const button = $<HTMLButtonElement>('signin-button');
+  cancelWallet();
   const attempt = ++session;
   error.textContent = '';
   button.disabled = true;
@@ -175,39 +217,187 @@ async function signIn(identity: string, key: string): Promise<void> {
     }
     const connected = await evo.EvoWriter.connectAs(config, { identityId, privateKeyWif: key.trim() });
     if (attempt !== session) return;
-    writer = connected;
     $<HTMLInputElement>('key').value = '';
-    $('who').textContent = identityId;
-    $('signin').hidden = true;
-    $('step-signin').querySelector<HTMLElement>('.done')!.hidden = false;
-    const owned = await connected.listOwnedNames(identityId);
-    if (attempt !== session) return;
-    names = owned;
-    chosen = undefined;
-    renderNames();
-    refresh();
-    await refreshBalance();
-    if (names.length === 1) await choose(names[0] as DomainRecord);
+    clearSession(storage('sessionStorage'), NETWORK);
+    await enter(connected, attempt);
   } catch (caught) {
-    if (attempt === session) {
-      signOut();
-      error.textContent = message(caught);
-    }
+    if (attempt === session) error.textContent = message(caught);
   } finally {
     button.disabled = false;
     button.textContent = 'Sign in';
   }
 }
 
+function showWallet(step: 'start' | 'request' | 'confirm'): void {
+  for (const name of ['start', 'request', 'confirm']) $(`wallet-${name}`).hidden = name !== step;
+  $('key-signin').hidden = step !== 'start';
+}
+
+function cancelWallet(): void {
+  walletRequest?.abort();
+  walletRequest = undefined;
+  $('wallet-qr').replaceChildren();
+  $<HTMLAnchorElement>('wallet-link').removeAttribute('href');
+  $('wallet-progress').textContent = '';
+  $('wallet-error').textContent = '';
+  $<HTMLButtonElement>('wallet-button').disabled = false;
+  showWallet('start');
+}
+
+function drawCode(uri: string): void {
+  const shape = qrShape(uri);
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${shape.size} ${shape.size}`);
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  const path = document.createElementNS(SVG, 'path');
+  path.setAttribute('d', shape.path);
+  path.setAttribute('fill', '#000');
+  svg.append(path);
+  $('wallet-qr').replaceChildren(svg);
+}
+
+function confirmed(signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const listening = new AbortController();
+    const settle = (finish: () => void) => (): void => {
+      listening.abort();
+      finish();
+    };
+    const options = { signal: listening.signal };
+    $('wallet-continue').addEventListener('click', settle(() => resolve(true)), options);
+    $('wallet-reject').addEventListener('click', settle(() => resolve(false)), options);
+    signal.addEventListener('abort', settle(() => reject(new DOMException('cancelled', 'AbortError'))), options);
+  });
+}
+
+async function signInWithWallet(): Promise<void> {
+  cancelWallet();
+  const attempt = ++session;
+  const abort = new AbortController();
+  walletRequest = abort;
+  const error = $('wallet-error');
+  const progress = $('wallet-progress');
+  const status = $('wallet-status');
+  $('signin-error').textContent = '';
+  $<HTMLButtonElement>('wallet-button').disabled = true;
+  progress.textContent = 'Connecting to Dash Platform…';
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let wake: (() => void) | undefined;
+  try {
+    const [evo, connect] = await Promise.all([loadEvo(), loadConnect()]);
+    const config = networkConfig(NETWORK);
+    const sdk = await evo.connectSdk(config);
+    const port = connect.connectPort(sdk);
+    const clock = await port.chainClock();
+    if (abort.signal.aborted) return;
+    if (clock.protocolVersion < connect.APP_CONNECT_MIN_PROTOCOL) {
+      throw new Error(`Wallet sign-in needs Platform protocol ${connect.APP_CONNECT_MIN_PROTOCOL}, and ${NETWORK} runs ${clock.protocolVersion}. Sign in with a private key instead.`);
+    }
+    const pending = connect.newWalletRequest(config, { connectionId: connectionId(storage('localStorage'), NETWORK), chainNow: clock.timeMs });
+    drawCode(pending.uri);
+    const link = $<HTMLAnchorElement>('wallet-link');
+    link.href = pending.uri;
+    link.hidden = !matchMedia('(pointer: coarse)').matches;
+    progress.textContent = '';
+    showWallet('request');
+
+    let state = 'Waiting for your wallet';
+    const tick = (): void => {
+      status.textContent = `${state}. This code works for ${countdown(pending.expiresAt - Date.now())}.`;
+    };
+    tick();
+    timer = setInterval(tick, 1000);
+    const trigger = new connect.PollTrigger();
+    wake = (): void => {
+      if (document.visibilityState === 'visible') trigger.fire();
+    };
+    window.addEventListener('focus', wake);
+    document.addEventListener('visibilitychange', wake);
+    const grant = await connect.awaitWalletGrant(port, pending, {
+      signal: abort.signal,
+      trigger,
+      onStatus: (poll) => {
+        state = poll === 'answered' ? 'Your wallet answered. Checking its key' : poll === 'incomplete-read' ? 'Could not read every answer, trying again' : 'Waiting for your wallet';
+        tick();
+      },
+    });
+    try {
+      clearInterval(timer);
+      $('wallet-qr').replaceChildren();
+      link.removeAttribute('href');
+      const owned = await new evo.EvoReader(sdk, config).listOwnedNames(grant.identityId).catch(() => []);
+      if (abort.signal.aborted) return;
+      $('wallet-name').textContent = owned.length > 0 ? owned.map((domain) => `${domain.label}.dash`).join(', ') : 'an identity with no name';
+      $('wallet-identity').textContent = grant.identityId;
+      $('wallet-terms').textContent = allowanceText(grant.remainingBudget, grant.expiresAt);
+      showWallet('confirm');
+      if (!(await confirmed(abort.signal))) {
+        cancelWallet();
+        error.textContent = 'Nothing was signed in. If your own wallet approved a request, start again and keep the code private.';
+        return;
+      }
+      progress.textContent = 'Signing in…';
+      const connected = await evo.EvoWriter.on(sdk, config, { identityId: grant.identityId, privateKey: grant.privateKey });
+      if (attempt !== session) return;
+      saveSession(storage('sessionStorage'), NETWORK, { identityId: grant.identityId, privateKey: grant.privateKey });
+      await enter(connected, attempt);
+      if (attempt === session) cancelWallet();
+    } finally {
+      grant.privateKey.fill(0);
+    }
+  } catch (caught) {
+    if (attempt !== session || (caught as Error)?.name === 'AbortError') return;
+    cancelWallet();
+    error.textContent = message(caught);
+  } finally {
+    clearInterval(timer);
+    if (wake) {
+      window.removeEventListener('focus', wake);
+      document.removeEventListener('visibilitychange', wake);
+    }
+  }
+}
+
+async function resumeWallet(): Promise<void> {
+  const saved = loadSession(storage('sessionStorage'), NETWORK);
+  if (!saved) return;
+  const attempt = ++session;
+  const button = $<HTMLButtonElement>('wallet-button');
+  button.disabled = true;
+  $('wallet-progress').textContent = 'Signing you back in…';
+  try {
+    const evo = await loadEvo();
+    const connected = await evo.EvoWriter.connectAs(networkConfig(NETWORK), saved);
+    if (expiring(connected)) throw new evo.KeyRefused('expired');
+    await enter(connected, attempt);
+    if (attempt === session) $('wallet-progress').textContent = '';
+  } catch (caught) {
+    if (attempt !== session) return;
+    const ended = (caught as Error)?.name === 'KeyRefused';
+    if (ended) clearSession(storage('sessionStorage'), NETWORK);
+    $('wallet-progress').textContent = '';
+    $('wallet-error').textContent = ended
+      ? 'Your wallet sign-in has ended: its key expired or was removed. Sign in again.'
+      : `Could not sign you back in: ${message(caught)} Reload the page to try again.`;
+  } finally {
+    saved.privateKey.fill(0);
+    button.disabled = false;
+  }
+}
+
 function signOut(): void {
   session += 1;
+  cancelWallet();
+  clearSession(storage('sessionStorage'), NETWORK);
   writer = undefined;
   names = [];
   chosen = undefined;
-  $('signin').hidden = false;
+  $('signin-ways').hidden = false;
   $('step-signin').querySelector<HTMLElement>('.done')!.hidden = true;
+  $('allowance').hidden = true;
   $('result').hidden = true;
   $('site-status').textContent = '';
+  showRegistration(true);
   renderNames();
   refresh();
 }
@@ -340,6 +530,10 @@ async function fromDrop(items: DataTransferItemList): Promise<void> {
 
 async function publish(): Promise<void> {
   if (!writer || !chosen || !bundle || publishing) return;
+  if (expiring(writer)) {
+    $('publish-error').textContent = 'Your wallet sign-in has run out. Sign out, sign in with DashPay again, then publish.';
+    return;
+  }
   const published = chosen.label.toLowerCase();
   const url = `https://${published}.${GATEWAY}/`;
   const status = $('publish-status');
@@ -371,7 +565,11 @@ async function publish(): Promise<void> {
     if (label() === published) $('site-status').textContent = `${published}.dash has a site (revision ${result.site.revision}). Publishing again replaces it.`;
   } catch (caught) {
     status.textContent = '';
-    error.textContent = `Publishing stopped: ${message(caught)} What was stored is kept, so publishing again continues from here.`;
+    const live = writer?.keyLimits.bound ? await writer.keyLive().catch(() => true) : true;
+    error.textContent =
+      live === false
+        ? 'Publishing stopped: your wallet sign-in has ended. Its key was removed in the wallet or replaced by a newer sign-in from this browser. Sign out, then sign in with DashPay again; what was stored is kept.'
+        : `Publishing stopped: ${message(caught)} What was stored is kept, so publishing again continues from here.`;
   } finally {
     publishing = false;
     progress.hidden = true;
@@ -426,6 +624,13 @@ function start(): void {
     });
   });
   $('signout').addEventListener('click', signOut);
+  $('wallet-button').addEventListener('click', () => void signInWithWallet());
+  $('wallet-cancel').addEventListener('click', () => {
+    session += 1;
+    cancelWallet();
+  });
+  $('wallet-origin').textContent = location.host;
+  $('wallet-testnet').hidden = NETWORK !== 'testnet';
 
   $<HTMLFormElement>('register').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -510,8 +715,9 @@ function start(): void {
   });
 
   refresh();
+  void resumeWallet();
   const idle = (window as { requestIdleCallback?: (fn: () => void) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
-  idle(() => void loadEvo().catch(() => {}));
+  idle(() => void Promise.all([loadEvo(), loadConnect()]).catch(() => {}));
 }
 
 start();
