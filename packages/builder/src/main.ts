@@ -16,6 +16,7 @@ import {
   type SiteFile,
 } from '@dash-sites/core';
 import type { EvoWriter } from '@dash-sites/core/evo';
+import { AutoSignOut, type SignOutReason } from './sign-out.js';
 import { allowanceText, clearSession, connectionId, countdown, loadSession, qrShape, quietly, saveSession, type KeyValue } from './wallet.js';
 import { dataUrl, normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { EMPTY_DRAFT, isBlank, renderPage, THEMES, type PageDraft, type Theme } from './template.js';
@@ -35,6 +36,14 @@ const loadEvo = () => import('@dash-sites/core/evo');
 const loadConnect = () => import('@dash-sites/core/connect');
 const SVG = 'http://www.w3.org/2000/svg';
 const EXPIRY_MARGIN_MS = 5 * 60_000;
+/** On dash.site the builder shares a site with every user's pages, so a sign-in never outlives its use. */
+const AUTO_SIGN_OUT = !__REMEMBER_WALLET__;
+const IDLE_SIGN_OUT_MS = 10 * 60_000;
+const SIGNED_OUT: Record<SignOutReason, string> = {
+  idle: 'You were signed out after 10 minutes without activity. Your draft is kept.',
+  published: 'Published, and signed out. Sign in again to publish more changes.',
+  left: '',
+};
 const storage = (kind: 'localStorage' | 'sessionStorage'): KeyValue | undefined => quietly(() => window[kind]);
 
 function expiring(key: EvoWriter): boolean {
@@ -53,6 +62,7 @@ let upload: SiteFile[] = [];
 let bundle: SiteBundle | undefined;
 let publishing = false;
 let wantedName: string | undefined;
+const autoSignOut = new AutoSignOut({ idleMs: IDLE_SIGN_OUT_MS, signOut: (reason) => signOut(SIGNED_OUT[reason]), busy: () => publishing });
 
 function loadDraft(): PageDraft {
   try {
@@ -91,7 +101,6 @@ function refresh(): void {
   $('addr-url').textContent = `${label()}.${GATEWAY}`;
   $('preview-url').textContent = `${label()}.${GATEWAY}`;
   setLocked('step-name', !writer);
-  setLocked('step-content', !writer || !chosen);
   setLocked('step-publish', !writer || !chosen);
 
   const current = files();
@@ -107,6 +116,8 @@ function refresh(): void {
   const cost = $('cost');
   if (!bundle) {
     cost.textContent = mode === 'write' ? 'Write something in step 3 first.' : 'Add your site in step 3 first.';
+  } else if (!writer || !chosen) {
+    cost.textContent = writer ? 'Pick a name in step 2 to publish this.' : 'Sign in and pick a name to publish this. Your draft is kept.';
   } else {
     const kb = Math.max(1, Math.round(bundle.stats.storedBytes / 1024));
     const noIndex = bundle.manifest.files['/index.html'] ? '' : ' There is no index.html at the top, so the home page will be empty.';
@@ -187,6 +198,8 @@ async function enter(connected: EvoWriter, attempt: number): Promise<void> {
   const owned = await connected.listOwnedNames(connected.identityId);
   if (attempt !== session) return;
   writer = connected;
+  $('signed-out').textContent = '';
+  if (AUTO_SIGN_OUT) autoSignOut.signedIn();
   $('who').textContent = connected.identityId;
   $('signin-ways').hidden = true;
   $('step-signin').querySelector<HTMLElement>('.done')!.hidden = false;
@@ -397,15 +410,19 @@ async function resumeWallet(): Promise<void> {
   }
 }
 
-function signOut(): void {
+function signOut(reason = ''): void {
   session += 1;
   cancelWallet();
   clearSession(storage('sessionStorage'), NETWORK);
+  writer?.forget();
   writer = undefined;
   names = [];
   chosen = undefined;
+  autoSignOut.signedOut();
+  $<HTMLInputElement>('key').value = '';
   $('signin-ways').hidden = false;
   $('step-signin').querySelector<HTMLElement>('.done')!.hidden = true;
+  $('signed-out').textContent = reason;
   $('allowance').hidden = true;
   $('balance').textContent = '';
   $('result').hidden = true;
@@ -576,6 +593,10 @@ async function publish(): Promise<void> {
     link.textContent = `${published}.${GATEWAY}`;
     $('result').hidden = false;
     if (label() === published) $('site-status').textContent = `${published}.dash has a site (revision ${result.site.revision}). Publishing again replaces it.`;
+    if (signer === writer) {
+      autoSignOut.published();
+      if (!writer) $('result').hidden = false;
+    }
   } catch (caught) {
     status.textContent = '';
     const live = signer.keyLimits.bound ? await signer.keyLive().catch(() => true) : true;
@@ -655,7 +676,12 @@ function start(): void {
       }
     });
   });
-  $('signout').addEventListener('click', signOut);
+  $('signout').addEventListener('click', () => signOut('Signed out.'));
+  $('auto-signout').hidden = !AUTO_SIGN_OUT;
+  if (AUTO_SIGN_OUT) {
+    for (const type of ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart']) document.addEventListener(type, () => autoSignOut.activity(), { passive: true, capture: true });
+    window.addEventListener('pagehide', () => autoSignOut.left());
+  }
   $('wallet-button').addEventListener('click', () => void signInWithWallet());
   $('wallet-cancel').addEventListener('click', () => {
     session += 1;

@@ -48,7 +48,7 @@ function landingHtml() {
 <form id="go"><input name="name" placeholder="alice.dash" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="DPNS name"><button>Open</button></form>
 ${live ? '' : `<p>Publishing on ${escapeHtml(network)} has not opened yet. Names already resolve here, and a name's site appears as soon as its owner publishes one.</p>`}
 <p><a href="${escapeHtml(builderUrl)}">Make a site</a>${process.env.PUBLISH_URL ? ` · <a href="${escapeHtml(process.env.PUBLISH_URL)}">Publish your own</a>` : ''}${peer}</p>
-<footer>This gateway does not author or review these sites. Report abuse: ${escapeHtml(process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`)}.</footer>`;
+<footer>This static site does not author or review the sites it opens. Report abuse: ${escapeHtml(process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`)}.</footer>`;
 }
 const csp = `default-src 'none'; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'; style-src 'unsafe-inline'; connect-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'`;
 const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')

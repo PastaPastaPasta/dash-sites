@@ -274,6 +274,14 @@ export class KeyRefused extends Error {
   }
 }
 
+function quietlyFree(value: { free(): void }): void {
+  try {
+    value.free();
+  } catch {
+    // already freed
+  }
+}
+
 async function signingKey(sdk: EvoSDK, config: NetworkConfig, credentials: Credentials, levels: string[]): Promise<SigningKey> {
   const identity = await sdk.identities.fetch(credentials.identityId);
   if (!identity) throw new KeyRefused(`identity ${credentials.identityId} does not exist`);
@@ -297,6 +305,7 @@ async function signingKey(sdk: EvoSDK, config: NetworkConfig, credentials: Crede
   if (bound !== undefined && bound !== config.contractId) throw new KeyRefused('this key is limited to another app, so it cannot publish sites');
   const signer = new IdentitySigner();
   signer.addKey(privateKey);
+  quietlyFree(privateKey);
   return { identityKey: usable, signer };
 }
 
@@ -333,6 +342,11 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
   /** As `connectAs`, over a connection that is already open. */
   static async on(sdk: EvoSDK, config: NetworkConfig, credentials: Credentials): Promise<EvoWriter> {
     return new EvoWriter(sdk, config, credentials.identityId, await signingKey(sdk, config, credentials, ['HIGH', 'CRITICAL']));
+  }
+
+  /** Drops the signing key held in the SDK's memory. The writer cannot sign afterwards. */
+  forget(): void {
+    quietlyFree(this.key.signer);
   }
 
   get keyLimits(): KeyLimits {

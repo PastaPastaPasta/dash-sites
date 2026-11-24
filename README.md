@@ -8,7 +8,7 @@ Platform; there is no web host.
 | | |
 | --- | --- |
 | Showcase site | https://p2p.id.dashhq.org/ (`p2p.dash`, testnet) |
-| Gateway, mainnet | https://dash.site/ (static files on Cloudflare) |
+| Sites, mainnet | https://dash.site/ (a static site: files on Cloudflare, no server) |
 | Publish, mainnet | https://dash.site/new (builder), https://dash.site/publish (name check and cost) |
 | Gateway, testnet | https://id.dashhq.org/ |
 | Builder, testnet | https://dash-sites.thepasta.org/ |
@@ -17,9 +17,9 @@ Platform; there is no web host.
 
 The testnet data contract is
 `3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. The mainnet contract is
-`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, and `dash.site` is the mainnet
-gateway (`alice.dash.site`): static files on a Cloudflare Worker with no
-server.
+`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`. `dash.site` opens mainnet
+names (`alice.dash.site`) as a static site: the same static page for every
+name, served from a Cloudflare Worker with no server.
 
 ## How a site is opened
 
@@ -28,8 +28,8 @@ name. It installs a service worker, and the worker does the rest in your
 browser: it proves who owns `alice.dash` and what site record that owner
 published, fetches the files from Dash Platform nodes, checks every file
 against the SHA-256 in the proved manifest, and serves them to the page. The
-gateway's server sends no site content and is not needed after the first
-visit.
+host sends only that static page, never site content, and is not needed after
+the first visit.
 
 With the extension you type `alice.dash` instead and land on the same thing.
 
