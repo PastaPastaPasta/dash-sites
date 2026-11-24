@@ -82,7 +82,10 @@ describe('signing key', () => {
 
 describe('Platform read deadline', () => {
   const silent: typeof fetch = (_input, init) =>
-    new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+    new Promise((_resolve, reject) => {
+      if (init?.signal?.aborted) reject(init.signal.reason);
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    });
   const node = 'https://203.0.113.9:443/org.dash.platform.dapi.v0.Platform';
 
   it('fails a read that gets no answer in time, naming the node', async () => {
@@ -111,5 +114,20 @@ describe('Platform read deadline', () => {
     const answered = await withReadDeadline(async () => new Response('proof'), 20)(`${node}/getDocuments`);
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(await answered.text()).toBe('proof');
+  });
+
+  it('handles the Request the SDK sends, with its own signal and body', async () => {
+    let body = '';
+    const seen: typeof fetch = async (input, init) => {
+      body = await (input as Request).clone().text();
+      return silent(input, init);
+    };
+    const own = new AbortController();
+    const request = () => new Request(`${node}/getDocuments`, { method: 'POST', body: 'query', signal: own.signal });
+    await expect(withReadDeadline(seen, 20)(request())).rejects.toThrow('within 20 ms');
+    expect(body).toBe('query');
+    const pending = withReadDeadline(seen, 10_000)(request());
+    own.abort(new Error('sdk cancelled'));
+    await expect(pending).rejects.toThrow('sdk cancelled');
   });
 });

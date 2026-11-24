@@ -111,12 +111,14 @@ const PLATFORM_READ = /\/org\.dash\.platform\.dapi\.v0\.Platform\/get[A-Za-z]+$/
  */
 export function withReadDeadline(inner: typeof fetch, deadlineMs = READ_DEADLINE_MS): typeof fetch {
   return (input, init) => {
-    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, 'https://local/');
+    const url = new URL(input instanceof Request ? input.url : String(input), 'https://local/');
     if (!PLATFORM_READ.test(url.pathname)) return inner(input, init);
     const deadline = new AbortController();
-    const timer = setTimeout(() => deadline.abort(new Error(`no answer from ${url.host} within ${deadlineMs} ms`)), deadlineMs);
     const caller = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-    return inner(input, { ...init, signal: caller ? AbortSignal.any([caller, deadline.signal]) : deadline.signal }).finally(() => clearTimeout(timer));
+    if (caller?.aborted) deadline.abort(caller.reason);
+    else caller?.addEventListener('abort', () => deadline.abort(caller.reason), { once: true });
+    const timer = setTimeout(() => deadline.abort(new Error(`no answer from ${url.host} within ${deadlineMs} ms`)), deadlineMs);
+    return inner(input, { ...init, signal: deadline.signal }).finally(() => clearTimeout(timer));
   };
 }
 
