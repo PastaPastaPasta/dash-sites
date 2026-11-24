@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { networkConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
+import { denylistFromJson, isDenied, readerConfig, toHex, type Denylist, type Network, type PlatformReader, type Resolution } from '@dash-sites/core';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Connect } from './verifier.js';
@@ -10,6 +10,7 @@ declare const __VERIFIER_SHA256__: string;
 declare const __NETWORK__: string;
 declare const __CONTRACT_ID__: string;
 declare const __BUILDER_URL__: string;
+declare const __DENYLIST__: boolean;
 
 const matches = async (bytes: ArrayBuffer): Promise<boolean> => toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) === __VERIFIER_SHA256__;
 
@@ -35,7 +36,7 @@ function connect(): Promise<PlatformReader> {
   reader ??= Promise.resolve()
     .then(async () => {
       if (!self.dashSitesConnect) (0, eval)(await verifierSource());
-      return (self.dashSitesConnect as Connect)(networkConfig(__NETWORK__ as Network, __CONTRACT_ID__ || undefined));
+      return (self.dashSitesConnect as Connect)(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__));
     })
     .catch((error: unknown) => {
       reader = undefined;
@@ -50,6 +51,28 @@ async function resetClients(): Promise<void> {
   }
 }
 
+const DENYLIST_URL = '/.well-known/dash-gateway/denylist.json';
+const DENYLIST_FRESH_MS = 60_000;
+let denylist: { at: number; list?: Denylist } | undefined;
+
+/**
+ * The hosting operator's denylist, fetched from the gateway and reused for a minute. If the gateway
+ * cannot be reached the last list stays in force, or none: the site keeps working without the gateway.
+ */
+async function hostedDenied(resolution: Resolution): Promise<boolean> {
+  if (!denylist || Date.now() - denylist.at >= DENYLIST_FRESH_MS) {
+    let list = denylist?.list;
+    try {
+      const response = await fetch(DENYLIST_URL, { cache: 'no-store' });
+      if (response.ok) list = denylistFromJson(await response.json());
+    } catch {
+      // keep the last list
+    }
+    denylist = { at: Date.now(), list };
+  }
+  return denylist.list ? isDenied(denylist.list, resolution) : false;
+}
+
 const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,
   network: __NETWORK__,
@@ -57,6 +80,7 @@ const host = new SiteHost({
   store: new BrowserStore(__VERIFIER__),
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
+  denied: __DENYLIST__ ? hostedDenied : undefined,
   log: (entry) => console.warn('dash-sites', entry),
 });
 

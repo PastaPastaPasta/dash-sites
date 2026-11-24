@@ -22,6 +22,15 @@ https://*.__DOMAIN__ {
 	import dash_sites_tls
 	import /etc/dash-sites/denied.caddy
 
+	# The operator's denylist, written by dash-sites-deny. Only a hosted shell build reads it.
+	handle /.well-known/dash-gateway/denylist.json {
+		root * /etc/dash-sites/public
+		rewrite * /denylist.json
+		header Cache-Control "no-cache"
+		header Access-Control-Allow-Origin *
+		file_server
+	}
+
 	# Hosts that are not names (RESERVED_LABELS) never get the shell.
 	@reserved host __RESERVED_HOSTS__
 	handle @reserved {

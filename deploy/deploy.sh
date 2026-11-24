@@ -6,13 +6,17 @@ TARGET=${1:?ssh target, e.g. root@gateway-host}
 shift
 cd "$(dirname "$0")/.."
 
-read -r DOMAIN NETWORK BUILDER_URL RESERVED CONTRACT_ID < <(ssh "$@" "$TARGET" '. /etc/dash-sites/gateway.env; echo "${GATEWAY_DOMAINS%%,*} ${NETWORK:-testnet} ${BUILDER_URL:--} ${RESERVED_LABELS:-www} ${CONTRACT_ID:-}"')
+read -r DOMAIN NETWORK BUILDER_URL RESERVED DENYLIST_FILE CONTRACT_ID < <(ssh "$@" "$TARGET" '. /etc/dash-sites/gateway.env; echo "${GATEWAY_DOMAINS%%,*} ${NETWORK:-testnet} ${BUILDER_URL:--} ${RESERVED_LABELS:-www} ${DENYLIST_FILE:--} ${CONTRACT_ID:-}"')
 [ "$BUILDER_URL" = - ] && unset BUILDER_URL
 RESERVED_HOSTS=$(echo "$RESERVED" | tr ',' '\n' | sed "s/\$/.$DOMAIN/" | tr '\n' ' ')
 
 npx tsc -b
 npm run bundle -w @dash-sites/gateway
 export NETWORK CONTRACT_ID
+# A host with a denylist is a hosted gateway: its shell honours the operator's denylist.
+DENYLIST=0
+[ "$DENYLIST_FILE" != - ] && DENYLIST=1
+export DENYLIST
 [ -n "${BUILDER_URL:-}" ] && export BUILDER_URL
 node packages/shell/build.mjs >/dev/null
 node -e '
@@ -26,6 +30,7 @@ sed -e "s/__RESERVED_HOSTS__/$RESERVED_HOSTS/" -e "s/__DOMAIN__/$DOMAIN/g" deplo
 
 ssh "$@" "$TARGET" 'rm -rf /opt/dash-sites/shell.new && mkdir -p /opt/dash-sites/shell.new && touch /etc/dash-sites/denied.caddy'
 scp "$@" packages/gateway/bundle/gateway.mjs "$TARGET:/opt/dash-sites/gateway.mjs.new"
+scp "$@" deploy/dash-sites-deny "$TARGET:/usr/local/bin/dash-sites-deny"
 scp "$@" -r packages/shell/dist/. "$TARGET:/opt/dash-sites/shell.new/"
 ssh "$@" "$TARGET" "DOMAIN=$DOMAIN bash -s" <<'REMOTE'
 set -e
@@ -37,6 +42,8 @@ mv /opt/dash-sites/shell.new /opt/dash-sites/shell
 chmod -R a+rX /opt/dash-sites/shell
 mv /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
 mv /opt/dash-sites/gateway.mjs.new /opt/dash-sites/gateway.mjs
+chmod 755 /usr/local/bin/dash-sites-deny
+if grep -q '^DENYLIST_FILE=.' /etc/dash-sites/gateway.env; then dash-sites-deny apply; fi
 systemctl restart dash-sites-gateway
 systemctl reload caddy
 sleep 4

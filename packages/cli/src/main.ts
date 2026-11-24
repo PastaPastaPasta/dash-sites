@@ -111,6 +111,7 @@ async function serve(reader: PlatformReader, announce?: string): Promise<never> 
     extensionUrl: 'https://github.com/PastaPastaPasta/dash-sites/releases',
     abuseContact: 'this is a local gateway',
     network: values.network as string,
+    sitesLive: true,
     denylist: emptyDenylist(),
     maxSiteBytes: 50 * 1024 * 1024,
     maxFiles: 5000,

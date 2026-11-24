@@ -30,6 +30,7 @@ function config(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
     extensionUrl: 'https://ext.example/',
     abuseContact: 'abuse@example.org',
     network: 'testnet',
+    sitesLive: true,
     denylist: emptyDenylist(),
     maxSiteBytes: 1024 * 1024,
     maxFiles: 100,
