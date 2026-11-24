@@ -5,7 +5,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export NETWORK=${NETWORK:-mainnet} GATEWAY_DOMAIN=dash.site DENYLIST=0
-if [ "$NETWORK" = mainnet ]; then export PEER_GATEWAY="testnet https://id.dashhq.org"; else unset PEER_GATEWAY; fi
+# The hosted builder publishes on testnet; mainnet visitors are pointed at the publishing docs instead.
+if [ "$NETWORK" = mainnet ]; then
+  export PEER_GATEWAY="testnet https://id.dashhq.org" BUILDER_URL="https://github.com/PastaPastaPasta/dash-sites#publish-a-site"
+else
+  unset PEER_GATEWAY BUILDER_URL
+fi
 npx tsc -b
 node packages/shell/build.mjs >/dev/null
 cat packages/shell/dist/shell.json

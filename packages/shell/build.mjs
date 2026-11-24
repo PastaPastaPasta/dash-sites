@@ -71,10 +71,10 @@ if (gatewayDomain) {
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Cache-Control: no-cache
+  Cache-Control: no-cache, no-transform
 /dash-sites-verifier-*
   ! Cache-Control
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=31536000, immutable, no-transform
 `,
   );
 }

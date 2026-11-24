@@ -54,7 +54,7 @@ try {
     await document.fonts.ready;
     return {
       linked: document.querySelectorAll('link[rel="stylesheet"]').length,
-      styles: [...document.styleSheets].every((sheet) => sheet.cssRules.length > 0),
+      styles: [...document.querySelectorAll('link[rel="stylesheet"]')].every((link) => link.sheet?.cssRules.length > 0),
       declaredFonts: document.fonts.size,
       fonts: [...document.fonts].filter((font) => font.status === 'loaded').length,
       links: [...document.querySelectorAll('a[href^="/"]')].map((a) => a.getAttribute('href')).filter((href) => href !== '/'),
@@ -97,7 +97,7 @@ try {
   const served = [...fromServer, ...workerFetched];
   check(served.every(isShell), `through all of that the gateway host sent only the shell: ${[...new Set(served)].join(' ')}`);
   const others = [...contacted].filter((host) => host !== `${name}.${gateway}`).sort();
-  const expected = (host) => /^\d+\.\d+\.\d+\.\d+(:1443)?$/.test(host) || /^quorums\.(testnet|mainnet)\.networks\.dash\.org$/.test(host);
+  const expected = (host) => /^\d+\.\d+\.\d+\.\d+(:1443|:443)?$/.test(host) || /^quorums\.(testnet|mainnet)\.networks\.dash\.org$/.test(host);
   check(others.length > 0 && others.every(expected), `everything else the browser contacted is a Dash Platform node or the quorum key service: ${others.join(' ')}`);
 
   await context.route(`${scheme}://*.${gateway}/**`, (route) => route.abort());
