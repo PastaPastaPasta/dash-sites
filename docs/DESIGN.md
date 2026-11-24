@@ -538,8 +538,12 @@ queries for browsers.
   registrable domain. A site can set a cookie for the parent domain
   (`Domain=dashhq.org`) that sibling hosts then receive, read such cookies, or
   set so many that sibling hosts reject requests. The shell reads no cookies.
-  The builder, which handles identity keys, is therefore on a different
-  registrable domain (`thepasta.org`). The interim domain shares `dashhq.org`
+  The testnet builder, which handles identity keys, is therefore on a different
+  registrable domain (`thepasta.org`). The mainnet builder at `dash.site/new`
+  is not: it is served on the bare host only, never on a name's host, with
+  `frame-ancestors 'none'`, COOP and `Origin-Agent-Cluster`, and needs no
+  cookies; a site can still make it fail for a visitor by cookie bombing,
+  until `dash.site` is on the PSL. The interim domain shares `dashhq.org`
   with other apps; the lasting fix is a dedicated registrable domain for user
   content, on the PSL (see §8). The PSL has a cost here: browsers partition
   the HTTP cache by site, so once each name is its own site, each name's
@@ -555,8 +559,9 @@ queries for browsers.
 - **Builder keys**: a pasted key stays in the page's memory and is never
   stored. A key from a wallet is kept in `sessionStorage`, so a reload does
   not need another approval; it is gone when the tab closes or on sign-out,
-  and it is the limited key described in §5, not a key of the wallet. The
-  builder is on a different registrable domain from user sites and sets a
+  and it is the limited key described in §5, not a key of the wallet. On
+  `dash.site/new` it is not kept at all, and a reload asks the wallet again.
+  The builder sets a
   strict CSP (no inline or third-party script, no third-party requests except
   to Dash Platform nodes); wallet sign-in needed no change to it, and the
   preview frame is sandboxed without scripts.

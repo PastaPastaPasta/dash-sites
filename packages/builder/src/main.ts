@@ -6,6 +6,7 @@ import {
   formatDash,
   isValidLabel,
   networkConfig,
+  normalizeLabel,
   parseName,
   publishSite,
   requireOwnedName,
@@ -195,7 +196,9 @@ async function enter(connected: EvoWriter, attempt: number): Promise<void> {
   renderNames();
   refresh();
   await refreshBalance().catch(() => {});
-  const preferred = names.find((domain) => domain.label.toLowerCase() === wantedName) ?? (names.length === 1 ? names[0] : undefined);
+  const wanted = names.find((domain) => normalizeLabel(domain.label) === wantedName);
+  if (wanted) $<HTMLInputElement>('new-label').value = '';
+  const preferred = wanted ?? (names.length === 1 ? names[0] : undefined);
   if (attempt === session && !chosen && preferred) await choose(preferred).catch(() => {});
 }
 
@@ -610,8 +613,9 @@ function takeHandoff(): void {
   const how = wanted.get('signin');
   if (!how && !wanted.has('name')) return;
   history.replaceState(null, '', location.pathname + location.search);
-  wantedName = parseName(wanted.get('name') ?? '')?.label;
-  if (wantedName) $<HTMLInputElement>('new-label').value = wantedName;
+  wantedName = parseName(wanted.get('name') ?? '')?.normalized;
+  const typed = parseName(wanted.get('name') ?? '')?.label;
+  if (typed) $<HTMLInputElement>('new-label').value = typed;
   if (how === 'key') {
     $<HTMLDetailsElement>('key-signin').open = true;
     $('identity').focus();
@@ -749,4 +753,5 @@ function start(): void {
   idle(() => void Promise.all([loadEvo(), loadConnect()]).catch(() => {}));
 }
 
-start();
+if (location.protocol === 'http:' && location.hostname === GATEWAY) location.replace(`https:${location.href.slice(5)}`);
+else start();

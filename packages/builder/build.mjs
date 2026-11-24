@@ -22,7 +22,7 @@ await build({
   target: 'es2022',
   minify: true,
   legalComments: 'none',
-  chunkNames: '[name]-[hash]',
+  chunkNames: 'c/[name]-[hash]',
   define: {
     __GATEWAY_DOMAIN__: JSON.stringify(process.env.GATEWAY_DOMAIN ?? 'id.dashhq.org'),
     __NETWORK__: JSON.stringify(process.env.NETWORK ?? 'testnet'),
@@ -67,7 +67,8 @@ if (site) {
   Cross-Origin-Opener-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-/new/assets/*-*.js
+  Origin-Agent-Cluster: ?1
+/new/assets/c/*
   Cache-Control: public, max-age=31536000, immutable
 `,
   );

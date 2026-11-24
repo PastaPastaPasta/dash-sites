@@ -24,6 +24,8 @@ function connect(): Promise<EvoReader> {
   return reader;
 }
 
+if (location.protocol === 'http:' && location.hostname === GATEWAY) location.replace(`https:${location.href.slice(5)}`);
+
 const input = $<HTMLInputElement>('name');
 const answer = $('answer');
 const say = (...nodes: Array<Node | string>): void => answer.replaceChildren(...nodes);
