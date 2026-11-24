@@ -49,7 +49,7 @@ Options
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
   --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
   --prune                       after publishing, delete chunks of releases before the one replaced
-  --grace <hours>               gc and --prune delete nothing until every site record is this old (default 24)
+  --grace <hours>               gc and --prune delete nothing until every site record is this old (default 25)
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity

@@ -67,13 +67,26 @@ export async function publishSite(
     done += 1;
     onProgress({ step: 'upload', done, total: missing.length, hash });
   }
-  const replaced = options.prune ? (await writer.getSite(writer.identityId, domain.id)).value : undefined;
+  let replaced: SiteRecord | undefined;
+  let replacedError: string | undefined;
+  if (options.prune) {
+    try {
+      replaced = (await writer.getSite(writer.identityId, domain.id)).value;
+    } catch (error) {
+      replacedError = String((error as Error)?.message ?? error);
+    }
+  }
   onProgress({ step: 'record' });
   const site = await writer.putSite(domain, bundle.contentUri);
   // The record is live whatever happens to the prune, so a prune that cannot run is reported, not thrown.
   let pruned: PruneResult | undefined;
   if (options.prune) {
     try {
+      if (replacedError) throw new PruneError(`the record being replaced could not be read (${replacedError})`);
+      // A node behind the chain can answer with an older record; only the one this write replaced will do.
+      if (replaced ? replaced.id !== site.id || replaced.revision !== site.revision - 1 : site.revision !== 1) {
+        throw new PruneError('the record read before publishing is not the one this publish replaced');
+      }
       const plan = await planPrune(writer, { ...options.prune, keep: [...all, ...(options.prune.keep ?? [])], published: { site, replaced } });
       pruned = await prune(writer, plan);
     } catch (error) {
@@ -126,7 +139,7 @@ export interface PrunePlan {
   remove: Array<StoredChunk & { bytes: number }>;
   bytes: number;
   kept: number;
-  /** The site records the plan was made from, as `id content`, so a delete can check nothing changed. */
+  /** The site records the plan was made from, as `id revision content`, so a delete can check nothing changed. */
   sites: string[];
   /** Set while a site record is younger than the grace period: the plan may be shown, not carried out. */
   deferredUntil?: number;
@@ -140,15 +153,15 @@ export interface PruneResult extends PrunePlan {
   skipped?: string;
 }
 
-const snapshot = (sites: SiteRecord[]): string[] => sites.map((site) => `${site.id} ${site.content}`).sort();
+const snapshot = (sites: SiteRecord[]): string[] => sites.map((site) => `${site.id} ${site.revision} ${site.content}`).sort();
 
 async function listSites(writer: PlatformWriter, published?: SiteRecord): Promise<SiteRecord[]> {
   let sites = await writer.listSites();
-  for (let attempt = 1; published && attempt < LIST_ATTEMPTS && !sites.some((site) => site.id === published.id && site.content === published.content); attempt++) {
+  for (let attempt = 1; published && attempt < LIST_ATTEMPTS && !sites.some((site) => site.id === published.id && site.revision >= published.revision); attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     sites = await writer.listSites();
   }
-  if (published && !sites.some((site) => site.id === published.id && site.content === published.content)) {
+  if (published && !sites.some((site) => site.id === published.id && site.revision >= published.revision)) {
     throw new PruneError('the site listing does not show the record just written yet');
   }
   return sites;

@@ -461,6 +461,36 @@ describe('resolve and publish', () => {
     expect((await collectGarbage(alice, { now: now(), graceMs: 0 })).deleted).toBe(v1.chunks.size);
   });
 
+  it('skips the prune when the record read before publishing is stale', async () => {
+    const { alice, later, now } = aged();
+    const v1 = buildSite([{ path: '/index.html', bytes: text('v1') }, { path: '/a.bin', bytes: random(CHUNK_SIZE + 5, 3) }]);
+    const v2 = buildSite([{ path: '/index.html', bytes: text('v2') }, { path: '/b.bin', bytes: random(CHUNK_SIZE + 5, 4) }]);
+    await publishSite(alice, 'alice', v1);
+    const stale = await alice.getSite('alice-id', 'domain-1');
+    later();
+    await publishSite(alice, 'alice', v2);
+    const lagging: PlatformWriter = { ...alice, getSite: async () => stale };
+    const v3 = buildSite([{ path: '/index.html', bytes: text('v3') }]);
+    const result = await publishSite(lagging, 'alice', v3, undefined, { prune: { now: now() + 60_000 } });
+    expect(result.pruned?.deleted).toBe(0);
+    expect(result.pruned?.skipped).toMatch(/not the one this publish replaced/);
+    for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+  });
+
+  it('prunes when republishing identical content', async () => {
+    const { alice, later, now } = aged();
+    const v1 = buildSite([{ path: '/index.html', bytes: text('v1') }]);
+    const v2 = buildSite([{ path: '/index.html', bytes: text('v2') }]);
+    await publishSite(alice, 'alice', v1);
+    await publishSite(alice, 'alice', v2);
+    later();
+    await publishSite(alice, 'alice', v2, undefined, { prune: { now: now() } });
+    later();
+    const result = await publishSite(alice, 'alice', v2, undefined, { prune: { now: now() } });
+    expect(result.pruned?.skipped).toBeUndefined();
+    expect((await alice.listChunks()).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+  });
+
   it('estimates refunds from the storage fee distribution table', () => {
     const fee = 27_000n * 1_000_000n;
     expect(refundCredits(1_000_000, 0)).toBe((fee * 99_875n) / 100_000n);

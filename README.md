@@ -127,7 +127,9 @@ run is reported in the publish output; the new site is live regardless. What is 
 two processes publishing for the same identity at the same moment (run one publisher at a
 time), and `unpublish`, after which the removed site's chunks count as unused at once. An
 identity that updates some site more often than the grace period never prunes on publish;
-run `gc` in a quiet period.
+run `gc` in a quiet period. `gc` trusts that the nodes it reads the site records from are not
+behind a publish made moments earlier; it reads them twice, but leave a minute between a
+publish and a `gc`.
 
 `--identity-file` takes the identity JSON that dash-bridge writes. You can
 also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
