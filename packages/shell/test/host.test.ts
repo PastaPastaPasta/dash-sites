@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildSite, normalizeLabel, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
-import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
+import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
 const text = (s: string) => utf8.encode(s);
 const site = (title: string): SiteFile[] => [
@@ -36,6 +36,7 @@ class Harness {
   ownerChanges = 0;
   nonces = 0;
   background: Promise<unknown>[] = [];
+  denied?: HostOptions['denied'];
   host = this.start();
 
   constructor() {
@@ -66,6 +67,7 @@ class Harness {
       now: () => this.clock,
       onOwnerChange: () => void (this.ownerChanges += 1),
       nonce: () => `nonce-${++this.nonces}`,
+      denied: this.denied,
     });
     return this.host;
   }
@@ -112,6 +114,40 @@ async function resetTarget(page: Reply, hash: string): Promise<string> {
 }
 
 const body = (reply: Reply): string => (typeof reply.body === 'string' ? reply.body : utf8.decode(reply.body ?? new Uint8Array()));
+
+describe('hosted denylist', () => {
+  it('refuses a denied name with a 451 page and a 451 host API answer', async () => {
+    const h = new Harness();
+    await h.publish('alice-id', 'one');
+    const asked: string[] = [];
+    h.denied = async (resolution) => {
+      asked.push(resolution.status);
+      return 'ownerId' in resolution && resolution.ownerId === 'alice-id';
+    };
+    h.start();
+    const page = await h.get('/');
+    expect(page.status).toBe(451);
+    expect(body(page)).toContain('Unavailable on this gateway');
+    expect(body(page)).not.toContain('<h1>one</h1>');
+    const api = await h.get('/.well-known/dash/site.json');
+    expect(api.status).toBe(451);
+    expect(JSON.parse(body(api))).toEqual({ status: 'unavailable' });
+    expect(asked).toContain('ok');
+  });
+
+  it('serves normally when the hook allows the name or there is no hook', async () => {
+    for (const denied of [async () => false, undefined]) {
+      const h = new Harness();
+      await h.publish('alice-id', 'one');
+      h.denied = denied;
+      h.start();
+      await h.open();
+      const page = await h.get('/');
+      expect(page.status).toBe(200);
+      expect(body(page)).toContain('<h1>one</h1>');
+    }
+  });
+});
 
 describe('site host', () => {
   it('serves files, directory indexes and the 404 page from proved content', async () => {
