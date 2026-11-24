@@ -81,8 +81,10 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
   `$transferredAt`; `records.identity` still names the original identity. On
   protocol 14 `records.identity` is not even checked against the registrant
   when the name is created.
-- Domain documents cannot be replaced or deleted, so a name has exactly one
-  document, with one `$id`, for as long as it exists.
+- Domain documents cannot be replaced, but their owner can delete them
+  (`canBeDeleted: true`). From protocol 14 a document id is never produced
+  twice, so a name registered again after a deletion is a new document with a
+  new `$id`, and nothing published under the old id is served for it.
 - `domain` has no index on `$ownerId`. "Names I own" can only be listed through
   `records.identity`, which misses names that were bought or received.
 - Names are unique on `(normalizedParentDomainName, normalizedLabel)`.
@@ -152,6 +154,39 @@ Chunks are keyed per owner for the same reason: nobody can occupy or delete a
 chunk another publisher depends on. Chunks are deletable so that a publisher
 can reclaim the storage refund after replacing a site. Neither type can be
 transferred, so nobody can plant a document in someone else's slot.
+
+### What registration fixes
+
+The contract's id and owner are permanent, and the owner can only add to it.
+Platform's protocol 14 update rules (`validate_update` in rs-dpp 5.0.3) decide
+what:
+
+| An update can | An update cannot |
+| --- | --- |
+| Add a document type, with indexes, fees and moderator abilities of its own | Add, change or remove an index of `site` or `chunk` |
+| Add an optional property to `site` or `chunk`, or a required one marked `requiredSince` | Remove a property, or stop requiring one (`name` stays required) |
+| Raise `maxLength` and `maxItems` (a chunk field up to Platform's 5,120-byte limit), remove a `pattern` | Change a `pattern`, or whether `site` and `chunk` documents can be replaced, deleted or transferred |
+| List properties under `immutable` | Give `site` or `chunk` a time to live, a fee, a token cost, a count or a `refersTo` check |
+| Add tokens, keywords and a description | Let moderators delete `site` or `chunk` documents, start a banlist or a suspension list, hand moderation to an elected team, keep the contract's history, or make it read-only |
+
+Three things follow from registering the contract as it is, and stay true of
+`site` and `chunk` for good:
+
+- **Only its owner can delete a document or be stopped from writing one.**
+  The contract declares no `moderation`. A gateway can refuse to serve a site
+  (§8), but no one can take it off Platform, and a publisher cannot be barred
+  from the contract. What stays possible is a later document type whose
+  documents the contract owner, or moderators it appoints, may delete.
+- **Publishing pays Platform's fees and nothing else.** Neither type has an
+  action fee or a token cost. A paid tier is a new document type.
+- **Platform does not check that a publisher owns the name.** `domainId`
+  carries no `refersTo`, so anyone may write a `site` document for any domain
+  id; the resolution rule (§4) is what ignores it. A list of sites built from
+  the `updated` index must prove each name's owner the same way.
+
+`packages/core/test/contract.test.ts` parses the contract with Platform's
+rules and holds these terms, so a change to the schema file is a deliberate
+one.
 
 ### Content URIs
 
@@ -534,6 +569,7 @@ default to it. The network, contract id and gateway domains are configuration.
 Mainnet needs a funded mainnet identity to register the contract (about 0.17
 DASH), then the contract id in `packages/core/src/config.ts` and
 `NETWORK=mainnet` on a gateway. It is otherwise the same deployment.
+Registering is final in the ways §3 lists under "What registration fixes".
 
 A gateway runs on a network before its contract exists: the reader proves
 names as usual and every registered name resolves to "no site yet", and the
