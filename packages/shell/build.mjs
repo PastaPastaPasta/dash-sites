@@ -8,6 +8,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const out = join(root, 'dist');
 const network = process.env.NETWORK ?? 'testnet';
 const sourceUrl = process.env.SOURCE_URL ?? 'https://github.com/PastaPastaPasta/dash-sites';
+const builderUrl = process.env.BUILDER_URL ?? 'https://dash-sites.thepasta.org/';
 // Hosted gateways only (deploy.sh sets it when the host has a denylist): the worker honours the
 // operator's denylist and a notice page is built for names refused by host.
 const hosted = process.env.DENYLIST === '1';
@@ -26,7 +27,7 @@ await build({
   define: {
     __NETWORK__: JSON.stringify(network),
     __CONTRACT_ID__: JSON.stringify(process.env.CONTRACT_ID ?? ''),
-    __BUILDER_URL__: JSON.stringify(process.env.BUILDER_URL ?? 'https://dash-sites.thepasta.org/'),
+    __BUILDER_URL__: JSON.stringify(builderUrl),
     __VERIFIER__: JSON.stringify(`/${verifierName}`),
     __VERIFIER_SHA256__: JSON.stringify(sha256(verifier)),
     __DENYLIST__: JSON.stringify(hosted),
@@ -35,10 +36,7 @@ await build({
 copyFileSync(join(root, 'src', 'denied-sw.js'), join(out, 'denied-sw.js'));
 const boot = await build({ ...common, entryPoints: [join(root, 'src', 'boot.ts')], write: false });
 const { DENIED_TITLE, PAGE_STYLE, deniedDetail, messagePage } = await import('@dash-sites/core');
-if (hosted) {
-  const builderUrl = process.env.BUILDER_URL ?? 'https://dash-sites.thepasta.org/';
-  writeFileSync(join(out, 'unavailable.html'), messagePage('451', DENIED_TITLE, deniedDetail('this name'), { builderUrl }));
-}
+if (hosted) writeFileSync(join(out, 'unavailable.html'), messagePage('451', DENIED_TITLE, deniedDetail('this name'), { builderUrl }));
 const script = boot.outputFiles[0].text.trim();
 const csp = `default-src 'none'; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'; style-src 'unsafe-inline'; connect-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'`;
 const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
