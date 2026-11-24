@@ -1,7 +1,7 @@
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/dist-types/**', '**/build/**', '**/bundle/**', '**/node_modules/**', 'packages/core/src/vendor/**', 'packages/core/test/app-connect/**'] },
+  { ignores: ['**/dist/**', '**/dist-site/**', '**/dist-types/**', '**/build/**', '**/bundle/**', '**/node_modules/**', 'packages/core/src/vendor/**', 'packages/core/test/app-connect/**'] },
   ...tseslint.configs.recommended,
   {
     rules: {
