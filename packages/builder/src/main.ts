@@ -133,7 +133,7 @@ function renderPreview(): void {
 async function refreshBalance(): Promise<void> {
   const current = writer;
   if (!current) return;
-  const [balance, remaining] = await Promise.all([current.balance(), current.remainingBudget()]);
+  const [balance, remaining] = await Promise.all([current.balance(), current.remainingBudget().catch(() => undefined)]);
   if (current !== writer) return;
   $('balance').textContent = formatDash(balance);
   const { expiresAt } = current.keyLimits;
@@ -155,7 +155,7 @@ function renderNames(): void {
       return button;
     }),
   );
-  $('names-empty').hidden = names.length > 0 || !writer;
+  $('names-empty').hidden = names.length > 0 || !writer || writer.keyLimits.bound;
 }
 
 async function choose(domain: DomainRecord): Promise<void> {
@@ -193,7 +193,7 @@ async function enter(connected: EvoWriter, attempt: number): Promise<void> {
   renderNames();
   refresh();
   await refreshBalance().catch(() => {});
-  if (names.length === 1) await choose(names[0] as DomainRecord).catch(() => {});
+  if (attempt === session && !chosen && names.length === 1) await choose(names[0] as DomainRecord).catch(() => {});
 }
 
 async function signIn(identity: string, key: string): Promise<void> {
@@ -301,10 +301,13 @@ async function signInWithWallet(): Promise<void> {
     progress.textContent = '';
     showWallet('request');
 
-    let state = 'Waiting for your wallet';
     const tick = (): void => {
-      status.textContent = `${state}. This code works for ${countdown(pending.expiresAt - Date.now())}.`;
+      $('wallet-countdown').textContent = `This code works for ${countdown(pending.expiresAt - Date.now())}.`;
     };
+    const say = (state: string): void => {
+      if (status.textContent !== state) status.textContent = state;
+    };
+    say('Waiting for your wallet.');
     tick();
     timer = setInterval(tick, 1000);
     const trigger = new connect.PollTrigger();
@@ -316,10 +319,7 @@ async function signInWithWallet(): Promise<void> {
     const grant = await connect.awaitWalletGrant(port, pending, {
       signal: abort.signal,
       trigger,
-      onStatus: (poll) => {
-        state = poll === 'answered' ? 'Your wallet answered. Checking its key' : poll === 'incomplete-read' ? 'Could not read every answer, trying again' : 'Waiting for your wallet';
-        tick();
-      },
+      onStatus: (poll) => say(poll === 'answered' ? 'Your wallet answered. Checking its key.' : poll === 'incomplete-read' ? 'Could not read every answer, trying again.' : 'Waiting for your wallet.'),
     });
     try {
       clearInterval(timer);
@@ -339,6 +339,7 @@ async function signInWithWallet(): Promise<void> {
       progress.textContent = 'Signing in…';
       const connected = await evo.EvoWriter.on(sdk, config, { identityId: grant.identityId, privateKey: grant.privateKey });
       if (attempt !== session) return;
+      if (expiring(connected)) throw new Error('The key your wallet approved has run out. Start again.');
       saveSession(storage('sessionStorage'), NETWORK, { identityId: grant.identityId, privateKey: grant.privateKey });
       await enter(connected, attempt);
       if (attempt === session) cancelWallet();
@@ -529,8 +530,9 @@ async function fromDrop(items: DataTransferItemList): Promise<void> {
 }
 
 async function publish(): Promise<void> {
-  if (!writer || !chosen || !bundle || publishing) return;
-  if (expiring(writer)) {
+  const signer = writer;
+  if (!signer || !chosen || !bundle || publishing) return;
+  if (expiring(signer)) {
     $('publish-error').textContent = 'Your wallet sign-in has run out. Sign out, sign in with DashPay again, then publish.';
     return;
   }
@@ -547,7 +549,7 @@ async function publish(): Promise<void> {
   status.textContent = 'Checking what is already stored…';
   refresh();
   try {
-    const result = await publishSite(writer, chosen.label, bundle, (step) => {
+    const result = await publishSite(signer, chosen.label, bundle, (step) => {
       if (step.step === 'upload') {
         progress.max = step.total;
         progress.value = step.done;
@@ -565,9 +567,10 @@ async function publish(): Promise<void> {
     if (label() === published) $('site-status').textContent = `${published}.dash has a site (revision ${result.site.revision}). Publishing again replaces it.`;
   } catch (caught) {
     status.textContent = '';
-    const live = writer?.keyLimits.bound ? await writer.keyLive().catch(() => true) : true;
+    const live = signer.keyLimits.bound ? await signer.keyLive().catch(() => true) : true;
+    if (signer !== writer) return;
     error.textContent =
-      live === false
+      !live
         ? 'Publishing stopped: your wallet sign-in has ended. Its key was removed in the wallet or replaced by a newer sign-in from this browser. Sign out, then sign in with DashPay again; what was stored is kept.'
         : `Publishing stopped: ${message(caught)} What was stored is kept, so publishing again continues from here.`;
   } finally {

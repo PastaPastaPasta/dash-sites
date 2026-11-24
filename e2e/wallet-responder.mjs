@@ -54,6 +54,16 @@ export async function approve({ identityFile, uri, budget, expiresAt, now = Date
   master.addKey(PrivateKey.fromBytes(secret, network));
   await sdk.identities.update({ identity, addPublicKeys: [added], signer: master });
 
+  try {
+    await respond(sdk, record, request, secret);
+  } catch (error) {
+    await sdk.identities.update({ identity: await sdk.identities.fetch(record.identityId), disablePublicKeys: [keyId], signer: master }).catch(() => {});
+    throw error;
+  }
+  return { identityId: record.identityId, keyId, label: request.label, ...granted };
+}
+
+async function respond(sdk, record, request, secret) {
   const sealed = await sealAppConnectPayload({ appEphemeralPubKey: request.appEphemeralPubKey, ownerId: base58.decode(record.identityId), slots: [secret] });
   const high = keyOf(record, 'HIGH');
   const identityKey = new IdentityPublicKey({ keyId: high.id, purpose: high.purpose, securityLevel: high.securityLevel, keyType: high.keyType, isReadOnly: false, data: Buffer.from(high.publicKeyHex, 'hex') });
@@ -65,7 +75,6 @@ export async function approve({ identityFile, uri, budget, expiresAt, now = Date
     sdk.wasm.version(),
   );
   await sdk.documents.create({ document, identityKey, signer });
-  return { identityId: record.identityId, keyId, label: request.label, ...granted };
 }
 
 /** Disables keys this wallet added, so a test leaves nothing live behind. */

@@ -47,6 +47,8 @@ interface Answer {
   remaining?: bigint;
   /** The wallet's key is not on the identity for this many reads. */
   lag?: number;
+  /** Extra keys sealed into the answer beyond the one that was asked for. */
+  extraSlots?: number;
 }
 
 function world() {
@@ -113,7 +115,7 @@ function world() {
       ]);
       if (totalBudget !== null) remaining.set(keyId, options.remaining ?? totalBudget);
       if (options.lag) lag.set(ownerId, options.lag);
-      const sealed = await sealAppConnectPayload({ appEphemeralPubKey: pending.request.appEphemeralPubKey, ownerId: base58.decode(ownerId), slots: [secret] });
+      const sealed = await sealAppConnectPayload({ appEphemeralPubKey: pending.request.appEphemeralPubKey, ownerId: base58.decode(ownerId), slots: [secret, ...Array.from({ length: options.extraSlots ?? 0 }, () => secp.utils.randomSecretKey())] });
       rows.push({ ownerId, ...sealed });
       return { ownerId, keyId };
     },
@@ -284,6 +286,34 @@ describe('waiting for the wallet', () => {
     const abort = new AbortController();
     const waiting = awaitWalletGrant(port, pending, { ...QUICK, signal: abort.signal, onStatus: () => abort.abort() });
     await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('counts an answer that opens but holds too many keys as a second responder', async () => {
+    const { port, answer } = world();
+    const pending = request(Date.now());
+    await answer(pending);
+    await answer(pending, { extraSlots: 1 });
+    await expect(awaitWalletGrant(port, pending, QUICK)).rejects.toBeInstanceOf(AmbiguousWalletLogin);
+  });
+
+  it('measures the wait from when a read began, not from when it came back', async () => {
+    const { port, answer } = world();
+    const pending = request(Date.now());
+    await answer(pending);
+    let clock = Date.now();
+    let reads = 0;
+    const slow: ConnectPort = {
+      ...port,
+      async listCandidates(...args) {
+        const seen = await port.listCandidates(...args);
+        if (++reads === 2) {
+          await answer(pending);
+          clock += 5000;
+        }
+        return seen;
+      },
+    };
+    await expect(awaitWalletGrant(slow, pending, { intervalMs: 1, settleMs: 1000, now: () => clock })).rejects.toBeInstanceOf(AmbiguousWalletLogin);
   });
 
   it('gives up on more answers than it will read', async () => {

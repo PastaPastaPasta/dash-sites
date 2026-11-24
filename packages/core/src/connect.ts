@@ -7,6 +7,7 @@ import {
   APP_CONNECT_MAX_REQUEST_AGE_MS,
   KeySecurityLevel,
   appConnectCandidateKey,
+  appConnectSlotCount,
   appConnectPollDelayMs,
   appConnectRequestHash,
   buildAppConnectUri,
@@ -339,7 +340,10 @@ export interface AwaitGrantOptions {
   onStatus?: (status: PollStatus) => void;
 }
 
-const NOT_AN_ANSWER: ReadonlySet<AppConnectRejectReason> = new Set(['decrypt', 'framing']);
+/** A payload of the wrong length was never opened; one of the right length with too many keys was. */
+function opened(reason: AppConnectRejectReason, candidate: AppConnectCandidate): boolean {
+  return reason !== 'decrypt' && (reason !== 'framing' || appConnectSlotCount(candidate.encryptedPayload.length) !== null);
+}
 
 function grantOf(grant: AppConnectGrant): WalletGrant {
   const [main, ...others] = grant.authKeys;
@@ -370,6 +374,7 @@ export async function awaitWalletGrant(port: ConnectPort, pending: WalletRequest
   try {
     for (;;) {
       if (options.signal?.aborted) throw cancelled();
+      const readAt = now();
       const page = await listAppConnectCandidates(port, pending.requestHash).catch(() => null);
       if (page?.truncated) throw new TooManyAnswers();
       for (const candidate of page?.candidates ?? []) {
@@ -385,7 +390,7 @@ export async function awaitWalletGrant(port: ConnectPort, pending: WalletRequest
             identity: port,
             now: pending.chainTimeAtCreation + (now() - pending.createdAt),
           });
-          if (!verdict.ok && NOT_AN_ANSWER.has(verdict.reason)) {
+          if (!verdict.ok && !opened(verdict.reason, candidate)) {
             notAnswers.add(contents);
             continue;
           }
@@ -400,10 +405,10 @@ export async function awaitWalletGrant(port: ConnectPort, pending: WalletRequest
       if (answered.size > 1) throw new AmbiguousWalletLogin([...answered.keys()]);
       const time = now();
       if (page === null) cleanSince = 0;
-      else if (cleanSince === 0) cleanSince = time;
+      else if (cleanSince === 0) cleanSince = readAt;
       options.onStatus?.(page === null ? 'incomplete-read' : answered.size > 0 ? 'answered' : 'waiting');
       const only = [...answered.values()].find((answer) => answer !== null);
-      if (only && cleanSince !== 0 && time - Math.max(firstAt, cleanSince) >= settleMs) {
+      if (only && cleanSince !== 0 && readAt - Math.max(firstAt, cleanSince) >= settleMs) {
         if (only instanceof WalletGrantRefused) throw only;
         if (options.signal?.aborted) throw cancelled();
         return only;
