@@ -4,7 +4,7 @@
 # NETWORK defaults to testnet until the mainnet contract is registered; then deploy with NETWORK=mainnet.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-export NETWORK=${NETWORK:-testnet} GATEWAY_DOMAIN=dash.site
+export NETWORK=${NETWORK:-testnet} GATEWAY_DOMAIN=dash.site DENYLIST=0
 if [ "$NETWORK" = mainnet ]; then export PEER_GATEWAY="testnet https://id.dashhq.org"; else unset PEER_GATEWAY; fi
 npx tsc -b
 node packages/shell/build.mjs >/dev/null

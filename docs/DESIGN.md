@@ -537,8 +537,8 @@ DASH), then the contract id in `packages/core/src/config.ts` and
 
 A gateway runs on a network before its contract exists: the reader proves
 names as usual and every registered name resolves to "no site yet", and the
-landing page says publishing has not opened. `dash.site` runs that way on
-mainnet until the contract is registered.
+landing page says publishing has not opened. Until the mainnet contract is
+registered, `dash.site` serves testnet names instead (§8).
 
 ## 8. Hosting
 
@@ -575,7 +575,8 @@ droplet gateway. What changes without a server:
 - **No fallback process.** Crawlers, link previews and command-line clients
   get the boot page, not a rendered copy of the site. A browser without
   service workers (a Firefox private window, for one) gets a plain page saying
-  so and pointing at the extension.
+  so. Over plain `http://` (no service workers outside a secure context) the
+  boot page moves to `https://` itself, since the Worker cannot redirect.
 - **No operator denylist in the build.** The `dash.site` build leaves the
   denylist out (`DENYLIST` unset). Blocking is done in front of it instead.
 - **Caching.** `_headers` sends `Cache-Control: no-cache` for everything but
@@ -589,7 +590,8 @@ most specific route, so it wins over `*.dash.site/*`. That Worker serves two
 files and runs no script:
 
 - `/sw.js`: `packages/shell/src/denied-sw.js`, a worker that deletes the
-  site's caches, unregisters itself and reloads open pages. A visitor whose
+  origin's Cache Storage, unregisters itself and reloads open pages (the
+  site's IndexedDB and localStorage stay in the browser). A visitor whose
   browser already has the site's worker gets this on its next update check:
   a browser keeps an installed worker when an update fails, so the blocked
   host must answer `/sw.js` with this file rather than an error.
@@ -598,8 +600,11 @@ files and runs no script:
   `index.html`).
 
 Adding a name is a PR that adds its route to that Worker's `wrangler.jsonc`,
-then a deploy. Look-alike spellings (`o`/`0`, `i`/`l`/`1`) are separate hosts
-and need their own routes. The site stays on Platform and other gateways may
+then a deploy. Use the registered label in lowercase: the worker serves a
+site only on its canonical host and redirects look-alike spellings there, so
+other spellings need no route. Keep Rocket Loader, Email Obfuscation and
+automatic Web Analytics off on the zone: they rewrite the boot page and break
+its script hash. The site stays on Platform and other gateways may
 serve it.
 
 ### Operator denylist (droplet gateways)

@@ -55,7 +55,7 @@ async function start(): Promise<void> {
   (document.getElementById('name') as HTMLElement).textContent = `${label}.dash`;
   if (!('serviceWorker' in navigator)) {
     return fail(
-      'Sites here are read from Dash Platform and checked by your browser, which needs service workers. They are unavailable in this browser or window (for example a Firefox private window). Open the site in a regular window of Chrome, Edge, Firefox or Safari, or use the Dash Sites browser extension.',
+      'Sites here are read from Dash Platform and checked by your browser, which needs service workers. They are unavailable in this browser or window (for example a Firefox private window). Open the site in a regular window of Chrome, Edge, Firefox or Safari.',
       'This browser cannot open Dash Sites',
     );
   }
@@ -71,4 +71,5 @@ async function start(): Promise<void> {
   reload();
 }
 
-if (!landing()) start().catch((error: unknown) => fail(`The verifier could not start: ${error instanceof Error ? error.message : String(error)}`));
+if (!isSecureContext && location.protocol === 'http:' && __GATEWAY_DOMAIN__) location.replace(`https:${location.href.slice(5)}`);
+else if (!landing()) start().catch((error: unknown) => fail(`The verifier could not start: ${error instanceof Error ? error.message : String(error)}`));

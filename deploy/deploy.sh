@@ -10,6 +10,7 @@ read -r DOMAIN NETWORK BUILDER_URL RESERVED DENYLIST_FILE CONTRACT_ID < <(ssh "$
 [ "$BUILDER_URL" = - ] && unset BUILDER_URL
 RESERVED_HOSTS=$(echo "$RESERVED" | tr ',' '\n' | sed "s/\$/.$DOMAIN/" | tr '\n' ' ')
 
+unset GATEWAY_DOMAIN
 npx tsc -b
 npm run bundle -w @dash-sites/gateway
 export NETWORK CONTRACT_ID
