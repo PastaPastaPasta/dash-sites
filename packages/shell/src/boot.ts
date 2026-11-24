@@ -1,7 +1,9 @@
 declare const __GATEWAY_DOMAIN__: string;
+declare const __VERIFIER__: string;
 
 const label = location.hostname.split('.')[0] as string;
 const step = document.getElementById('step') as HTMLElement;
+const bar = document.querySelector('.bar') as HTMLElement;
 const say = (text: string): void => {
   step.textContent = text;
 };
@@ -22,6 +24,8 @@ function landing(): boolean {
   (document.getElementById('shell') as HTMLElement).hidden = true;
   (document.getElementById('landing') as HTMLElement).hidden = false;
   const form = document.getElementById('go') as HTMLFormElement;
+  // Someone about to open a name will need the verifier; names share this domain's HTTP cache.
+  form.addEventListener('focusin', () => void fetch(__VERIFIER__, { mode: 'cors', credentials: 'omit' }).then((response) => response.arrayBuffer()).catch(() => undefined), { once: true });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const name = String(new FormData(form).get('name') ?? '').trim().toLowerCase().replace(/\.dash\.?$/, '');
@@ -59,14 +63,26 @@ async function start(): Promise<void> {
       'This browser cannot open Dash Sites',
     );
   }
-  say('Downloading the verifier, about 9 MB. This happens once.');
-  const registration = await navigator.serviceWorker.register('/sw.js');
   if (!navigator.serviceWorker.controller) {
+    say('Downloading the verifier, about 9 MB. This happens once.');
+    navigator.serviceWorker.addEventListener('message', (event: MessageEvent<{ dashSitesProgress?: number }>) => {
+      const share = event.data?.dashSitesProgress;
+      if (typeof share !== 'number') return;
+      bar.classList.add('known');
+      bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
+      say(`Downloading the verifier, about 9 MB: ${Math.round(share * 100)}%. This happens once.`);
+    });
+    const registration = await navigator.serviceWorker.register('/sw.js');
     if (registration.active) return reload();
     await controlled(registration);
+    bar.classList.remove('known');
   }
   say(`Asking Dash Platform who owns ${label}.dash and checking the proof.`);
-  const record = (await (await fetch('/.well-known/dash/site.json')).json()) as { proof?: { height: number } };
+  const response = await fetch('/.well-known/dash/site.json');
+  if (response.status === 503) {
+    return fail(`Your browser could not get a proved answer about ${label}.dash from Dash Platform. Reload to try again.`, 'Dash Platform could not be reached');
+  }
+  const record = (await response.json()) as { proof?: { height: number } };
   if (record.proof) say(`Proved at block ${record.proof.height}. Loading the site.`);
   reload();
 }

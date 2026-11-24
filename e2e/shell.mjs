@@ -17,16 +17,18 @@ const check = (ok, message) => {
   if (!ok) process.exitCode = 1;
 };
 if (shots) mkdirSync(shots, { recursive: true });
+// E2E_HOST_MAP=127.0.0.1:8787 sends the gateway domain to a local `wrangler dev --local-protocol https`.
+const args = process.env.E2E_HOST_MAP ? [`--host-resolver-rules=MAP ${gateway} ${process.env.E2E_HOST_MAP}, MAP *.${gateway} ${process.env.E2E_HOST_MAP}`, '--ignore-certificate-errors'] : [];
 
 const profile = mkdtempSync(join(tmpdir(), 'dash-sites-shell-'));
-const context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, viewport: { width: 1280, height: 860 } });
+const context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, args, viewport: { width: 1280, height: 860 } });
 try {
   const contacted = new Set();
   const workerFetched = new Set();
   context.on('request', (request) => {
     const url = new URL(request.url());
     contacted.add(url.host);
-    if (request.serviceWorker() && url.origin === origin) workerFetched.add(url.pathname);
+    if (request.serviceWorker() && (url.origin === origin || url.host === gateway)) workerFetched.add(url.pathname);
   });
   const isShell = (path) => path === '/' || path === '/sw.js' || /^\/dash-sites-verifier-[0-9a-f]+\.js$/.test(path);
   const page = await context.newPage();
@@ -96,9 +98,20 @@ try {
 
   const served = [...fromServer, ...workerFetched];
   check(served.every(isShell), `through all of that the gateway host sent only the shell: ${[...new Set(served)].join(' ')}`);
-  const others = [...contacted].filter((host) => host !== `${name}.${gateway}`).sort();
+  const others = [...contacted].filter((host) => host !== `${name}.${gateway}` && host !== gateway).sort();
   const expected = (host) => /^\d+\.\d+\.\d+\.\d+(:1443|:443)?$/.test(host) || /^quorums\.(testnet|mainnet)\.networks\.dash\.org$/.test(host);
   check(others.length > 0 && others.every(expected), `everything else the browser contacted is a Dash Platform node or the quorum key service: ${others.join(' ')}`);
+
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('ServiceWorker.enable');
+  await cdp.send('ServiceWorker.stopAllWorkers');
+  await cdp.detach();
+  const restarted = Date.now();
+  await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded' });
+  const painted = Date.now() - restarted;
+  check((await page.title()) === 'Loading from Dash Platform', `after the worker stopped, the progress page shows at once (${painted} ms) while the name is proved again`);
+  await page.waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 120000 });
+  check(true, `then the site loads: ${await page.title()} (${((Date.now() - restarted) / 1000).toFixed(1)} s)`);
 
   await context.route(`${scheme}://*.${gateway}/**`, (route) => route.abort());
   await context.route(`${scheme}://${gateway}/**`, (route) => route.abort());
@@ -111,7 +124,7 @@ try {
 }
 
 // A private window keeps everything in memory, with tighter limits on what a worker may store.
-const browser = await chromium.launch({ channel: 'chromium', headless: true });
+const browser = await chromium.launch({ channel: 'chromium', headless: true, args });
 try {
   const page = await browser.newPage();
   await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded' });

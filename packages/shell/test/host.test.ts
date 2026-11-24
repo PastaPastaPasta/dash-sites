@@ -341,6 +341,21 @@ describe('site host', () => {
     expect(h.chunkReads).toBe(0);
   });
 
+  it('says whether it has proved the name yet, and shares one check between callers', async () => {
+    const h = new Harness();
+    await h.publish('alice-id', 'one');
+    const host = h.start();
+    expect(host.proved).toBe(false);
+    const [first, second] = await Promise.all([host.prove(), host.prove()]);
+    expect(first).toBe(second);
+    expect(h.reads).toBe(1);
+    expect(host.proved).toBe(true);
+    h.down = true;
+    const restarted = h.start();
+    await expect(restarted.prove()).rejects.toThrow('platform down');
+    expect(restarted.proved).toBe(false);
+  });
+
   it('ignores an answer older than one it already proved', async () => {
     const h = new Harness();
     await h.publish('alice-id', 'one');

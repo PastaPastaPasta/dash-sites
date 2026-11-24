@@ -12,6 +12,8 @@ declare const __NETWORK__: string;
 declare const __CONTRACT_ID__: string;
 declare const __BUILDER_URL__: string;
 declare const __DENYLIST__: boolean;
+declare const __VERIFIER_SIZE__: number;
+declare const __BOOT_PAGE__: string;
 
 const matches = async (bytes: ArrayBuffer): Promise<boolean> => toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) === __VERIFIER_SHA256__;
 
@@ -25,11 +27,35 @@ async function verifierSource(): Promise<string> {
   const kept = await (await cache?.match(__VERIFIER__))?.arrayBuffer();
   if (kept && (await matches(kept))) return new TextDecoder().decode(kept);
   const response = await fetch(__VERIFIER__);
-  if (!response.ok) throw new Error(`the verifier could not be downloaded (${response.status})`);
-  const bytes = await response.arrayBuffer();
+  if (!response.ok || !response.body) throw new Error(`the verifier could not be downloaded (${response.status})`);
+  const bytes = await download(response.body);
   if (!(await matches(bytes))) throw new Error('the verifier does not match the hash this worker was built with');
   await cache?.put(__VERIFIER__, new Response(bytes, { headers: { 'Content-Type': 'text/javascript' } })).catch(() => undefined);
   return new TextDecoder().decode(bytes);
+}
+
+/** Reads the verifier and tells open pages how far the download has got. */
+async function download(body: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
+  const bytes = new Uint8Array(__VERIFIER_SIZE__);
+  let loaded = 0;
+  let told = 0;
+  const reader = body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (loaded + value.length > bytes.length) throw new Error('the verifier does not match the hash this worker was built with');
+    bytes.set(value, loaded);
+    loaded += value.length;
+    if (Date.now() - told > 100) {
+      told = Date.now();
+      void progress(loaded / bytes.length);
+    }
+  }
+  return bytes.buffer.slice(0, loaded);
+}
+
+async function progress(share: number): Promise<void> {
+  for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) client.postMessage({ dashSitesProgress: share });
 }
 
 let reader: Promise<PlatformReader> | undefined;
@@ -54,14 +80,17 @@ async function resetClients(): Promise<void> {
 
 const DENYLIST_URL = '/.well-known/dash-gateway/denylist.json';
 
-const hostedDenied = hostedDenylist({
-  fetchList: async () => {
-    const response = await fetch(DENYLIST_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
-    return response.ok ? ((await response.json()) as unknown) : undefined;
-  },
-  load: async () => (await (await caches.open(SHELL_CACHE)).match(DENYLIST_URL))?.json() as Promise<unknown>,
-  save: async (value) => (await caches.open(SHELL_CACHE)).put(DENYLIST_URL, new Response(JSON.stringify(value))),
-});
+/** Only the droplet build has an operator denylist; the static build drops this code. */
+const hostedDenied = __DENYLIST__
+  ? hostedDenylist({
+      fetchList: async () => {
+        const response = await fetch(DENYLIST_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        return response.ok ? ((await response.json()) as unknown) : undefined;
+      },
+      load: async () => (await (await caches.open(SHELL_CACHE)).match(DENYLIST_URL))?.json() as Promise<unknown>,
+      save: async (value) => (await caches.open(SHELL_CACHE)).put(DENYLIST_URL, new Response(JSON.stringify(value))),
+    })
+  : undefined;
 
 const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,
@@ -70,9 +99,15 @@ const host = new SiteHost({
   store: new BrowserStore(__VERIFIER__),
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
-  denied: __DENYLIST__ ? hostedDenied : undefined,
+  denied: hostedDenied,
   log: (entry) => console.warn('dash-sites', entry),
 });
+
+/**
+ * A new worker serves nothing from a site until Platform has answered. Meanwhile a page load gets the
+ * same progress page the first visit shows, which waits for the answer and then loads the site.
+ */
+const BOOT_HEADERS = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 
 /** A response built in a worker has no address of its own, so a relative `Location` is made absolute here. */
 function toResponse(reply: Reply, request: Request): Response {
@@ -88,6 +123,11 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     event.respondWith(new Response('This site is read-only: it has no server to send data to.\n', { status: 405, headers: { Allow: 'GET, HEAD' } }));
+    return;
+  }
+  if (request.mode === 'navigate' && request.destination === 'document' && !host.proved) {
+    event.respondWith(new Response(__BOOT_PAGE__, { headers: BOOT_HEADERS }));
+    event.waitUntil(host.prove().catch(() => undefined));
     return;
   }
   event.respondWith(
