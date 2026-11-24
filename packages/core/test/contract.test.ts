@@ -81,6 +81,10 @@ describe('the contract to register', () => {
     });
   });
 
+  it('is the schema its cost was measured on', () => {
+    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('eb43d5de673e9090e3d78ab9631006e0d1a2e34d2921292ebe1aec44a52f210c');
+  });
+
   it('cannot give moderators a say without declaring moderation when it is created', () => {
     const moderated = schemas();
     (moderated.chunk as DocumentTypeSchema).moderatorAbilities = { delete: true };
