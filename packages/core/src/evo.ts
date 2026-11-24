@@ -7,7 +7,7 @@ import {
   PrivateKey,
   wallet,
 } from '@dashevo/evo-sdk';
-import { ripemd160 } from '@noble/hashes/legacy';
+import { ripemd160 } from '@noble/hashes/legacy.js';
 import { base58 } from '@scure/base';
 import { concat, fromHex, sha256, toHex } from './bytes.js';
 import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
@@ -165,8 +165,9 @@ export class EvoReader implements PlatformReader {
 
 export interface Credentials {
   identityId: string;
-  /** WIF of an AUTHENTICATION key of the identity, security level HIGH or CRITICAL. */
-  privateKeyWif: string;
+  /** An AUTHENTICATION key of the identity, security level HIGH or CRITICAL: its WIF, or its 32 bytes. */
+  privateKeyWif?: string;
+  privateKey?: Uint8Array;
 }
 
 interface SigningKey {
@@ -174,29 +175,61 @@ interface SigningKey {
   signer: IdentitySigner;
 }
 
+/** What the signing key is allowed to do. A key from a wallet is bound to this contract and limited. */
+export interface KeyLimits {
+  keyId: number;
+  /** True when the key signs only for the dash-sites contract, so it cannot register names. */
+  bound: boolean;
+  totalBudget?: bigint;
+  expiresAt?: number;
+}
+
+function boundContract(key: IdentityPublicKey): string | undefined | null {
+  const bounds = key.contractBounds;
+  if (!bounds) return undefined;
+  try {
+    const json = bounds.toJSON() as { $type?: unknown; id?: unknown };
+    return json.$type === 'singleContract' && typeof json.id === 'string' ? json.id : null;
+  } catch {
+    return null;
+  }
+}
+
 function hash160Hex(publicKeyHex: string): string {
   return toHex(ripemd160(sha256(fromHex(publicKeyHex))));
 }
 
-async function signingKey(sdk: EvoSDK, credentials: Credentials, levels: string[]): Promise<SigningKey> {
+/** The key cannot sign for this identity, as opposed to a read that failed. */
+export class KeyRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KeyRefused';
+  }
+}
+
+async function signingKey(sdk: EvoSDK, config: NetworkConfig, credentials: Credentials, levels: string[]): Promise<SigningKey> {
   const identity = await sdk.identities.fetch(credentials.identityId);
-  if (!identity) throw new Error(`identity ${credentials.identityId} does not exist`);
+  if (!identity) throw new KeyRefused(`identity ${credentials.identityId} does not exist`);
+  let privateKey: PrivateKey;
   let publicKeyHex: string;
   try {
-    publicKeyHex = (await wallet.keyPairFromWif(credentials.privateKeyWif)).publicKey;
+    privateKey = credentials.privateKey ? PrivateKey.fromBytes(credentials.privateKey, config.network) : PrivateKey.fromWIF(credentials.privateKeyWif ?? '');
+    publicKeyHex = (await wallet.keyPairFromWif(privateKey.toWIF())).publicKey;
   } catch {
-    throw new Error('the private key is not a valid WIF');
+    throw new KeyRefused('the private key is not a valid WIF');
   }
   const candidates = [publicKeyHex.toLowerCase(), hash160Hex(publicKeyHex)];
   const matches = identity.publicKeys.filter((key) => candidates.includes(String(key.data).toLowerCase()) && key.disabledAt === undefined);
-  if (matches.length === 0) throw new Error('the private key does not belong to this identity');
+  if (matches.length === 0) throw new KeyRefused('the private key does not belong to this identity, or the key was disabled');
   const usable = matches.find((key) => key.purpose === 'AUTHENTICATION' && levels.includes(key.securityLevel));
   if (!usable) {
     const found = matches.map((key) => `${key.purpose}/${key.securityLevel}`).join(', ');
-    throw new Error(`this key is ${found}; an AUTHENTICATION key of level ${levels.join(' or ')} is needed`);
+    throw new KeyRefused(`this key is ${found}; an AUTHENTICATION key of level ${levels.join(' or ')} is needed`);
   }
+  const bound = boundContract(usable);
+  if (bound !== undefined && bound !== config.contractId) throw new KeyRefused('this key is limited to another app, so it cannot publish sites');
   const signer = new IdentitySigner();
-  signer.addKey(PrivateKey.fromWIF(credentials.privateKeyWif));
+  signer.addKey(privateKey);
   return { identityKey: usable, signer };
 }
 
@@ -227,8 +260,36 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
   }
 
   static async connectAs(config: NetworkConfig, credentials: Credentials, options?: ConnectOptions): Promise<EvoWriter> {
-    const sdk = await connectSdk(config, options);
-    return new EvoWriter(sdk, config, credentials.identityId, await signingKey(sdk, credentials, ['HIGH', 'CRITICAL']));
+    return EvoWriter.on(await connectSdk(config, options), config, credentials);
+  }
+
+  /** As `connectAs`, over a connection that is already open. */
+  static async on(sdk: EvoSDK, config: NetworkConfig, credentials: Credentials): Promise<EvoWriter> {
+    return new EvoWriter(sdk, config, credentials.identityId, await signingKey(sdk, config, credentials, ['HIGH', 'CRITICAL']));
+  }
+
+  get keyLimits(): KeyLimits {
+    const key = this.key.identityKey;
+    return {
+      keyId: key.keyId,
+      bound: key.contractBounds !== undefined,
+      ...(key.totalBudget !== undefined ? { totalBudget: key.totalBudget } : {}),
+      ...(key.expiresAt !== undefined ? { expiresAt: Number(key.expiresAt) } : {}),
+    };
+  }
+
+  /** Credits the signing key may still spend; undefined for a key without a budget. */
+  async remainingBudget(): Promise<bigint | undefined> {
+    const { keyId, totalBudget } = this.keyLimits;
+    if (totalBudget === undefined) return undefined;
+    for (const [id, left] of await this.sdk.identities.keysRemainingBudgets(this.identityId, [keyId])) if (Number(id) === keyId) return left ?? undefined;
+    return undefined;
+  }
+
+  /** False once the signing key was disabled, as a wallet does when it replaces or removes a connection. */
+  async keyLive(): Promise<boolean> {
+    const identity = await this.sdk.identities.fetch(this.identityId);
+    return identity?.publicKeys.some((key) => key.keyId === this.key.identityKey.keyId && key.disabledAt === undefined) ?? false;
   }
 
   private newDocument(type: string, properties: Record<string, unknown>): Document {
@@ -329,6 +390,7 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
    */
   async registerName(label: string, options: { allowContested?: boolean } = {}): Promise<DomainRecord> {
     if (!isValidLabel(label)) throw new Error(`${label} is not a name Dash Sites can serve`);
+    if (this.keyLimits.bound) throw new Error('A key from your wallet can publish sites but cannot register names. Register the name in your wallet.');
     if (!options.allowContested && (await this.sdk.dpns.isContestedUsername(label))) {
       throw new Error(`${label}.dash is a contested name: it needs a masternode vote and a deposit. Names with a digit from 2 to 9, or 20 characters or more, register at once.`);
     }
@@ -357,8 +419,9 @@ export async function registerContract(
   documentSchemas: unknown,
   options?: ConnectOptions,
 ): Promise<string> {
-  const sdk = await connectSdk({ network, contractId: '' }, options);
-  const key = await signingKey(sdk, credentials, ['CRITICAL']);
+  const config = { network, contractId: '' };
+  const sdk = await connectSdk(config, options);
+  const key = await signingKey(sdk, config, credentials, ['CRITICAL']);
   const nonce = (BigInt((await sdk.identities.nonce(credentials.identityId)) ?? 0n) & 0xffffffffffn) + 1n;
   const id = contractIdFor(credentials.identityId, nonce);
   const json = { $formatVersion: '1', id, ownerId: credentials.identityId, version: 1, documentSchemas };

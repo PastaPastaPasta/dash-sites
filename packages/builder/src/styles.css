@@ -42,7 +42,16 @@ button.quiet{background:none;color:var(--blue);font-weight:500;padding:6px 2px;f
 .status{font-size:14.5px;margin:10px 0 0}
 .error{color:var(--bad);font-size:14.5px;margin:10px 0 0}
 .error:empty,.status:empty{display:none}
-.done p{margin:0 0 4px}
+.done p,#wallet-confirm p{margin:0 0 4px}
+[hidden]{display:none!important}
+#signin-ways>div>p:first-child{margin:0;max-width:34rem}
+.scan{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.scan-text{flex:1;min-width:14rem}
+.scan-text p:first-child{margin:0}
+.qr{flex:none;width:232px;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:10px;padding:6px;line-height:0}
+.qr svg{display:block;width:100%;height:auto}
+.applink{display:inline-block;margin-top:12px;font-weight:650;text-decoration:none;color:var(--blue-ink);background:var(--blue);border-radius:6px;padding:10px 18px}
+
 .inline{display:flex;gap:8px;align-items:center;margin-top:12px}
 .inline input{flex:1;min-width:0}
 .suffix{color:var(--muted);font-weight:600}

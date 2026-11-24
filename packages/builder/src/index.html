@@ -27,22 +27,57 @@
 
   <section class="step" id="step-signin">
     <h2><span class="n">1</span>Sign in with your Dash identity</h2>
-    <form id="signin" class="open" autocomplete="off">
-      <label for="identity">Identity ID or name</label>
-      <input id="identity" type="text" placeholder="alice.dash" spellcheck="false" autocapitalize="none" required>
-      <label for="key">Private key</label>
-      <input id="key" type="password" placeholder="WIF, starts with c, X or 7" spellcheck="false" autocomplete="off" required>
-      <p class="hint">An authentication key of the identity, high or critical level. It signs what you publish and stays in this tab: it is not stored or sent anywhere.</p>
-      <div class="actions">
-        <button id="signin-button">Sign in</button>
-        <label class="filepick">Load an identity file<input id="identity-file" type="file" accept=".json,application/json"></label>
+    <div id="signin-ways">
+      <div id="wallet-start">
+        <p>Approve Dash Sites in the DashPay app on your phone. Your keys stay in the wallet: this page gets a key that can only publish sites, with a spending limit and an end date you set.</p>
+        <div class="actions">
+          <button type="button" id="wallet-button">Sign in with DashPay</button>
+        </div>
+        <p class="hint">Works with DashPay for Android 11.9.2 or later and Dash Wallet for iOS 9.1.4 or later.</p>
+        <p class="hint" id="wallet-testnet" hidden>This builder publishes to testnet, which needs DashPay's testnet build: the <code>-testnet.apk</code> on the <a href="https://github.com/dashpay/dash-wallet/releases/latest" target="_blank" rel="noopener">DashPay Wallet releases</a> page.</p>
       </div>
-      <p class="error" id="signin-error" role="alert"></p>
-      <p class="hint">No identity yet? <a href="https://bridge.thepasta.org/" target="_blank" rel="noopener">Create one with Dash Bridge</a>, then load the file it saves.</p>
-    </form>
+      <div id="wallet-request" class="scan" hidden>
+        <div id="wallet-qr" class="qr" role="img" aria-label="Sign-in code for DashPay"></div>
+        <div class="scan-text">
+          <p><b>Scan this code with DashPay</b></p>
+          <p class="hint">In the wallet: More, Tools, Connections, then Scan QR. Approve only a code shown on <b id="wallet-origin"></b>, and keep it private: anyone who scans it can answer it.</p>
+          <a id="wallet-link" class="applink" hidden>Open DashPay on this device</a>
+          <p class="status"><span id="wallet-status" aria-live="polite"></span> <span id="wallet-countdown"></span></p>
+          <button type="button" class="quiet" id="wallet-cancel">Cancel</button>
+        </div>
+      </div>
+      <div id="wallet-confirm" hidden>
+        <p>A wallet answered as <b id="wallet-name"></b></p>
+        <p><code id="wallet-identity"></code></p>
+        <p class="hint">Check that this is the name and identity your wallet shows. Anyone who saw the code could have answered it. This page may spend up to <b id="wallet-terms"></b>.</p>
+        <div class="actions">
+          <button type="button" id="wallet-continue">Continue</button>
+          <button type="button" class="quiet" id="wallet-reject">That is not me</button>
+        </div>
+      </div>
+      <p class="status" id="wallet-progress" aria-live="polite"></p>
+      <p class="error" id="wallet-error" role="alert"></p>
+      <details id="key-signin">
+        <summary>Sign in with a private key instead</summary>
+        <form id="signin" autocomplete="off">
+          <label for="identity">Identity ID or name</label>
+          <input id="identity" type="text" placeholder="alice.dash" spellcheck="false" autocapitalize="none" required>
+          <label for="key">Private key</label>
+          <input id="key" type="password" placeholder="WIF, starts with c, X or 7" spellcheck="false" autocomplete="off" required>
+          <p class="hint">An authentication key of the identity, high or critical level. It signs what you publish and stays in this tab: it is not stored or sent anywhere.</p>
+          <div class="actions">
+            <button id="signin-button">Sign in</button>
+            <label class="filepick">Load an identity file<input id="identity-file" type="file" accept=".json,application/json"></label>
+          </div>
+          <p class="error" id="signin-error" role="alert"></p>
+          <p class="hint">No identity yet? <a href="https://bridge.thepasta.org/" target="_blank" rel="noopener">Create one with Dash Bridge</a>, then load the file it saves.</p>
+        </form>
+      </details>
+    </div>
     <div class="done" hidden>
       <p>Signed in as <code id="who"></code></p>
       <p>Balance <b id="balance"></b> <button type="button" class="quiet" id="signout">Sign out</button></p>
+      <p class="hint" id="allowance" hidden>Your wallet lets this page spend <b id="allowance-left"></b>. Signing out forgets the key here; to end it for good, remove the connection in DashPay.</p>
     </div>
   </section>
 
@@ -55,7 +90,8 @@
       <span class="suffix">.dash</span>
       <button class="second">Register</button>
     </form>
-    <p class="hint">Names with a digit from 2 to 9, or 20 characters or more, register at once. Shorter all-letter names go to a masternode vote, which this builder does not start.</p>
+    <p class="hint" id="register-hint">Names with a digit from 2 to 9, or 20 characters or more, register at once. Shorter all-letter names go to a masternode vote, which this builder does not start.</p>
+    <p class="hint" id="wallet-names" hidden>A wallet sign-in can publish sites but cannot register names. Register a new name in DashPay, then choose it here.</p>
     <details>
       <summary>A name is missing from the list</summary>
       <form id="other" class="inline">

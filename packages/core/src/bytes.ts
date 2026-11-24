@@ -1,4 +1,4 @@
-import { sha256 as nobleSha256 } from '@noble/hashes/sha2';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 
 const HEX = /^[0-9a-f]*$/;
 

@@ -59,10 +59,22 @@ and set the extension's gateway to `http://localhost:8080`.
 
 ## Publish a site
 
-**In the browser**: open the [builder](https://dash-sites.thepasta.org/), sign
-in with an identity id (or name) and an authentication key, pick a name you
-own or register one, then write a page or upload a folder or zip. The key
-stays in the page. You see the fee before anything is sent.
+**In the browser**: open the [builder](https://dash-sites.thepasta.org/) and
+choose **Sign in with DashPay**. Scan the code with the DashPay app (More,
+Tools, Connections, Scan QR) and approve it; on a phone, the button under the
+code opens the wallet instead. The wallet gives the page a key that can only
+write Dash Sites documents, with a spending limit and an end date you set on
+the approval screen, and its own keys never leave it. Then pick a name you
+own, write a page or upload a folder or zip, and publish. You see the fee
+before anything is sent.
+
+- Wallets: DashPay for Android 11.9.2 or later and Dash Wallet for iOS 9.1.4
+  or later. On testnet, use DashPay's testnet build, the `-testnet.apk` on the
+  [DashPay Wallet releases](https://github.com/dashpay/dash-wallet/releases/latest).
+- A wallet sign-in cannot register names (the key is limited to Dash Sites).
+  Register a name in the wallet, or use the key sign-in below.
+- **Sign in with a private key instead** takes an identity id (or name) and an
+  authentication key, or an identity file. That key stays in the page.
 
 **From a terminal**:
 

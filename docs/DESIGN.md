@@ -248,17 +248,60 @@ and the extension all call the same functions.
 ### Builder
 
 - **Web app** (static, hosted on GitHub Pages, on a different registrable
-  domain from user sites): sign in with identity id or
-  name plus an AUTHENTICATION key (HIGH or CRITICAL) that never leaves the
-  page; choose or register a DPNS name; build a site from a template with a
-  Markdown editor, or drop in a folder/zip of a static site; preview; see the
-  cost estimate; publish with per-chunk progress.
+  domain from user sites): sign in with a mobile wallet (below), or with an
+  identity id or name plus an AUTHENTICATION key (HIGH or CRITICAL) that never
+  leaves the page; choose a DPNS name (or register one, with a key sign-in);
+  build a site from a template with a Markdown editor, or drop in a
+  folder/zip of a static site; preview; see the cost estimate; publish with
+  per-chunk progress.
 - **CLI** `dash-sites`: `publish <dir> --name alice`, `point --content
   ipfs://<cid>`, `register`, `names`, `resolve`, `fetch`, `unpublish`, `gc`
   (delete unreferenced chunks), `preview` (serve a folder locally as a
   gateway would), `gateway` (run the server-rendered gateway locally).
 - Both use `@dashevo/evo-sdk` (wasm) directly against DAPI. There is no
   publishing server.
+
+**Signing in with a mobile wallet** is the builder's first choice. It is App
+Connect v2, the `dashpay://connect` flow that DashPay for Android (11.9.2) and
+Dash Wallet for iOS (9.1.4) answer and that Dash Forge and Yappr use. The
+protocol code is theirs, vendored unchanged in
+`packages/core/src/vendor/app-connect/`; what Dash Sites asks for is in
+`packages/core/src/connect.ts`.
+
+1. The builder makes a one-time key pair and shows a request as a QR code
+   (and, on a phone, as a link that opens the wallet). The request asks for
+   **one key**: AUTHENTICATION, HIGH, bound to the dash-sites contract
+   (`singleContract`), proposing a budget of 0.2 DASH and 90 days. The app id
+   is the dash-sites contract, so the wallet's rule that the bound contract
+   and the app share an owner holds by construction. It carries a connection
+   id (16 random bytes this browser keeps), no encryption binding and no
+   callback URL.
+2. The wallet's owner sees the app id, their username, the budget and the
+   expiry, may change both limits, and approves. The wallet adds the key to
+   the identity in one master-signed update (disabling the key it gave the
+   same connection id before) and publishes it, encrypted to the request's
+   key, as a `loginKeyResponse` document in the App Connect system contract.
+3. The builder polls that contract with proved reads, decrypts each answer
+   and checks it against the identity on chain: the key is live, bound to
+   exactly the dash-sites contract, HIGH, has a budget and an expiry, is not
+   about to expire and has budget left. Anything else is refused.
+4. The builder asks "A wallet answered as `alice.dash`: continue?" before it
+   uses the key.
+
+The request's `CREATED_AT` is this device's clock held between the chain's
+latest block time and 90 seconds past it: wallets refuse a request dated more
+than two minutes ahead, and blocks can be minutes apart.
+
+What the key can and cannot do: it signs `site` and `chunk` documents of the
+dash-sites contract, so it can publish, replace and take down sites and
+delete stored files. Platform refuses it for anything else, so it cannot
+register or transfer names, move credits, or touch another app; the builder
+hides name registration for a wallet sign-in and points to the wallet. It
+stops working at its expiry or when its budget is spent, and the owner can
+end it at any time by removing the connection in the wallet. A browser has
+one live key per network: signing in again, in this tab or another, makes the
+wallet replace the earlier key, and a tab still holding the old one is told
+so when it next publishes.
 
 ### Gateway
 
@@ -461,10 +504,24 @@ queries for browsers.
   ASCII, but DPNS allows `xn--…` labels, which browsers display as Unicode;
   the shell, gateway, CLI, builder and extension refuse them.
 - **Contested names**: resolve only after the masternode vote awards them.
-- **Builder keys**: the key stays in the page's memory and is never stored;
-  the builder is on a different registrable domain from user sites and sets a
+- **Builder keys**: a pasted key stays in the page's memory and is never
+  stored. A key from a wallet is kept in `sessionStorage`, so a reload does
+  not need another approval; it is gone when the tab closes or on sign-out,
+  and it is the limited key described in §5, not a key of the wallet. The
+  builder is on a different registrable domain from user sites and sets a
   strict CSP (no inline or third-party script, no third-party requests except
-  to Dash Platform nodes).
+  to Dash Platform nodes); wallet sign-in needed no change to it, and the
+  preview frame is sandboxed without scripts.
+- **Who answered a wallet sign-in**: the request names no website and anyone
+  who sees the code can answer it from their own identity. The builder
+  therefore refuses a request that two identities answered (every answer that
+  decrypts counts, usable or not, and a failed read never counts as "nobody
+  else"), always shows the answering name and identity for confirmation, and
+  tells the user to scan only a code shown on its own address. A lookalike
+  page can show a code with the same app id and label; what it would get is
+  the same limited key. Signing out forgets the key in the browser but cannot
+  disable it on chain: the next sign-in from the same browser does (same
+  connection id), and so does removing the connection in the wallet.
 - **Gateway host hardening**: the fallback process has bounded sizes
   everywhere, normalizes paths before lookup, derives no filesystem paths
   from requests, runs as an unprivileged systemd service with a locked-down

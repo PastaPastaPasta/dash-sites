@@ -1,13 +1,19 @@
 // Publishes a page through the built web builder and reads it back from the gateway.
-//   node e2e/builder.mjs <identity.json> <label> [gateway-domain] [screenshot-dir]
+//   node e2e/builder.mjs <identity.json> <label> [gateway-domain] [screenshot-dir] [--wallet] [--url=<builder>]
+// With --wallet it signs in the way a phone does: the scripted wallet in wallet-responder.mjs answers
+// the page's sign-in code as the identity in the file, which must already own <label>.dash.
 import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
-const [identityFile, label, gateway = 'id.dashhq.org', shots] = process.argv.slice(2);
-if (!identityFile || !label) throw new Error('usage: builder.mjs <identity.json> <label> [gateway-domain] [screenshot-dir]');
+const args = process.argv.slice(2);
+const flags = args.filter((arg) => arg.startsWith('--'));
+const [identityFile, label, gateway = 'id.dashhq.org', shots] = args.filter((arg) => !arg.startsWith('--'));
+if (!identityFile || !label) throw new Error('usage: builder.mjs <identity.json> <label> [gateway-domain] [screenshot-dir] [--wallet] [--url=<builder>]');
+const withWallet = flags.includes('--wallet');
+const builderUrl = flags.find((flag) => flag.startsWith('--url='))?.slice(6);
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', 'packages', 'builder', 'dist');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
 const check = (ok, message) => {
@@ -25,21 +31,49 @@ const server = createServer((req, res) => {
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const browser = await chromium.launch();
+const grantedKeys = [];
+const signedIn = async (page) => {
+  await page.waitForSelector('#step-signin .done:not([hidden])', { timeout: 90000 });
+  await page.waitForFunction(() => document.getElementById('balance')?.textContent !== '', undefined, { timeout: 60000 });
+};
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const problems = [];
   page.on('console', (m) => m.type() === 'error' && problems.push(m.text()));
   page.on('pageerror', (e) => problems.push(e.message));
-  await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.goto(builderUrl ?? `http://127.0.0.1:${server.address().port}/`);
+  check(await page.isVisible('#wallet-button'), 'signing in with a mobile wallet is the first choice, with the private key form folded away');
   if (shots) await page.screenshot({ path: join(shots, 'builder-start.png') });
 
-  await page.setInputFiles('#identity-file', identityFile);
-  await page.waitForSelector('#step-signin .done:not([hidden])', { timeout: 90000 });
-  await page.waitForFunction(() => document.getElementById('balance')?.textContent !== '', undefined, { timeout: 60000 });
+  if (withWallet) {
+    const { approve } = await import('./wallet-responder.mjs');
+    await page.click('#wallet-button');
+    await page.waitForSelector('#wallet-request:not([hidden]) #wallet-qr svg', { timeout: 90000 });
+    const uri = await page.getAttribute('#wallet-link', 'href');
+    check(/^dashpay:\/\/connect\?v=2&n=[mt]&r=[A-Za-z0-9_-]+$/.test(uri ?? ''), `the page shows a sign-in code for ${uri?.slice(0, 34)}…`);
+    if (shots) await page.screenshot({ path: join(shots, 'builder-wallet-code.png') });
+    const granted = await approve({ identityFile, uri });
+    grantedKeys.push(granted.keyId);
+    check(granted.label === 'Dash Sites', `the wallet approved "${granted.label}": key ${granted.keyId} of ${granted.identityId}`);
+    await page.waitForSelector('#wallet-confirm:not([hidden])', { timeout: 120000 });
+    check((await page.textContent('#wallet-identity')) === granted.identityId, `the page asks before continuing as ${await page.textContent('#wallet-name')}, with ${await page.textContent('#wallet-terms')} to spend`);
+    if (shots) await page.screenshot({ path: join(shots, 'builder-wallet-confirm.png') });
+    await page.click('#wallet-continue');
+    await signedIn(page);
+    check(await page.isVisible('#allowance'), `signed in with the wallet's key: ${await page.textContent('#allowance-left')}`);
+    check(!(await page.isVisible('#register')), 'a wallet sign-in does not offer to register names');
+    await page.reload();
+    await signedIn(page);
+    check((await page.textContent('#who')) === granted.identityId, 'a reload keeps the wallet sign-in for this tab');
+  } else {
+    await page.setInputFiles('#identity-file', identityFile);
+    await signedIn(page);
+  }
   check(true, `signed in as ${await page.textContent('#who')}, balance ${await page.textContent('#balance')}`);
 
   const chip = page.locator('#names button', { hasText: new RegExp(`^${label}\\.dash$`) });
   if ((await chip.count()) === 0) {
+    if (withWallet) throw new Error(`the identity does not own ${label}.dash, and a wallet sign-in cannot register it`);
     await page.fill('#new-label', label);
     await page.click('#register button');
     await Promise.race([chip.waitFor({ timeout: 120000 }), page.waitForSelector('#name-error:not(:empty)', { timeout: 120000 })]);
@@ -83,7 +117,18 @@ try {
   }
   check(body.includes(stamp), `${url} shows the page that was just published, read from Dash Platform by the browser`);
   if (shots) await live.screenshot({ path: join(shots, 'builder-live.png') });
+  if (withWallet) {
+    await page.click('#signout');
+    check(await page.isVisible('#wallet-button'), 'signing out returns to the sign-in choice');
+    check((await page.isVisible('#register')) && !(await page.isVisible('#wallet-names')) && !(await page.isVisible('#names-empty')), 'and the name step forgets the wallet session');
+    await page.reload();
+    check(await page.isVisible('#wallet-button'), 'and a reload stays signed out');
+  }
 } finally {
   await browser.close();
   server.close();
+  if (grantedKeys.length > 0) {
+    const { revoke } = await import('./wallet-responder.mjs');
+    console.log(`     disabled the test key ${await revoke({ identityFile, keyIds: grantedKeys })}`);
+  }
 }
