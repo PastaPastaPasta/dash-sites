@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
-import { denylistFromJson, isDenied, readerConfig, toHex, type Denylist, type Network, type PlatformReader, type Resolution } from '@dash-sites/core';
+import { readerConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
+import { hostedDenylist } from './hosted-denylist.js';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Connect } from './verifier.js';
@@ -52,26 +53,15 @@ async function resetClients(): Promise<void> {
 }
 
 const DENYLIST_URL = '/.well-known/dash-gateway/denylist.json';
-const DENYLIST_FRESH_MS = 60_000;
-let denylist: { at: number; list?: Denylist } | undefined;
 
-/**
- * The hosting operator's denylist, fetched from the gateway and reused for a minute. If the gateway
- * cannot be reached the last list stays in force, or none: the site keeps working without the gateway.
- */
-async function hostedDenied(resolution: Resolution): Promise<boolean> {
-  if (!denylist || Date.now() - denylist.at >= DENYLIST_FRESH_MS) {
-    let list = denylist?.list;
-    try {
-      const response = await fetch(DENYLIST_URL, { cache: 'no-store' });
-      if (response.ok) list = denylistFromJson(await response.json());
-    } catch {
-      // keep the last list
-    }
-    denylist = { at: Date.now(), list };
-  }
-  return denylist.list ? isDenied(denylist.list, resolution) : false;
-}
+const hostedDenied = hostedDenylist({
+  fetchList: async () => {
+    const response = await fetch(DENYLIST_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    return response.ok ? ((await response.json()) as unknown) : undefined;
+  },
+  load: async () => (await (await caches.open(SHELL_CACHE)).match(DENYLIST_URL))?.json() as Promise<unknown>,
+  save: async (value) => (await caches.open(SHELL_CACHE)).put(DENYLIST_URL, new Response(JSON.stringify(value))),
+});
 
 const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,

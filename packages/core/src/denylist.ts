@@ -1,4 +1,4 @@
-import { normalizeLabel } from './names.js';
+import { isValidLabel, normalizeLabel } from './names.js';
 import type { Resolution } from './resolve.js';
 
 /** Names, owners and site contents a hosted gateway has stopped serving. Names are DPNS-normalized. */
@@ -12,7 +12,8 @@ export function emptyDenylist(): Denylist {
   return { names: new Set(), owners: new Set(), content: new Set() };
 }
 
-const denyName = (value: string): string => normalizeLabel(value.trim().replace(/\.dash\.?$/i, ''));
+const bareName = (value: string): string => value.trim().replace(/\.dash\.?$/i, '');
+const denyName = (value: string): string => normalizeLabel(bareName(value));
 
 /** One entry per line: `name alice`, `owner <identity id>`, `content <content URI>`. `#` starts a comment. */
 export function parseDenylist(text: string): Denylist {
@@ -22,8 +23,10 @@ export function parseDenylist(text: string): Denylist {
     if (!line) continue;
     const [kind, value] = line.split(/\s+/, 2);
     if (!value) throw new Error(`denylist: missing value in "${raw}"`);
-    if (kind === 'name') list.names.add(denyName(value));
-    else if (kind === 'owner') list.owners.add(value);
+    if (kind === 'name') {
+      if (!isValidLabel(bareName(value))) throw new Error(`denylist: "${value}" is not a DPNS label`);
+      list.names.add(denyName(value));
+    } else if (kind === 'owner') list.owners.add(value);
     else if (kind === 'content') list.content.add(value);
     else throw new Error(`denylist: unknown kind "${kind}"`);
   }
@@ -38,7 +41,7 @@ export function denylistFromJson(value: unknown): Denylist {
     const field = (value as Record<string, unknown>)[key];
     return Array.isArray(field) ? field.filter((item): item is string => typeof item === 'string') : [];
   };
-  for (const name of strings('names')) list.names.add(denyName(name));
+  for (const name of strings('names')) if (isValidLabel(bareName(name))) list.names.add(denyName(name));
   for (const owner of strings('owners')) list.owners.add(owner);
   for (const content of strings('content')) list.content.add(content);
   return list;

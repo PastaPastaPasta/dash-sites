@@ -11,7 +11,14 @@ const number = (value: string | undefined, fallback: number): number => (value =
 
 function peerFromEnv(value: string | undefined): GatewayConfig['peer'] {
   const [network, url] = (value ?? '').trim().split(/\s+/);
-  return network && url ? { network, url } : undefined;
+  if (!network || !url) return undefined;
+  try {
+    if (/^https?:$/.test(new URL(url).protocol)) return { network, url };
+  } catch {
+    // reported below
+  }
+  console.log(JSON.stringify({ event: 'peer-gateway-ignored', value }));
+  return undefined;
 }
 
 export function configFromEnv(): GatewayConfig {

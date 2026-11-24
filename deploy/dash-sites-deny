@@ -9,11 +9,12 @@
 // /etc/dash-sites/public/denylist.json within a minute; refused names lose the shell entirely through
 // /etc/dash-sites/denied.caddy, which Caddy reloads here.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 
 const ENV_FILE = process.env.GATEWAY_ENV ?? '/etc/dash-sites/gateway.env';
-const CADDY_FILE = '/etc/dash-sites/denied.caddy';
-const PUBLIC_DIR = '/etc/dash-sites/public';
+const ROOT = process.env.DASH_SITES_ROOT ?? '';
+const CADDY_FILE = `${ROOT}/etc/dash-sites/denied.caddy`;
+const PUBLIC_DIR = `${ROOT}/etc/dash-sites/public`;
 const SHELL_DIR = '/opt/dash-sites/shell';
 const KINDS = ['name', 'owner', 'content'];
 
@@ -21,6 +22,12 @@ const fail = (message) => {
   console.error(`dash-sites-deny: ${message}`);
   process.exit(1);
 };
+
+const [command, kind, rawValue, ...note] = process.argv.slice(2);
+if (!['list', 'apply', 'add', 'remove'].includes(command)) {
+  console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 6).join('\n').replace(/^\/\/ ?/gm, ''));
+  process.exit(command ? 1 : 0);
+}
 
 const env = Object.fromEntries(
   readFileSync(ENV_FILE, 'utf8')
@@ -32,14 +39,15 @@ const env = Object.fromEntries(
 const LIST_FILE = env.DENYLIST_FILE || fail(`DENYLIST_FILE is not set in ${ENV_FILE}: this gateway has no denylist`);
 const domains = (env.GATEWAY_DOMAINS ?? '').split(',').map((entry) => entry.trim().replace(/^https?:\/\//, '').replace(/[:/].*$/, '').toLowerCase()).filter(Boolean);
 
-const label = (value) => value.trim().toLowerCase().replace(/\.dash\.?$/, '');
+// DPNS normal form: lowercase, o to 0, i and l to 1. Look-alike spellings are one name.
+const label = (value) => value.trim().toLowerCase().replace(/\.dash\.?$/, '').replace(/o/g, '0').replace(/[il]/g, '1');
 const canonical = (kind, value) => (kind === 'name' ? label(value) : value.trim());
 const validate = (kind, value) => {
   if (!KINDS.includes(kind)) fail(`kind must be one of ${KINDS.join(', ')}`);
   if (!value) fail(`missing ${kind}`);
-  if (kind === 'name' && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(value)) fail(`"${value}" is not a DPNS label`);
+  if (kind === 'name' && !(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(value) && value.slice(2, 4) !== '--')) fail(`"${value}" is not a DPNS label`);
   if (kind === 'owner' && !/^[1-9A-HJ-NP-Za-km-z]{42,46}$/.test(value)) fail(`"${value}" is not an identity id`);
-  if (/\s/.test(value)) fail('values cannot contain spaces');
+  if (/[\s#]/.test(value)) fail('values cannot contain spaces or #');
 };
 
 function readLines() {
@@ -57,22 +65,32 @@ function entries(lines) {
     if (!line) continue;
     const [kind, value] = line.split(/\s+/, 2);
     if (!KINDS.includes(kind) || !value) fail(`${LIST_FILE}: cannot read "${raw}"`);
+    validate(kind, canonical(kind, value));
     out.push({ kind, value: canonical(kind, value), raw });
   }
   return out;
 }
 
-const atomicWrite = (file, text, mode = 0o644) => {
-  writeFileSync(`${file}.tmp`, text, { mode });
-  renameSync(`${file}.tmp`, file);
+const atomicWrite = (file, text) => {
+  let mode = 0o644;
+  try {
+    mode = statSync(file).mode & 0o777;
+  } catch {}
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, text, { mode });
+  renameSync(tmp, file);
 };
 
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const spellings = (name) => [...name].map((c) => (c === '0' ? '[o0]' : c === '1' ? '[il1]' : escapeRegex(c))).join('');
+
 function caddyBlock(names) {
-  const hosts = names.flatMap((name) => domains.map((domain) => `${name}.${domain}`));
-  if (hosts.length === 0) return '# Written by dash-sites-deny. No name is refused.\n';
+  if (names.length === 0 || domains.length === 0) return '# Written by dash-sites-deny. No name is refused.\n';
+  const pattern = `^(?i)(${names.map(spellings).join('|')})\\.(${domains.map(escapeRegex).join('|')})(:[0-9]+)?$`;
   return `# Written by dash-sites-deny from ${LIST_FILE}; edit with dash-sites-deny, not by hand.
-# Refused names get no shell: the notice page, and a worker that removes an installed shell.
-@denied host ${hosts.join(' ')}
+# Refused names, in every DPNS look-alike spelling, get no shell: the notice page, and a worker that
+# removes an installed shell.
+@denied header_regexp Host ${pattern}
 handle @denied {
 \t@worker path /sw.js
 \thandle @worker {
@@ -109,14 +127,17 @@ function apply(list) {
       execFileSync('caddy', ['validate', '--adapter', 'caddyfile', '--config', '/etc/caddy/Caddyfile'], { stdio: 'pipe' });
     } catch (error) {
       atomicWrite(CADDY_FILE, previous);
-      fail(`Caddy rejected the new configuration, kept the old one:\n${error.stderr ?? error}`);
+      fail(`Caddy rejected the new host rules, so Caddy keeps the old ones. The gateway and browsers already use the new list.\n${error.stderr ?? error}`);
     }
-    execFileSync('systemctl', ['reload', 'caddy'], { stdio: 'inherit' });
+    try {
+      execFileSync('systemctl', ['reload', 'caddy'], { stdio: 'pipe' });
+    } catch (error) {
+      fail(`systemctl reload caddy failed; ${CADDY_FILE} is written and applies on the next reload.\n${error.stderr ?? error}`);
+    }
   }
   console.log(`denylist: ${pick('name').length} names, ${pick('owner').length} owners, ${pick('content').length} contents`);
 }
 
-const [command, kind, rawValue, ...note] = process.argv.slice(2);
 const lines = readLines();
 const list = entries(lines);
 if (command === 'list') {
@@ -130,12 +151,14 @@ if (command === 'list') {
   if (command === 'add') {
     if (present) console.log(`${kind} ${value} is already refused`);
     else {
-      const comment = [new Date().toISOString().slice(0, 10), ...note].join(' ');
-      lines.splice(lines.length && lines.at(-1) === '' ? lines.length - 1 : lines.length, 0, `${kind} ${value}  # ${comment}`);
+      const comment = [new Date().toISOString().slice(0, 10), ...note].join(' ').replace(/\n/g, ' ');
+      const written = kind === 'name' ? rawValue.trim().toLowerCase().replace(/\.dash\.?$/, '') : value;
+      lines.splice(lines.length && lines.at(-1) === '' ? lines.length - 1 : lines.length, 0, `${kind} ${written}  # ${comment}`);
       atomicWrite(LIST_FILE, `${lines.join('\n').replace(/\n*$/, '')}\n`);
     }
   } else {
     if (!present) fail(`${kind} ${value} is not in the list`);
+    if (kind === 'name') console.log(`removing every spelling of ${value}`);
     const kept = lines.filter((raw) => {
       const [k, v] = raw.replace(/#.*/, '').trim().split(/\s+/, 2);
       return !(k === kind && v && canonical(k, v) === value);
@@ -143,7 +166,4 @@ if (command === 'list') {
     atomicWrite(LIST_FILE, `${kept.join('\n').replace(/\n*$/, '')}\n`);
   }
   apply(entries(readLines()));
-} else {
-  console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 6).join('\n').replace(/^\/\/ ?/gm, ''));
-  process.exit(command ? 1 : 0);
 }

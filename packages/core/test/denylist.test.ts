@@ -34,6 +34,11 @@ describe('denylist', () => {
     expect(() => parseDenylist('name   # comment only')).toThrow(/missing value/);
   });
 
+  it('rejects names that are not DPNS labels, and drops them from the published form', () => {
+    for (const bad of ['*', 'alice.dash.site', 'ab', 'xn--abc']) expect(() => parseDenylist(`name ${bad}`)).toThrow(/not a DPNS label/);
+    expect([...denylistFromJson({ names: ['*', 'alice.dash.site', 'bob'] }).names]).toEqual(['b0b']);
+  });
+
   it('reads the published JSON form and treats anything else as an empty list', () => {
     const list = denylistFromJson({ names: ['Mallory.dash', 7], owners: ['owner-1'], content: ['dash-manifest:x'], extra: true });
     expect([...list.names]).toEqual(['ma110ry']);

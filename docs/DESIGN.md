@@ -576,19 +576,26 @@ ssh root@dash.site dash-sites-deny remove name foo
 The list is `DENYLIST_FILE` (`/etc/dash-sites/denylist.txt`). Each change
 takes effect in three places:
 
-- Caddy refuses a denied name by host at once: a 451 notice
+- Caddy refuses a denied name by host at once, in every DPNS look-alike
+  spelling (a `header_regexp Host` matcher): a 451 notice
   (`unavailable.html`), and a `/sw.js` that removes an installed worker.
   `dash-sites-deny` regenerates `/etc/dash-sites/denied.caddy`, validates the
-  configuration and reloads Caddy, and keeps the old file if Caddy rejects it.
+  configuration and reloads Caddy, and keeps the old file if Caddy rejects it
+  (the list itself is already updated for the next two places).
 - The fallback process (crawlers, command-line clients) re-reads the file
   within 5 seconds and answers 451.
 - Browsers with the worker already installed fetch
   `/.well-known/dash-gateway/denylist.json` at most once a minute, so owners
   and contents, which have no host to refuse, are refused within 60 seconds.
-  If that fetch fails the worker keeps its last list.
+  The worker answers from the list it has while one refresh runs in the
+  background, gives up on a fetch after 5 seconds, and keeps its last list in
+  Cache Storage across restarts, so an unreachable gateway never blocks a site.
 
 Names are matched in DPNS normal form, so look-alike spellings are refused
-together. A denial removes a site from this gateway only; the site stays on
+together, and `remove name` removes every spelling. Every line of the list is
+checked; a line that is not a DPNS label, an identity id or a content URI
+without spaces or `#` stops the change, and `deploy.sh` checks the list
+before it swaps anything. A denial removes a site from this gateway only; the site stays on
 Platform and other gateways may serve it. The check in the worker is built
 only for hosted gateways (`DENYLIST=1`); a self-hosted shell has none.
 

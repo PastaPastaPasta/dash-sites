@@ -30,11 +30,13 @@ sed -e "s/__RESERVED_HOSTS__/$RESERVED_HOSTS/" -e "s/__DOMAIN__/$DOMAIN/g" deplo
 
 ssh "$@" "$TARGET" 'rm -rf /opt/dash-sites/shell.new && mkdir -p /opt/dash-sites/shell.new && touch /etc/dash-sites/denied.caddy'
 scp "$@" packages/gateway/bundle/gateway.mjs "$TARGET:/opt/dash-sites/gateway.mjs.new"
-scp "$@" deploy/dash-sites-deny "$TARGET:/usr/local/bin/dash-sites-deny"
+scp "$@" deploy/dash-sites-deny "$TARGET:/usr/local/bin/dash-sites-deny.new.mjs"
 scp "$@" -r packages/shell/dist/. "$TARGET:/opt/dash-sites/shell.new/"
 ssh "$@" "$TARGET" "DOMAIN=$DOMAIN bash -s" <<'REMOTE'
 set -e
 mv /opt/dash-sites/shell.new/Caddyfile /etc/caddy/Caddyfile.new
+HOSTED=$(. /etc/dash-sites/gateway.env; [ -n "${DENYLIST_FILE:-}" ] && echo 1 || true)
+if [ -n "$HOSTED" ]; then node /usr/local/bin/dash-sites-deny.new.mjs list >/dev/null || { echo "denylist does not parse; nothing changed" >&2; exit 1; }; fi
 caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile.new >/dev/null 2>&1 || { echo "Caddyfile does not validate" >&2; exit 1; }
 rm -rf /opt/dash-sites/shell.old
 [ -d /opt/dash-sites/shell ] && mv /opt/dash-sites/shell /opt/dash-sites/shell.old
@@ -42,10 +44,11 @@ mv /opt/dash-sites/shell.new /opt/dash-sites/shell
 chmod -R a+rX /opt/dash-sites/shell
 mv /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
 mv /opt/dash-sites/gateway.mjs.new /opt/dash-sites/gateway.mjs
-chmod 755 /usr/local/bin/dash-sites-deny
-if grep -q '^DENYLIST_FILE=.' /etc/dash-sites/gateway.env; then dash-sites-deny apply; fi
+chmod 755 /usr/local/bin/dash-sites-deny.new.mjs
+mv /usr/local/bin/dash-sites-deny.new.mjs /usr/local/bin/dash-sites-deny
 systemctl restart dash-sites-gateway
 systemctl reload caddy
+if [ -n "$HOSTED" ]; then dash-sites-deny apply || echo "WARNING: dash-sites-deny apply failed; the deploy itself is done" >&2; fi
 sleep 4
 systemctl is-active dash-sites-gateway
 curl -fsS -H "Host: $DOMAIN" http://127.0.0.1:8080/healthz
