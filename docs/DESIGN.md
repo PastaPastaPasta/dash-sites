@@ -566,21 +566,21 @@ queries for browsers.
 
 Testnet first: the contract is registered on testnet and all three surfaces
 default to it. The network, contract id and gateway domains are configuration.
-Mainnet needs a funded mainnet identity to register the contract (about 0.17
-DASH), then the contract id in `packages/core/src/config.ts` and
-`NETWORK=mainnet` on a gateway. It is otherwise the same deployment.
+The mainnet contract, `5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, was
+registered from the same schema (about 0.17 DASH) and is in
+`packages/core/src/config.ts`; `NETWORK=mainnet` selects it. It is otherwise
+the same deployment.
 Registering is final in the ways §3 lists under "What registration fixes".
 
 A gateway runs on a network before its contract exists: the reader proves
 names as usual and every registered name resolves to "no site yet", and the
-landing page says publishing has not opened. Until the mainnet contract is
-registered, `dash.site` serves testnet names instead (§8).
+landing page says publishing has not opened.
 
 ## 8. Hosting
 
 | Network | Gateway | Runs on |
 | --- | --- | --- |
-| Mainnet | `dash.site`, `*.dash.site` | Cloudflare Worker `dash-site`, static assets only (testnet data until the mainnet contract is registered) |
+| Mainnet | `dash.site`, `*.dash.site` | Cloudflare Worker `dash-site`, static assets only |
 | Testnet | `id.dashhq.org`, `*.id.dashhq.org` | DigitalOcean droplet `dash-sites-gateway` (Caddy + fallback process) |
 
 | Piece | Where | Why |
@@ -592,8 +592,7 @@ registered, `dash.site` serves testnet names instead (§8).
 | Extension | Zip on GitHub Releases; store listing later | Store accounts are the user's |
 
 `deploy/cloudflare/deploy.sh` builds the shell for `dash.site` and deploys the
-Worker (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`; `NETWORK=mainnet` once
-the mainnet contract is in `DEPLOYMENTS`). `deploy/provision.sh` sets up a
+Worker (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`; mainnet by default). `deploy/provision.sh` sets up a
 droplet and `deploy/deploy.sh` installs the shell, the fallback process and the
 Caddy configuration on it.
 

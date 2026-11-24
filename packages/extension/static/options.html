@@ -27,8 +27,8 @@ p{margin:6px 0 0;color:var(--muted)}
   <p><code>alice.dash</code> opens at <code>alice.&lt;gateway&gt;</code>. The gateway only hands your browser the verifier; the site itself comes from Dash Platform and is checked on this computer. To depend on nobody's server, host the verifier yourself (<code>npm run serve -w @dash-sites/shell</code>) and enter <code>http://localhost:8080</code>.</p>
 
   <label for="network">Network</label>
-  <select id="network"><option value="testnet">Testnet</option><option value="mainnet" disabled>Mainnet (not available until publishing opens)</option></select>
-  <p>The Dash network the extension checks sites against. It should be the one your gateway is built for: <code>id.dashhq.org</code> for testnet, <code>dash.site</code> for mainnet once publishing opens there.</p>
+  <select id="network"><option value="testnet">Testnet</option><option value="mainnet">Mainnet</option></select>
+  <p>The Dash network the extension checks sites against. It should be the one your gateway is built for: <code>id.dashhq.org</code> for testnet, <code>dash.site</code> for mainnet.</p>
 
   <label class="check"><input type="checkbox" id="searches"><span>Open the site when the address bar turns <code>alice.dash</code> into a search<br><span class="muted">The extension looks at the address of pages you navigate to, and acts only on a search for exactly a <code>.dash</code> name.</span></span></label>
 

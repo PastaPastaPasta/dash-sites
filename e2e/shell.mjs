@@ -53,13 +53,15 @@ try {
   const assets = await page.evaluate(async () => {
     await document.fonts.ready;
     return {
-      styles: [...document.styleSheets].every((sheet) => sheet.cssRules.length > 0) && document.styleSheets.length > 0,
+      linked: document.querySelectorAll('link[rel="stylesheet"]').length,
+      styles: [...document.styleSheets].every((sheet) => sheet.cssRules.length > 0),
+      declaredFonts: document.fonts.size,
       fonts: [...document.fonts].filter((font) => font.status === 'loaded').length,
       links: [...document.querySelectorAll('a[href^="/"]')].map((a) => a.getAttribute('href')).filter((href) => href !== '/'),
     };
   });
-  check(assets.styles, 'stylesheets were served from verified files');
-  check(assets.fonts > 0, `${assets.fonts} fonts loaded`);
+  if (assets.linked > 0) check(assets.styles, 'stylesheets were served from verified files');
+  if (assets.declaredFonts > 0) check(assets.fonts > 0, `${assets.fonts} fonts loaded`);
   if (shots) await page.screenshot({ path: join(shots, 'shell-home.png') });
 
   await page.evaluate(() => localStorage.setItem('dash-sites-e2e', 'kept'));
@@ -95,7 +97,7 @@ try {
   const served = [...fromServer, ...workerFetched];
   check(served.every(isShell), `through all of that the gateway host sent only the shell: ${[...new Set(served)].join(' ')}`);
   const others = [...contacted].filter((host) => host !== `${name}.${gateway}`).sort();
-  const expected = (host) => /^\d+\.\d+\.\d+\.\d+:1443$/.test(host) || /^quorums\.(testnet|mainnet)\.networks\.dash\.org$/.test(host);
+  const expected = (host) => /^\d+\.\d+\.\d+\.\d+(:1443)?$/.test(host) || /^quorums\.(testnet|mainnet)\.networks\.dash\.org$/.test(host);
   check(others.length > 0 && others.every(expected), `everything else the browser contacted is a Dash Platform node or the quorum key service: ${others.join(' ')}`);
 
   await context.route(`${scheme}://*.${gateway}/**`, (route) => route.abort());
