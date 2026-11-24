@@ -57,8 +57,10 @@ export async function approve({ identityFile, uri, budget, expiresAt, now = Date
   try {
     await respond(sdk, record, request, secret);
   } catch (error) {
-    await sdk.identities.update({ identity: await sdk.identities.fetch(record.identityId), disablePublicKeys: [keyId], signer: master }).catch(() => {});
-    throw error;
+    const disabled = await sdk.identities
+      .update({ identity: await sdk.identities.fetch(record.identityId), disablePublicKeys: [keyId], signer: master })
+      .then(() => true, () => false);
+    throw new Error(`${error?.message ?? error} (key ${keyId}, added for this answer, ${disabled ? 'was disabled' : 'is still live: disable it'})`, { cause: error });
   }
   return { identityId: record.identityId, keyId, label: request.label, ...granted };
 }
