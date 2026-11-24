@@ -120,12 +120,6 @@ export class SiteHost {
     this.now = options.now ?? Date.now;
   }
 
-  /**
-   * The site to serve now. A new worker serves nothing until Platform has answered: a site kept
-   * from an earlier run could be a previous owner's, and running its code would let it tamper
-   * with the saved state before the check finishes. After that, answers are reused for 30
-   * seconds and then refreshed without making the page wait.
-   */
   /** Whether Platform has answered since this host started. */
   get proved(): boolean {
     return this.answer !== undefined;
@@ -136,6 +130,12 @@ export class SiteHost {
     return this.refresh();
   }
 
+  /**
+   * The site to serve now. A new worker serves nothing until Platform has answered: a site kept
+   * from an earlier run could be a previous owner's, and running its code would let it tamper
+   * with the saved state before the check finishes. After that, answers are reused for 30
+   * seconds and then refreshed without making the page wait.
+   */
   private async current(request: HostRequest): Promise<Resolution> {
     if (!this.answer) return this.refresh();
     if (this.now() - this.answer.at >= FRESH_MS) {

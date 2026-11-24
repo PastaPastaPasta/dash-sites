@@ -63,15 +63,15 @@ async function start(): Promise<void> {
       'This browser cannot open Dash Sites',
     );
   }
+  navigator.serviceWorker.addEventListener('message', (event: MessageEvent<{ dashSitesProgress?: number }>) => {
+    const share = event.data?.dashSitesProgress;
+    if (typeof share !== 'number') return;
+    bar.classList.add('known');
+    bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
+    say(`Downloading the verifier, about 9 MB: ${Math.round(share * 100)}%. This happens once.`);
+  });
   if (!navigator.serviceWorker.controller) {
     say('Downloading the verifier, about 9 MB. This happens once.');
-    navigator.serviceWorker.addEventListener('message', (event: MessageEvent<{ dashSitesProgress?: number }>) => {
-      const share = event.data?.dashSitesProgress;
-      if (typeof share !== 'number') return;
-      bar.classList.add('known');
-      bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
-      say(`Downloading the verifier, about 9 MB: ${Math.round(share * 100)}%. This happens once.`);
-    });
     const registration = await navigator.serviceWorker.register('/sw.js');
     if (registration.active) return reload();
     await controlled(registration);
@@ -79,7 +79,7 @@ async function start(): Promise<void> {
   }
   say(`Asking Dash Platform who owns ${label}.dash and checking the proof.`);
   const response = await fetch('/.well-known/dash/site.json');
-  if (response.status === 503) {
+  if (response.status >= 500) {
     return fail(`Your browser could not get a proved answer about ${label}.dash from Dash Platform. Reload to try again.`, 'Dash Platform could not be reached');
   }
   const record = (await response.json()) as { proof?: { height: number } };

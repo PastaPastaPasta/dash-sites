@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import { base58 } from '@scure/base';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { parseContract } from '../src/evo.js';
+import { DEPLOYMENTS, DPNS_CONTRACT_ID } from '../src/config.js';
+import { knownContract, parseContract } from '../src/evo.js';
+import { KNOWN_CONTRACTS } from '../src/known-contracts.js';
 import {
   CHUNK_FIELD_SIZE,
   CHUNK_FIELDS,
@@ -117,5 +119,18 @@ describe('the contract to register', () => {
     const quoted = estimateCredits({ chunks: new Map([['', new Uint8Array(CHUNK_SIZE)]]) } as SiteBundle);
     expect(BigInt(chunk.storage.credits.newValues + site.storage.credits.newValues)).toBeLessThanOrEqual(quoted);
     expect(chunk.refund.afterOneYear.knownValues / chunk.storage.credits.knownValues).toBeGreaterThan(0.9);
+  });
+});
+
+describe('bundled contract snapshots', () => {
+  it('decode, and each is the contract and version it is filed under', () => {
+    for (const [network, contracts] of Object.entries(KNOWN_CONTRACTS)) {
+      expect(Object.keys(contracts ?? {})).toEqual([DPNS_CONTRACT_ID, DEPLOYMENTS[network as 'testnet' | 'mainnet']?.contractId]);
+      for (const [id, { version, bytes }] of Object.entries(contracts ?? {})) {
+        const contract = knownContract(bytes);
+        expect(contract.id.toBase58()).toBe(id);
+        expect(Number(contract.version)).toBe(version);
+      }
+    }
   });
 });

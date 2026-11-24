@@ -26,12 +26,18 @@ async function verifierSource(): Promise<string> {
   const cache = await caches.open(SHELL_CACHE).catch(() => undefined);
   const kept = await (await cache?.match(__VERIFIER__))?.arrayBuffer();
   if (kept && (await matches(kept))) return new TextDecoder().decode(kept);
-  const response = await fetch(__VERIFIER__);
-  if (!response.ok || !response.body) throw new Error(`the verifier could not be downloaded (${response.status})`);
-  const bytes = await download(response.body);
+  // Retried past the HTTP cache: one bad response cached as immutable would otherwise break every name.
+  let bytes = await fetchVerifier('default').catch(() => undefined);
+  if (!bytes || !(await matches(bytes))) bytes = await fetchVerifier('reload');
   if (!(await matches(bytes))) throw new Error('the verifier does not match the hash this worker was built with');
   await cache?.put(__VERIFIER__, new Response(bytes, { headers: { 'Content-Type': 'text/javascript' } })).catch(() => undefined);
   return new TextDecoder().decode(bytes);
+}
+
+async function fetchVerifier(mode: RequestCache): Promise<ArrayBuffer> {
+  const response = await fetch(__VERIFIER__, { cache: mode });
+  if (!response.ok || !response.body) throw new Error(`the verifier could not be downloaded (${response.status})`);
+  return download(response.body);
 }
 
 /** Reads the verifier and tells open pages how far the download has got. */
@@ -43,7 +49,10 @@ async function download(body: ReadableStream<Uint8Array>): Promise<ArrayBuffer> 
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (loaded + value.length > bytes.length) throw new Error('the verifier does not match the hash this worker was built with');
+    if (loaded + value.length > bytes.length) {
+      await reader.cancel();
+      throw new Error('the verifier is larger than the one this worker was built with');
+    }
     bytes.set(value, loaded);
     loaded += value.length;
     if (Date.now() - told > 100) {
@@ -51,7 +60,7 @@ async function download(body: ReadableStream<Uint8Array>): Promise<ArrayBuffer> 
       void progress(loaded / bytes.length);
     }
   }
-  return bytes.buffer.slice(0, loaded);
+  return loaded === bytes.length ? bytes.buffer : bytes.buffer.slice(0, loaded);
 }
 
 async function progress(share: number): Promise<void> {

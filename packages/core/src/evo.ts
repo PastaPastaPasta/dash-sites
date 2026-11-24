@@ -72,6 +72,8 @@ export interface ConnectOptions {
   fetchContracts?: boolean;
 }
 
+export const knownContract = (bytes: string): DataContract => DataContract.fromBase64(bytes, false, PROTOCOL_VERSION);
+
 /**
  * Seeds the SDK with the bundled DPNS and dash-sites contracts, so the first queries need no contract
  * fetch, then checks in the background that they are still the network's current versions and
@@ -79,7 +81,13 @@ export interface ConnectOptions {
  */
 async function seedContracts(sdk: EvoSDK, config: NetworkConfig): Promise<void> {
   const known = Object.entries(KNOWN_CONTRACTS[config.network] ?? {});
-  for (const [, { bytes }] of known) await sdk.contracts.addKnown(DataContract.fromBase64(bytes, false, PROTOCOL_VERSION));
+  for (const [, { bytes }] of known) {
+    try {
+      await sdk.contracts.addKnown(knownContract(bytes));
+    } catch {
+      // Unusable snapshot: queries fetch the contract as before.
+    }
+  }
   if (known.length === 0) return;
   void (async () => {
     const latest = await sdk.contracts.getLatestVersions({ contractIds: known.map(([id]) => id) });
