@@ -99,7 +99,38 @@ async function seedContracts(sdk: EvoSDK, config: NetworkConfig): Promise<void> 
   })().catch(() => undefined);
 }
 
+/** How long a Platform read may wait for its response headers before it counts as failed. */
+export const READ_DEADLINE_MS = 8000;
+const PLATFORM_READ = /\/org\.dash\.platform\.dapi\.v0\.Platform\/get[A-Za-z]+$/;
+
+/**
+ * The SDK's own request timeout is not enforced in browsers: a node that accepts the connection and
+ * never answers holds a query for minutes. This fetch aborts a Platform read that has no response
+ * headers after `deadlineMs`, so the SDK bans that node and retries on another. Writes, which wait
+ * for a block, and every other request pass through untouched.
+ */
+export function withReadDeadline(inner: typeof fetch, deadlineMs = READ_DEADLINE_MS): typeof fetch {
+  return (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), 'https://local/');
+    if (!PLATFORM_READ.test(url.pathname)) return inner(input, init);
+    const deadline = new AbortController();
+    const caller = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    if (caller?.aborted) deadline.abort(caller.reason);
+    else caller?.addEventListener('abort', () => deadline.abort(caller.reason), { once: true });
+    const timer = setTimeout(() => deadline.abort(new Error(`no answer from ${url.host} within ${deadlineMs} ms`)), deadlineMs);
+    return inner(input, { ...init, signal: deadline.signal }).finally(() => clearTimeout(timer));
+  };
+}
+
+let deadlineInstalled = false;
+function installReadDeadline(): void {
+  if (deadlineInstalled || typeof globalThis.fetch !== 'function') return;
+  deadlineInstalled = true;
+  globalThis.fetch = withReadDeadline(globalThis.fetch.bind(globalThis));
+}
+
 export async function connectSdk(config: NetworkConfig, options: ConnectOptions = {}): Promise<EvoSDK> {
+  installReadDeadline();
   const sdk = new EvoSDK({
     network: config.network,
     trusted: true,

@@ -6,7 +6,7 @@ import { base58 } from '@scure/base';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { toHex } from '../src/bytes.js';
 import { networkConfig } from '../src/config.js';
-import { EvoWriter, KeyRefused } from '../src/evo.js';
+import { EvoWriter, KeyRefused, withReadDeadline } from '../src/evo.js';
 
 const CONFIG = networkConfig('testnet');
 const IDENTITY = base58.encode(new Uint8Array(32).fill(4));
@@ -77,5 +77,57 @@ describe('signing key', () => {
     expect(await writer.keyLive()).toBe(true);
     keys[0] = key({ disabledAt: 9n });
     expect(await writer.keyLive()).toBe(false);
+  });
+});
+
+describe('Platform read deadline', () => {
+  const silent: typeof fetch = (_input, init) =>
+    new Promise((_resolve, reject) => {
+      if (init?.signal?.aborted) reject(init.signal.reason);
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    });
+  const node = 'https://203.0.113.9:443/org.dash.platform.dapi.v0.Platform';
+
+  it('fails a read that gets no answer in time, naming the node', async () => {
+    await expect(withReadDeadline(silent, 20)(`${node}/getDocuments`, { method: 'POST' })).rejects.toThrow('no answer from 203.0.113.9 within 20 ms');
+  });
+
+  it('leaves writes and other requests alone', async () => {
+    let calls = 0;
+    const answered: typeof fetch = async (_input, init) => {
+      calls += 1;
+      expect(init?.signal).toBeUndefined();
+      return new Response('ok');
+    };
+    const guarded = withReadDeadline(answered, 20);
+    await guarded(`${node}/waitForStateTransitionResult`, { method: 'POST' });
+    await guarded(`${node}/broadcastStateTransition`, { method: 'POST' });
+    await guarded('https://quorums.mainnet.networks.dash.org/quorums');
+    expect(calls).toBe(3);
+  });
+
+  it('keeps the caller able to cancel, and does not cut off an answer that came in time', async () => {
+    const caller = new AbortController();
+    const pending = withReadDeadline(silent, 10_000)(`${node}/getDataContract`, { signal: caller.signal });
+    caller.abort(new Error('cancelled'));
+    await expect(pending).rejects.toThrow('cancelled');
+    const answered = await withReadDeadline(async () => new Response('proof'), 20)(`${node}/getDocuments`);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(await answered.text()).toBe('proof');
+  });
+
+  it('handles the Request the SDK sends, with its own signal and body', async () => {
+    let body = '';
+    const seen: typeof fetch = async (input, init) => {
+      body = await (input as Request).clone().text();
+      return silent(input, init);
+    };
+    const own = new AbortController();
+    const request = () => new Request(`${node}/getDocuments`, { method: 'POST', body: 'query', signal: own.signal });
+    await expect(withReadDeadline(seen, 20)(request())).rejects.toThrow('within 20 ms');
+    expect(body).toBe('query');
+    const pending = withReadDeadline(seen, 10_000)(request());
+    own.abort(new Error('sdk cancelled'));
+    await expect(pending).rejects.toThrow('sdk cancelled');
   });
 });
