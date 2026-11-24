@@ -110,8 +110,9 @@ function requireName(): string {
 }
 
 function graceMs(): number {
-  const hours = Number(values.grace);
-  if (!Number.isFinite(hours) || hours < 0) fail('--grace must be a number of hours');
+  const text = String(values.grace ?? '').trim();
+  const hours = Number(text);
+  if (text === '' || !Number.isFinite(hours) || hours < 0) fail('--grace must be a number of hours');
   return hours * 3_600_000;
 }
 

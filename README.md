@@ -114,11 +114,12 @@ dash-sites gc --identity-file identity.json       # reclaim storage of old versi
 ```
 
 `--prune` deletes, after the new record is written, the chunks of releases older than the
-one it replaced, so each site keeps its current and previous release. `gc` deletes every
+one it replaced. The site being published keeps its current and previous release; other
+sites of the identity keep only their current release. `gc` deletes every
 chunk no site record of the identity references. Both delete nothing while a site record
 of the identity changed less than `--grace` hours ago (default 25, past the gateway's 24-hour
-stale cache): a browser or gateway may still be serving the release a record replaced. A
-`--dry-run` lists the chunks either way. Only the identity's own chunks are listed and
+stale cache): a browser or gateway may still be serving the release a record replaced.
+`gc --dry-run` lists the chunks either would delete; `publish --dry-run` plans no pruning. Only the identity's own chunks are listed and
 deleted; other identities' chunks are never read as references or touched.
 
 Before deleting, the site records are read again, and nothing is deleted if they changed
