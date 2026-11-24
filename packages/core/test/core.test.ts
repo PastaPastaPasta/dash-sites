@@ -3,6 +3,9 @@ import {
   buildSite,
   CHUNK_SIZE,
   collectGarbage,
+  DEFAULT_PRUNE_GRACE_MS,
+  planPrune,
+  refundCredits,
   ContentError,
   decide,
   decodeManifest,
@@ -297,17 +300,89 @@ describe('resolve and publish', () => {
     expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('ok');
   });
 
-  it('collects chunks no site references', async () => {
+  it('collects chunks no site references once every record is past the grace period', async () => {
     const platform = setup();
+    let now = Date.now() + 1_000_000;
+    platform.now = () => now;
     const alice = platform.as('alice-id');
     const v1 = buildSite(SITE);
     const v2 = buildSite([{ path: '/index.html', bytes: text('new') }]);
     await publishSite(alice, 'alice', v1);
     await publishSite(alice, 'alice', v2);
     const before = (await alice.listChunks()).length;
-    const deleted = await collectGarbage(alice);
-    expect(deleted).toBe(v1.chunks.size);
-    expect((await alice.listChunks()).length).toBe(before - deleted);
+
+    const early = await collectGarbage(alice, { now });
+    expect(early.deleted).toBe(0);
+    expect(early.deferredUntil).toBeGreaterThan(now);
+    expect((await alice.listChunks()).length).toBe(before);
+
+    now += DEFAULT_PRUNE_GRACE_MS + 1000;
+    const result = await collectGarbage(alice, { now });
+    expect(result.deleted).toBe(v1.chunks.size);
+    expect(result.bytes).toBe([...v1.chunks.values()].reduce((sum, chunk) => sum + chunk.length, 0));
     expect((await alice.listChunks()).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+  });
+
+  it('prunes on publish only releases older than the one replaced', async () => {
+    const platform = setup();
+    let now = Date.now() + 1_000_000;
+    platform.now = () => now;
+    const alice = platform.as('alice-id');
+    const release = (n: number) => buildSite([...SITE.slice(1), { path: '/index.html', bytes: text(`release ${n}`) }, { path: `/r${n}.bin`, bytes: random(CHUNK_SIZE + 10, n + 7) }]);
+    const [v1, v2, v3, v4] = [1, 2, 3, 4].map(release) as [ReturnType<typeof release>, ReturnType<typeof release>, ReturnType<typeof release>, ReturnType<typeof release>];
+    const hashes = async () => new Set((await alice.listChunks()).map((c) => c.hash));
+    const only = (a: typeof v1, ...others: Array<typeof v1>) => [...a.chunks.keys()].filter((h) => others.every((o) => !o.chunks.has(h)));
+
+    await publishSite(alice, 'alice', v1, undefined, { prune: { now } });
+    now += 60_000;
+    // v1 went live a minute ago: replacing it keeps it, and nothing older exists.
+    const second = await publishSite(alice, 'alice', v2, undefined, { prune: { now } });
+    expect(second.pruned?.deferredUntil).toBeDefined();
+    now += 60_000;
+    // v2 went live a minute ago: v1's own chunks are still kept.
+    const third = await publishSite(alice, 'alice', v3, undefined, { prune: { now } });
+    expect(third.pruned?.deleted).toBe(0);
+    for (const h of only(v1, v2, v3)) expect((await hashes()).has(h)).toBe(true);
+
+    now += DEFAULT_PRUNE_GRACE_MS + 1000;
+    const fourth = await publishSite(alice, 'alice', v4, undefined, { prune: { now } });
+    const left = await hashes();
+    // v3 (replaced now) and v4 stay; v1 and v2 go, except chunks they share with v3 or v4.
+    for (const h of [...v3.chunks.keys(), ...v4.chunks.keys()]) expect(left.has(h)).toBe(true);
+    for (const h of [...only(v1, v3, v4), ...only(v2, v3, v4)]) expect(left.has(h)).toBe(false);
+    expect(fourth.pruned?.deleted).toBe(new Set([...only(v1, v3, v4), ...only(v2, v3, v4)]).size);
+    const resolved = await resolveName(platform.as('anyone'), 'alice.dash');
+    expect(resolved.status === 'ok' && resolved.site.content).toBe(v4.contentUri);
+  });
+
+  it('keeps chunks another site of the identity uses and never touches another identity', async () => {
+    const platform = setup();
+    let now = Date.now() + 1_000_000;
+    platform.now = () => now;
+    platform.registerName('alice2', 'alice-id');
+    const alice = platform.as('alice-id');
+    const bob = platform.as('bob-id');
+    const shared = buildSite(SITE);
+    await publishSite(alice, 'alice', shared);
+    await publishSite(alice, 'alice2', shared);
+    await publishSite(bob, 'bob', shared);
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('other') }]));
+    await publishSite(bob, 'bob', buildSite([{ path: '/index.html', bytes: text('bob other') }]));
+    now += DEFAULT_PRUNE_GRACE_MS + 1000;
+
+    const plan = await planPrune(alice, { now });
+    expect(plan.remove).toEqual([]);
+    expect((await collectGarbage(alice, { now })).deleted).toBe(0);
+    for (const h of shared.chunks.keys()) expect((await bob.getChunks('bob-id', [h])).has(h)).toBe(true);
+    expect((await collectGarbage(bob, { now })).deleted).toBe(shared.chunks.size);
+    for (const h of shared.chunks.keys()) expect((await alice.getChunks('alice-id', [h])).has(h)).toBe(true);
+  });
+
+  it('estimates refunds from the storage fee distribution table', () => {
+    const fee = 27_000n * 1_000_000n;
+    expect(refundCredits(1_000_000, 0)).toBe((fee * 99_875n) / 100_000n);
+    expect(refundCredits(1_000_000, 3)).toBe((fee * 99_500n) / 100_000n);
+    expect(refundCredits(1_000_000, 40)).toBe((fee * 94_880n) / 100_000n);
+    expect(refundCredits(1_000_000, 2_000)).toBe(0n);
   });
 });

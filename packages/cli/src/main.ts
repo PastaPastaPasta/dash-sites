@@ -3,12 +3,16 @@ import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
 import {
   buildSite,
-  collectGarbage,
+  DEFAULT_PRUNE_GRACE_MS,
   estimateCredits,
   formatDash,
   loadManifest,
   networkConfig,
   parseName,
+  planPrune,
+  prune,
+  refundCredits,
+  type PrunePlan,
   publishPointer,
   publishSite,
   readFile,
@@ -26,10 +30,11 @@ import { readSiteDirectory } from './files.js';
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
-  dash-sites publish <dir> --name <name> [--spa] [--dry-run]   publish a folder as <name>.dash
+  dash-sites publish <dir> --name <name> [--spa] [--prune] [--dry-run]
+                                                               publish a folder as <name>.dash
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
   dash-sites unpublish --name <name>                           remove the site record
-  dash-sites gc                                                delete stored chunks no site uses
+  dash-sites gc [--dry-run]                                    delete stored chunks no site uses
   dash-sites register <label>                                  register <label>.dash for this identity
   dash-sites names                                             list the names this identity owns
   dash-sites resolve <name>                                    show what a name resolves to (JSON)
@@ -43,6 +48,8 @@ Options
   --contract <id>               dash-sites contract id, if not the built-in one
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
   --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
+  --prune                       after publishing, delete chunks of releases before the one replaced
+  --grace <hours>               gc and --prune delete nothing until every site record is this old (default 24)
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity
@@ -72,6 +79,8 @@ const { values, positionals } = parseArgs({
     domain: { type: 'string', default: 'localhost' },
     output: { type: 'string', short: 'o' },
     spa: { type: 'boolean', default: false },
+    prune: { type: 'boolean', default: false },
+    grace: { type: 'string', default: String(DEFAULT_PRUNE_GRACE_MS / 3_600_000) },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -98,6 +107,25 @@ function network(): NetworkConfig {
 function requireName(): string {
   if (!values.name || !parseName(values.name)) fail('--name must be a DPNS name such as alice or alice.dash');
   return values.name;
+}
+
+function graceMs(): number {
+  const hours = Number(values.grace);
+  if (!Number.isFinite(hours) || hours < 0) fail('--grace must be a number of hours');
+  return hours * 3_600_000;
+}
+
+/** What a prune plan deletes and roughly returns: a delete in the epoch of the store, and one a mainnet year later. */
+function describePlan(plan: PrunePlan): Record<string, unknown> {
+  if (plan.deferredUntil !== undefined) return { deferredUntil: new Date(plan.deferredUntil).toISOString(), reason: 'a site record changed within the grace period' };
+  return {
+    chunks: plan.remove.length,
+    bytes: plan.bytes,
+    kept: plan.kept,
+    refundSameEpoch: formatDash(refundCredits(plan.bytes, 0)),
+    refundAfterOneYear: formatDash(refundCredits(plan.bytes, 40)),
+    remove: plan.remove.map((chunk) => `${chunk.hash} ${chunk.bytes}`),
+  };
 }
 
 const print = (value: unknown): void => console.log(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
@@ -135,10 +163,24 @@ const commands: Record<string, () => Promise<void>> = {
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
     const writer = await EvoWriter.connectAs(network(), credentials());
-    const result = await publishSite(writer, name, bundle, (progress) => {
-      if (progress.step === 'upload') console.error(`uploaded chunk ${progress.done}/${progress.total}`);
+    const result = await publishSite(
+      writer,
+      name,
+      bundle,
+      (progress) => {
+        if (progress.step === 'upload') console.error(`uploaded chunk ${progress.done}/${progress.total}`);
+      },
+      values.prune ? { prune: { graceMs: graceMs() } } : {},
+    );
+    print({
+      name: `${parseName(name)?.label}.dash`,
+      content: result.site.content,
+      revision: result.site.revision,
+      uploaded: result.uploaded,
+      reused: result.reused,
+      spent: formatDash(result.creditsSpent),
+      ...(result.pruned ? { pruned: { deleted: result.pruned.deleted, ...describePlan(result.pruned) } } : {}),
     });
-    print({ name: `${parseName(name)?.label}.dash`, content: result.site.content, revision: result.site.revision, uploaded: result.uploaded, reused: result.reused, spent: formatDash(result.creditsSpent) });
   },
 
   async point() {
@@ -157,8 +199,10 @@ const commands: Record<string, () => Promise<void>> = {
 
   async gc() {
     const writer = await EvoWriter.connectAs(network(), credentials());
+    const plan = await planPrune(writer, { graceMs: graceMs() });
+    if (values['dry-run'] || plan.remove.length === 0) return print({ dryRun: values['dry-run'], ...describePlan(plan) });
     const before = await writer.balance();
-    const deleted = await collectGarbage(writer, (hash) => console.error(`deleted chunk ${hash}`));
+    const deleted = await prune(writer, plan, (hash) => console.error(`deleted chunk ${hash}`));
     print({ deleted, refunded: formatDash((await writer.balance()) - before) });
   },
 

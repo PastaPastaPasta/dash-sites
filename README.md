@@ -108,12 +108,23 @@ alias dash-sites="node $PWD/packages/cli/bundle/dash-sites.mjs"
 dash-sites preview ./my-site                      # http://preview.localhost:8080/
 dash-sites publish ./my-site --name alice --identity-file identity.json
 dash-sites resolve alice
+dash-sites publish ./my-site --name alice --identity-file identity.json --prune
+dash-sites gc --identity-file identity.json --dry-run   # what would be deleted, and the refund
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
 ```
 
+`--prune` deletes, after the new record is written, the chunks of releases older than the
+one it replaced, so each site keeps its current and previous release. `gc` deletes every
+chunk no site record of the identity references. Both delete nothing while a site record
+of the identity changed less than `--grace` hours ago (default 24): a browser may still be
+serving the release a record just replaced. Only the identity's own chunks are listed and
+deleted; other identities' chunks are never read as references or touched.
+
 `--identity-file` takes the identity JSON that dash-bridge writes. You can
 also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
-0.3 DASH per megabyte, paid once, and deleting old chunks refunds most of it.
+0.3 DASH per megabyte, paid once. Deleting a chunk refunds its storage fee less
+what Platform has already paid out to masternodes: 0.125% per mainnet epoch (9.125 days)
+in the first year, so about 99.9% after a day and 94.9% after a year.
 Get testnet funds at https://faucet.thepasta.org. Run `dash-sites` with no
 arguments for every command.
 
