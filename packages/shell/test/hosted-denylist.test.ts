@@ -33,8 +33,17 @@ describe('hostedDenylist', () => {
     expect(calls.saved).toEqual([{ names: ['alice'] }]);
   });
 
-  it('falls back to the saved list when the gateway cannot be reached on start', async () => {
+  it('answers from the saved list on start without waiting for the gateway', async () => {
+    const { denied, calls, release } = setup(['hang'], { names: ['alice'] });
+    expect(await denied(name('a11ce'))).toBe(true);
+    expect(calls.fetch).toBe(1);
+    release();
+  });
+
+  it('keeps the saved list when the gateway cannot be reached', async () => {
     const { denied } = setup([new Error('offline')], { names: ['alice'] });
+    expect(await denied(name('a11ce'))).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(await denied(name('a11ce'))).toBe(true);
   });
 

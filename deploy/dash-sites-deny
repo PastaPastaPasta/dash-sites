@@ -12,9 +12,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 
 const ENV_FILE = process.env.GATEWAY_ENV ?? '/etc/dash-sites/gateway.env';
-const ROOT = process.env.DASH_SITES_ROOT ?? '';
-const CADDY_FILE = `${ROOT}/etc/dash-sites/denied.caddy`;
-const PUBLIC_DIR = `${ROOT}/etc/dash-sites/public`;
+const CADDY_FILE = '/etc/dash-sites/denied.caddy';
+const PUBLIC_DIR = '/etc/dash-sites/public';
 const SHELL_DIR = '/opt/dash-sites/shell';
 const KINDS = ['name', 'owner', 'content'];
 
@@ -26,7 +25,7 @@ const fail = (message) => {
 const [command, kind, rawValue, ...note] = process.argv.slice(2);
 if (!['list', 'apply', 'add', 'remove'].includes(command)) {
   console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 6).join('\n').replace(/^\/\/ ?/gm, ''));
-  process.exit(command ? 1 : 0);
+  process.exit(!command || ['help', '-h', '--help'].includes(command) ? 0 : 1);
 }
 
 const env = Object.fromEntries(

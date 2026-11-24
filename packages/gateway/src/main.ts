@@ -2,7 +2,7 @@ import { readFileSync, watchFile } from 'node:fs';
 import { createServer } from 'node:http';
 import { MAX_FILES, readerConfig, type Network } from '@dash-sites/core';
 import { EvoReader } from '@dash-sites/core/evo';
-import { emptyDenylist, parseDenylist, parseDomain, type GatewayConfig } from './config.js';
+import { emptyDenylist, parseDenylist, parseDomain, type Denylist, type GatewayConfig } from './config.js';
 import { createGateway } from './server.js';
 
 const env = process.env;
@@ -21,6 +21,15 @@ function peerFromEnv(value: string | undefined): GatewayConfig['peer'] {
   return undefined;
 }
 
+function readDenylist(file: string): Denylist | undefined {
+  try {
+    return parseDenylist(readFileSync(file, 'utf8'));
+  } catch (error) {
+    console.log(JSON.stringify({ event: 'denylist-rejected', error: String((error as Error)?.message ?? error) }));
+    return undefined;
+  }
+}
+
 export function configFromEnv(): GatewayConfig {
   const domains = list(env.GATEWAY_DOMAINS ?? 'http://localhost:8080').map(parseDomain);
   const network = (env.NETWORK ?? 'testnet') as Network;
@@ -33,7 +42,7 @@ export function configFromEnv(): GatewayConfig {
     network,
     sitesLive: readerConfig(network, env.CONTRACT_ID).contractId !== '',
     peer: peerFromEnv(env.PEER_GATEWAY),
-    denylist: env.DENYLIST_FILE ? parseDenylist(readFileSync(env.DENYLIST_FILE, 'utf8')) : emptyDenylist(),
+    denylist: env.DENYLIST_FILE ? readDenylist(env.DENYLIST_FILE) ?? emptyDenylist() : emptyDenylist(),
     maxSiteBytes: number(env.MAX_SITE_BYTES, 25 * 1024 * 1024),
     maxFiles: number(env.MAX_FILES, MAX_FILES),
     rateLimitPerMinute: number(env.RATE_LIMIT_PER_MINUTE, 600),
@@ -48,12 +57,10 @@ async function main(): Promise<void> {
   const denylistFile = env.DENYLIST_FILE;
   if (denylistFile) {
     watchFile(denylistFile, { interval: 5000 }, () => {
-      try {
-        config.denylist = parseDenylist(readFileSync(denylistFile, 'utf8'));
-        console.log(JSON.stringify({ event: 'denylist-reloaded', names: config.denylist.names.size, owners: config.denylist.owners.size, content: config.denylist.content.size }));
-      } catch (error) {
-        console.log(JSON.stringify({ event: 'denylist-rejected', error: String((error as Error)?.message ?? error) }));
-      }
+      const list = readDenylist(denylistFile);
+      if (!list) return;
+      config.denylist = list;
+      console.log(JSON.stringify({ event: 'denylist-reloaded', names: list.names.size, owners: list.owners.size, content: list.content.size }));
     });
   }
   const reader = await EvoReader.connect(network);

@@ -587,9 +587,12 @@ takes effect in three places:
 - Browsers with the worker already installed fetch
   `/.well-known/dash-gateway/denylist.json` at most once a minute, so owners
   and contents, which have no host to refuse, are refused within 60 seconds.
-  The worker answers from the list it has while one refresh runs in the
-  background, gives up on a fetch after 5 seconds, and keeps its last list in
-  Cache Storage across restarts, so an unreachable gateway never blocks a site.
+  The worker answers from the list it has, or the one an earlier worker saved
+  in Cache Storage, while one refresh runs in the background, and gives up on a
+  fetch after 5 seconds. Only a browser with no saved list waits for that fetch.
+- A list the gateway process cannot parse is logged and ignored: on a reload
+  it keeps the previous list, and on start it runs with none. `deploy.sh` and
+  `dash-sites-deny` refuse such a list before it is written.
 
 Names are matched in DPNS normal form, so look-alike spellings are refused
 together, and `remove name` removes every spelling. Every line of the list is

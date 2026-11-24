@@ -11,15 +11,16 @@ export interface HostedDenylistOptions {
 }
 
 /**
- * Whether the hosting operator has stopped serving a name. A list older than `freshMs` is used while
- * one shared refresh runs in the background. Without the gateway the last list stays in force, or none:
- * the site keeps working without the gateway.
+ * Whether the hosting operator has stopped serving a name. A list older than `freshMs`, or the one
+ * saved by an earlier worker, is used while one shared refresh runs in the background. Only a browser
+ * with no saved list waits for the gateway; without the gateway it serves with no list.
  */
 export function hostedDenylist(options: HostedDenylistOptions): (resolution: Resolution) => Promise<boolean> {
   const now = options.now ?? Date.now;
   const freshMs = options.freshMs ?? 60_000;
   let current: { at: number; list?: Denylist } | undefined;
   let refreshing: Promise<void> | undefined;
+  let starting: Promise<void> | undefined;
 
   const quietly = async (read: () => Promise<unknown>): Promise<unknown> => {
     try {
@@ -35,16 +36,22 @@ export function hostedDenylist(options: HostedDenylistOptions): (resolution: Res
       if (fetched !== undefined) {
         current = { at: now(), list: denylistFromJson(fetched) };
         await quietly(() => options.save(fetched));
-        return;
+      } else {
+        current = { at: now(), list: current?.list };
       }
-      const saved = current?.list ? undefined : await quietly(options.load);
-      current = { at: now(), list: current?.list ?? (saved === undefined ? undefined : denylistFromJson(saved)) };
     })().finally(() => {
       refreshing = undefined;
     }));
 
+  const start = async (): Promise<void> => {
+    const saved = await quietly(options.load);
+    if (saved === undefined) return refresh();
+    current ??= { at: -Infinity, list: denylistFromJson(saved) };
+    void refresh();
+  };
+
   return async (resolution) => {
-    if (!current) await refresh();
+    if (!current) await (starting ??= start());
     else if (now() - current.at >= freshMs) void refresh();
     return current?.list ? isDenied(current.list, resolution) : false;
   };
