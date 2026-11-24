@@ -366,8 +366,8 @@ queries for browsers.
   cannot obtain a certificate for its own hostname.
 - **Abuse**: the shell holds no content, so the operator refuses a name by
   host: a 451 notice, and a replacement `/sw.js` that removes the installed
-  worker (`deploy/denied.caddy.example`). The fallback process keeps its
-  denylist by name, owner and content hash. A takedown removes a site from
+  worker. The fallback process and, on hosted gateways, the browser's worker
+  keep a denylist by name, owner and content hash (§8, operator denylist). A takedown removes a site from
   this gateway, not from Platform, and a browser that never checks back for
   a worker update keeps its copy.
 - **Self-hosting**: the shell is three static files and works from any static
@@ -535,18 +535,62 @@ Mainnet needs a funded mainnet identity to register the contract (about 0.17
 DASH), then the contract id in `packages/core/src/config.ts` and
 `NETWORK=mainnet` on a gateway. It is otherwise the same deployment.
 
+A gateway runs on a network before its contract exists: the reader proves
+names as usual and every registered name resolves to "no site yet", and the
+landing page says publishing has not opened. `dash.site` runs that way on
+mainnet until the contract is registered.
+
 ## 8. Hosting
+
+| Network | Gateway | Droplet |
+| --- | --- | --- |
+| Mainnet | `dash.site`, `*.dash.site` | `dash-site-mainnet` (DigitalOcean, nyc3, IPv4 + IPv6) |
+| Testnet | `id.dashhq.org`, `*.id.dashhq.org` | `dash-sites-gateway` |
+
+Each landing page links the other (`PEER_GATEWAY` in `gateway.env`).
 
 | Piece | Where | Why |
 | --- | --- | --- |
-| Gateway | DigitalOcean droplet `dash-sites-gateway` (1 GB, nyc3): Caddy serving the static shell on every name's host, the fallback process as a systemd service, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org`. The shell alone could sit on any static host with wildcard names |
-| DNS | Cloudflare zone `dashhq.org`: `id` and `*.id` to the droplet (DNS-only), `_acme-challenge.id` delegated to the droplet, CAA for Let's Encrypt DNS-01 | Existing access |
+| Gateway | DigitalOcean droplets (1 GB, nyc3), one per network: Caddy serving the static shell on every name's host, the fallback process as a systemd service, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org`. The shell alone could sit on any static host with wildcard names |
+| DNS | Cloudflare zone `dash.site`: apex and `*` A + AAAA to the mainnet droplet. Cloudflare zone `dashhq.org`: `id` and `*.id` to the testnet droplet (DNS-only), `_acme-challenge.id` delegated to the droplet, CAA for Let's Encrypt DNS-01 | Existing access |
 | Certificate | Let's Encrypt wildcard for `id.dashhq.org` and `*.id.dashhq.org`, renewed daily-checked by a systemd timer. `agnos` answers the DNS-01 challenge itself on port 53 during a renewal, so the host holds no DNS credentials | |
 | Builder | GitHub Pages from the repo, `dash-sites.thepasta.org` | Static, free, deploys from CI, different registrable domain from user sites |
 | Extension | Zip on GitHub Releases; store listing later | Store accounts are the user's |
 
 `deploy/provision.sh` sets up a fresh host and `deploy/deploy.sh` installs
 the shell, the fallback process and the Caddy configuration.
+
+### Operator denylist
+
+The hosted gateways can stop serving a name, an owner identity or a content
+URI. On the host:
+
+```sh
+ssh root@dash.site dash-sites-deny add name foo "reason"
+ssh root@dash.site dash-sites-deny add owner <identity id> "reason"
+ssh root@dash.site dash-sites-deny add content <content URI> "reason"
+ssh root@dash.site dash-sites-deny list
+ssh root@dash.site dash-sites-deny remove name foo
+```
+
+The list is `DENYLIST_FILE` (`/etc/dash-sites/denylist.txt`). Each change
+takes effect in three places:
+
+- Caddy refuses a denied name by host at once: a 451 notice
+  (`unavailable.html`), and a `/sw.js` that removes an installed worker.
+  `dash-sites-deny` regenerates `/etc/dash-sites/denied.caddy`, validates the
+  configuration and reloads Caddy, and keeps the old file if Caddy rejects it.
+- The fallback process (crawlers, command-line clients) re-reads the file
+  within 5 seconds and answers 451.
+- Browsers with the worker already installed fetch
+  `/.well-known/dash-gateway/denylist.json` at most once a minute, so owners
+  and contents, which have no host to refuse, are refused within 60 seconds.
+  If that fetch fails the worker keeps its last list.
+
+Names are matched in DPNS normal form, so look-alike spellings are refused
+together. A denial removes a site from this gateway only; the site stays on
+Platform and other gateways may serve it. The check in the worker is built
+only for hosted gateways (`DENYLIST=1`); a self-hosted shell has none.
 
 **Moving to `dash.dev`.** The shell reads the name from whatever host it is
 served on, so it needs no change. The gateway domain is `GATEWAY_DOMAINS` on

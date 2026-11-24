@@ -8,13 +8,16 @@ Platform; there is no web host.
 | | |
 | --- | --- |
 | Showcase site | https://p2p.id.dashhq.org/ (`p2p.dash`, testnet) |
-| Gateway | https://id.dashhq.org/ |
+| Gateway, mainnet | https://dash.site/ (names resolve; publishing opens once the contract is registered on mainnet) |
+| Gateway, testnet | https://id.dashhq.org/ |
 | Builder | https://dash-sites.thepasta.org/ |
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
-Everything runs on **testnet** today. The data contract is
-`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`.
+Sites are published on **testnet** today; the testnet data contract is
+`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. `dash.site` is the mainnet
+gateway: every mainnet DPNS name already has its address there
+(`alice.dash.site`), and shows its site as soon as mainnet publishing opens.
 
 ## How a site is opened
 
@@ -135,6 +138,12 @@ a wildcard certificate by DNS-01 with no DNS credentials on the host), and
 `deploy/deploy.sh <ssh-target>` installs the shell, the fallback process and
 the Caddy configuration. DNS records and the steps for moving to another
 domain such as `dash.dev` are in [docs/DESIGN.md](docs/DESIGN.md#8-hosting).
+
+The hosted gateways (`dash.site`, `id.dashhq.org`) can stop serving a name,
+owner or content (`dash-sites-deny`, see
+[docs/DESIGN.md](docs/DESIGN.md#operator-denylist)). Only a hosted build
+(`DENYLIST=1`, set by `deploy.sh` when the host's `gateway.env` has
+`DENYLIST_FILE`) includes that check; a self-hosted shell leaves it out.
 
 Mainnet needs the contract registered once by a funded mainnet identity
 (`dash-sites contract register --schema contract/dash-sites.v1.json --network
