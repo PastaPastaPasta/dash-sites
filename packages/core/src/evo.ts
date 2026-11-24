@@ -435,9 +435,11 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
 
   async putSite(domain: DomainRecord, content: string): Promise<SiteRecord> {
     const existing = [...(await this.siteDocuments(this.identityId, domain.id)).data].find((entry) => entry[1] !== undefined);
+    let revision = 1;
     if (existing?.[1]) {
       const object = existing[1].toObject() as Record<string, unknown>;
       const next = { ...object, content, $revision: BigInt((object.$revision as bigint | number | undefined) ?? 1) + 1n };
+      revision = Number(next.$revision);
       const document = Document.fromObject(next as never, this.sdk.wasm.version() as never);
       await this.sdk.documents.replace({ document, ...this.key });
     } else {
@@ -446,9 +448,9 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     }
     const stored = await settled(
       async () => (await this.getSite(this.identityId, domain.id)).value,
-      (site) => site?.content === content,
+      (site) => site?.content === content && site.revision >= revision,
     );
-    if (!stored || stored.content !== content) throw new Error('the site record was not stored');
+    if (!stored || stored.content !== content || stored.revision < revision) throw new Error('the site record was not stored');
     return stored;
   }
 
