@@ -119,8 +119,9 @@ sites of the identity keep only their current release. `gc` deletes every
 chunk no site record of the identity references. Both delete nothing while a site record
 of the identity changed less than `--grace` hours ago (default 25, past the gateway's 24-hour
 stale cache): a browser or gateway may still be serving the release a record replaced.
-`gc --dry-run` lists the chunks either would delete; `publish --dry-run` plans no pruning. Only the identity's own chunks are listed and
-deleted; other identities' chunks are never read as references or touched.
+`gc --dry-run` lists the chunks `gc` would delete and the refund; `publish --dry-run` plans
+no pruning. Only the identity's own chunks are listed and deleted; other identities' chunks
+are never read as references or touched.
 
 Before deleting, the site records are read again, and nothing is deleted if they changed
 since the plan, or if any record has content this version cannot read. A prune that cannot
