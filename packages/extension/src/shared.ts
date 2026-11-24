@@ -57,6 +57,42 @@ export function redirectRule(gateway: Gateway): chrome.declarativeNetRequest.Rul
   } as chrome.declarativeNetRequest.Rule;
 }
 
+const QUERY_IS_NAME = '([a-z0-9-]+)\\.dash(?:%2F)?(?:[&#].*)?$';
+
+/**
+ * Search engines whose result page the address bar may open for `alice.dash`, with a pattern for a
+ * query that is exactly a bare name (group 1 is the label). One rule each: Chrome refuses a regex that
+ * compiles to more than 2 KB, and a combined pattern does. The substitution replaces only the matched
+ * text, so each pattern runs to the end of the URL.
+ */
+export const SEARCH_ENGINES = [
+  { origin: 'https://www.google.com/*', regex: `^https://www\\.google\\.com/search\\?(?:.*&)?q=${QUERY_IS_NAME}` },
+  { origin: 'https://www.bing.com/*', regex: `^https://www\\.bing\\.com/search\\?(?:.*&)?q=${QUERY_IS_NAME}` },
+  { origin: 'https://duckduckgo.com/*', regex: `^https://duckduckgo\\.com/\\?(?:.*&)?q=${QUERY_IS_NAME}` },
+  { origin: 'https://search.brave.com/*', regex: `^https://search\\.brave\\.com/search\\?(?:.*&)?q=${QUERY_IS_NAME}` },
+  { origin: 'https://search.yahoo.com/*', regex: `^https://search\\.yahoo\\.com/search\\?(?:.*&)?p=${QUERY_IS_NAME}` },
+  { origin: 'https://www.ecosia.org/*', regex: `^https://www\\.ecosia\\.org/search\\?(?:.*&)?q=${QUERY_IS_NAME}` },
+  { origin: 'https://www.startpage.com/*', regex: `^https://www\\.startpage\\.com/(?:sp/)?search\\?(?:.*&)?query=${QUERY_IS_NAME}` },
+  { origin: 'https://kagi.com/*', regex: `^https://kagi\\.com/search\\?(?:.*&)?q=${QUERY_IS_NAME}` },
+];
+
+export const SEARCH_ORIGINS = SEARCH_ENGINES.map((engine) => engine.origin);
+export const SEARCH_RULE_IDS = SEARCH_ENGINES.map((_engine, index) => RULE_ID + 1 + index);
+
+/**
+ * Redirect the address bar's search for `alice.dash` to the site before the search request is sent.
+ * They need host access to SEARCH_ORIGINS; without it the webNavigation fallback acts after the
+ * search engine has been asked.
+ */
+export function searchRules(gateway: Gateway): chrome.declarativeNetRequest.Rule[] {
+  return SEARCH_ENGINES.map((engine, index) => ({
+    id: SEARCH_RULE_IDS[index],
+    priority: 1,
+    action: { type: 'redirect', redirect: { regexSubstitution: `${gateway.protocol}//\\1.${gateway.host}/` } },
+    condition: { regexFilter: engine.regex, isUrlFilterCaseSensitive: false, resourceTypes: ['main_frame'] },
+  })) as chrome.declarativeNetRequest.Rule[];
+}
+
 /** `alice`, `alice.dash`, `alice.dash/blog` or `http://alice.dash/blog` to a gateway URL. */
 export function urlForInput(input: string, gateway: Gateway): string | undefined {
   const text = input.trim().replace(/^https?:\/\//i, '');

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Resolution } from '@dash-sites/core';
-import { claimsFromHeaders, compare, labelForUrl, parseGateway, redirectRule, siteUrl, urlForInput, urlForSearch, type Gateway } from '../src/shared.js';
+import { readFileSync } from 'node:fs';
+import { claimsFromHeaders, compare, labelForUrl, parseGateway, redirectRule, SEARCH_ORIGINS, searchRules, siteUrl, urlForInput, urlForSearch, type Gateway } from '../src/shared.js';
 
 const gw = parseGateway('https://id.dashhq.org') as Gateway;
 const local = parseGateway('http://localhost:8080') as Gateway;
@@ -40,6 +41,52 @@ describe('redirect rule', () => {
     for (const url of ['https://example.com/alice.dash/', 'http://blog.alice.dash/', 'http://alice.dash.evil.com/', 'http://user@alice.dash/', 'https://example.com/?u=http://alice.dash/', 'ftp://alice.dash/']) {
       expect(apply(url), url).toBeUndefined();
     }
+  });
+});
+
+describe('search rule', () => {
+  const apply = (url: string, gateway = gw): string | undefined => {
+    const matching = searchRules(gateway).filter((r) => new RegExp(r.condition.regexFilter as string, 'i').test(url));
+    expect(matching.length).toBeLessThanOrEqual(1);
+    const [r] = matching;
+    if (!r) return undefined;
+    const substitution = (r.action.redirect?.regexSubstitution as string).replace(/\\(\d)/g, '$$$1');
+    return url.replace(new RegExp(r.condition.regexFilter as string, 'i'), substitution);
+  };
+
+  it('redirects a search for exactly a .dash name before it is sent', () => {
+    expect(apply('https://www.google.com/search?q=p2p.dash&oq=p2p.dash&sourceid=chrome&ie=UTF-8')).toBe('https://p2p.id.dashhq.org/');
+    expect(apply('https://www.google.com/search?client=firefox-b-d&q=P2P.dash')).toBe('https://P2P.id.dashhq.org/');
+    expect(apply('https://duckduckgo.com/?t=ffab&q=alice.dash')).toBe('https://alice.id.dashhq.org/');
+    expect(apply('https://www.bing.com/search?q=alice.dash%2F&form=QBLH')).toBe('https://alice.id.dashhq.org/');
+    expect(apply('https://search.yahoo.com/search?p=alice.dash')).toBe('https://alice.id.dashhq.org/');
+    expect(apply('https://www.startpage.com/sp/search?query=alice.dash')).toBe('https://alice.id.dashhq.org/');
+    expect(apply('https://alice.dash/', local)).toBeUndefined();
+    expect(apply('https://www.google.com/search?q=alice.dash', local)).toBe('http://alice.localhost:8080/');
+  });
+
+  it('leaves other searches alone', () => {
+    for (const url of [
+      'https://www.google.com/search?q=what+is+alice.dash',
+      'https://www.google.com/search?q=alice.dashboard',
+      'https://www.google.com/search?q=alice.dash%2Fblog',
+      'https://www.google.com/search?oq=alice.dash&q=alice',
+      'https://www.google.com/maps?q=alice.dash',
+      'https://www.google.com.evil.example/search?q=alice.dash',
+      'https://evil.example/search?q=alice.dash',
+      'http://www.google.com/search?q=alice.dash',
+      'https://www.google.com/search?q=xn--abc.dash.evil',
+    ]) {
+      expect(apply(url), url).toBeUndefined();
+    }
+  });
+
+  it('only asks for the engines it matches', () => {
+    const manifest = JSON.parse(readFileSync(new URL('../static/manifest.json', import.meta.url), 'utf8')) as { optional_host_permissions: string[] };
+    expect(manifest.optional_host_permissions).toEqual(SEARCH_ORIGINS);
+    const rules = searchRules(gw);
+    expect(new Set(rules.map((r) => r.id)).size).toBe(rules.length);
+    expect(rules.every((r) => r.id !== 1 && r.condition.resourceTypes?.join() === 'main_frame' && r.condition.isUrlFilterCaseSensitive === false)).toBe(true);
   });
 });
 

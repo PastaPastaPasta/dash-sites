@@ -19,7 +19,8 @@ against a live name.
 | Permission | Why |
 | --- | --- |
 | `declarativeNetRequest`, host access to `*.dash` | Redirect `.dash` navigations to the gateway |
-| `webNavigation` | Chrome turns a bare `alice.dash` into a search; this catches that search. Optional in settings |
+| Optional: host access to Google, Bing, DuckDuckGo, Brave, Yahoo, Ecosia, Startpage, Kagi | Redirect a search for exactly `alice.dash` before it is sent. Asked for when "catch searches" is saved in settings |
+| `webNavigation` | The address bar turns a bare `alice.dash` into a search; this catches that search after it is sent when the search-engine access above is not granted. Optional in settings |
 | `activeTab`, `scripting` | When the button is clicked, read what the current tab was served, to compare it with Dash Platform |
 | `storage` | Settings |
 

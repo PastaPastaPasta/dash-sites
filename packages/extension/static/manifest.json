@@ -34,6 +34,16 @@
   "host_permissions": [
     "*://*.dash/*"
   ],
+  "optional_host_permissions": [
+    "https://www.google.com/*",
+    "https://www.bing.com/*",
+    "https://duckduckgo.com/*",
+    "https://search.brave.com/*",
+    "https://search.yahoo.com/*",
+    "https://www.ecosia.org/*",
+    "https://www.startpage.com/*",
+    "https://kagi.com/*"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

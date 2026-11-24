@@ -1,6 +1,6 @@
 import { loadSettings, saveSettings } from './settings.js';
 import type { Network } from '@dash-sites/core';
-import { DEFAULT_GATEWAY, parseGateway } from './shared.js';
+import { DEFAULT_GATEWAY, parseGateway, SEARCH_ORIGINS } from './shared.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -19,6 +19,7 @@ async function main(): Promise<void> {
     event.preventDefault();
     const parsed = parseGateway(gateway.value);
     const status = $('status');
+    if (parsed) void (searches.checked ? chrome.permissions.request({ origins: SEARCH_ORIGINS }) : chrome.permissions.remove({ origins: SEARCH_ORIGINS })).catch(() => false);
     if (!parsed) {
       status.dataset.ok = 'false';
       status.textContent = 'A gateway is an https address, or http on localhost, with no path.';
