@@ -218,8 +218,8 @@ async function signIn(identity: string, key: string): Promise<void> {
     const connected = await evo.EvoWriter.connectAs(config, { identityId, privateKeyWif: key.trim() });
     if (attempt !== session) return;
     $<HTMLInputElement>('key').value = '';
-    clearSession(storage('sessionStorage'), NETWORK);
     await enter(connected, attempt);
+    if (attempt === session) clearSession(storage('sessionStorage'), NETWORK);
   } catch (caught) {
     if (attempt === session) error.textContent = message(caught);
   } finally {
@@ -283,6 +283,7 @@ async function signInWithWallet(): Promise<void> {
   progress.textContent = 'Connecting to Dash Platform…';
   let timer: ReturnType<typeof setInterval> | undefined;
   let wake: (() => void) | undefined;
+  let saved = false;
   try {
     const [evo, connect] = await Promise.all([loadEvo(), loadConnect()]);
     const config = networkConfig(NETWORK);
@@ -341,13 +342,15 @@ async function signInWithWallet(): Promise<void> {
       if (attempt !== session) return;
       if (expiring(connected)) throw new Error('The key your wallet approved has run out. Start again.');
       saveSession(storage('sessionStorage'), NETWORK, { identityId: grant.identityId, privateKey: grant.privateKey });
+      saved = true;
       await enter(connected, attempt);
       if (attempt === session) cancelWallet();
     } finally {
       grant.privateKey.fill(0);
     }
   } catch (caught) {
-    if (attempt !== session || (caught as Error)?.name === 'AbortError') return;
+    if (attempt !== session || abort.signal.aborted) return;
+    if (saved) clearSession(storage('sessionStorage'), NETWORK);
     cancelWallet();
     error.textContent = message(caught);
   } finally {
@@ -396,6 +399,7 @@ function signOut(): void {
   $('signin-ways').hidden = false;
   $('step-signin').querySelector<HTMLElement>('.done')!.hidden = true;
   $('allowance').hidden = true;
+  $('balance').textContent = '';
   $('result').hidden = true;
   $('site-status').textContent = '';
   showRegistration(true);
