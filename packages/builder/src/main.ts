@@ -4,6 +4,7 @@ import {
   contentTypeFor,
   estimateCredits,
   formatDash,
+  DEPLOYMENTS,
   isValidLabel,
   networkConfig,
   parseName,
@@ -602,6 +603,11 @@ async function manage(button: HTMLButtonElement, action: (writer: EvoWriter, dom
 
 function start(): void {
   $('net').textContent = NETWORK;
+  $('net-note').textContent = DEPLOYMENTS.mainnet
+    ? ''
+    : NETWORK === 'mainnet'
+      ? 'Publishing on mainnet has not opened yet. Mainnet names already have their address at name.dash.site.'
+      : `This builder publishes on ${NETWORK}. Mainnet names already have their address at name.dash.site; publishing there opens once the mainnet contract is registered.`;
   $<HTMLInputElement>('title').value = draft.title;
   $<HTMLInputElement>('tagline').value = draft.tagline;
   $<HTMLTextAreaElement>('body').value = draft.body;

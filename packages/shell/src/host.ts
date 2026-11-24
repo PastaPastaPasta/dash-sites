@@ -2,7 +2,9 @@ import {
   ContentError,
   HOST_API,
   ManifestError,
+  DENIED_TITLE,
   dashHeaders,
+  deniedDetail,
   decide,
   describeResolution,
   escapeHtml,
@@ -76,6 +78,8 @@ export interface HostOptions {
   /** The name changed owner while this worker was serving it: open pages show the previous owner's site. */
   onOwnerChange?: () => void;
   nonce?: () => string;
+  /** Hosted gateways only: whether the operator has stopped serving this name, owner or content. */
+  denied?: (resolution: Resolution) => Promise<boolean>;
   log?: (entry: Record<string, unknown>) => void;
 }
 
@@ -247,6 +251,10 @@ export class SiteHost {
       return this.page(503, 'Unavailable', 'Dash Platform could not be reached', `Your browser could not get a proved answer about <code>${dashName}</code> from Dash Platform. Reload to try again.`);
     }
     if (url.pathname === RESET_PATH) return this.reset(request);
+    if (await this.options.denied?.(resolution)) {
+      if (url.pathname.startsWith(HOST_API)) return this.json(451, { status: 'unavailable' });
+      return this.page(451, '451', DENIED_TITLE, deniedDetail(dashName));
+    }
     if (request.navigation && this.saved?.resetPending) {
       if (request.topLevel ?? true) return { status: 302, headers: { Location: resetLocation(url), 'Cache-Control': 'no-store' } };
       return this.page(503, 'Unavailable', `${dashName} cannot be shown in a frame yet`, 'Open it in a tab of its own first, so that data left in this browser by a previous owner of the name can be removed.');

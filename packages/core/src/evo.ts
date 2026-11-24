@@ -112,6 +112,10 @@ export class EvoReader implements PlatformReader {
     return this.one(await this.query(DPNS_CONTRACT_ID, 'domain', where, { limit: 1 }), toDomain);
   }
 
+  get noSiteContract(): boolean {
+    return !this.config.contractId;
+  }
+
   async getSite(ownerId: string, domainId: string): Promise<Proved<SiteRecord | undefined>> {
     return this.one(await this.siteDocuments(ownerId, domainId), toSite);
   }
@@ -126,6 +130,7 @@ export class EvoReader implements PlatformReader {
 
   async getChunks(ownerId: string, hashes: string[]): Promise<Map<string, Uint8Array>> {
     const out = new Map<string, Uint8Array>();
+    if (this.noSiteContract) return out;
     const wanted = [...new Set(hashes)];
     for (let i = 0; i < wanted.length; i += PAGE) {
       const batch = wanted.slice(i, i + PAGE).map((hash) => base58.encode(fromHex(hash)));

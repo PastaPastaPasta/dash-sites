@@ -33,6 +33,8 @@ export interface SiteRecord {
 
 /** Proof-verified reads of the records, and unproved reads of content-addressed chunks. */
 export interface PlatformReader {
+  /** True while the network has no dash-sites contract: names resolve, sites do not exist yet. */
+  readonly noSiteContract?: boolean;
   getDomain(normalizedLabel: string): Promise<Proved<DomainRecord | undefined>>;
   getSite(ownerId: string, domainId: string): Promise<Proved<SiteRecord | undefined>>;
   /** Chunks of `ownerId` by hash. Missing chunks are absent from the result; callers verify the bytes. */

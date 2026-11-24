@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
-import { networkConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
+import { readerConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
+import { hostedDenylist } from './hosted-denylist.js';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Connect } from './verifier.js';
@@ -10,6 +11,7 @@ declare const __VERIFIER_SHA256__: string;
 declare const __NETWORK__: string;
 declare const __CONTRACT_ID__: string;
 declare const __BUILDER_URL__: string;
+declare const __DENYLIST__: boolean;
 
 const matches = async (bytes: ArrayBuffer): Promise<boolean> => toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) === __VERIFIER_SHA256__;
 
@@ -35,7 +37,7 @@ function connect(): Promise<PlatformReader> {
   reader ??= Promise.resolve()
     .then(async () => {
       if (!self.dashSitesConnect) (0, eval)(await verifierSource());
-      return (self.dashSitesConnect as Connect)(networkConfig(__NETWORK__ as Network, __CONTRACT_ID__ || undefined));
+      return (self.dashSitesConnect as Connect)(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__));
     })
     .catch((error: unknown) => {
       reader = undefined;
@@ -50,6 +52,17 @@ async function resetClients(): Promise<void> {
   }
 }
 
+const DENYLIST_URL = '/.well-known/dash-gateway/denylist.json';
+
+const hostedDenied = hostedDenylist({
+  fetchList: async () => {
+    const response = await fetch(DENYLIST_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    return response.ok ? ((await response.json()) as unknown) : undefined;
+  },
+  load: async () => (await (await caches.open(SHELL_CACHE)).match(DENYLIST_URL))?.json() as Promise<unknown>,
+  save: async (value) => (await caches.open(SHELL_CACHE)).put(DENYLIST_URL, new Response(JSON.stringify(value))),
+});
+
 const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,
   network: __NETWORK__,
@@ -57,6 +70,7 @@ const host = new SiteHost({
   store: new BrowserStore(__VERIFIER__),
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
+  denied: __DENYLIST__ ? hostedDenied : undefined,
   log: (entry) => console.warn('dash-sites', entry),
 });
 

@@ -33,7 +33,7 @@ export async function resolveName(reader: PlatformReader, input: string): Promis
   if (!domain.value) return { status: 'unregistered', normalized: name.normalized, meta: domain.meta };
   if (domain.value.normalizedLabel !== name.normalized) throw new Error('DPNS answered with a different name');
   const ownerId = domain.value.ownerId;
-  const site = await reader.getSite(ownerId, domain.value.id);
+  const site = reader.noSiteContract ? { value: undefined, meta: domain.meta } : await reader.getSite(ownerId, domain.value.id);
   const base = {
     normalized: name.normalized,
     domain: domain.value,

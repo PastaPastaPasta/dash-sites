@@ -1,14 +1,12 @@
+import type { Denylist } from '@dash-sites/core';
+
+export { emptyDenylist, parseDenylist, type Denylist } from '@dash-sites/core';
+
 export interface GatewayDomain {
   /** Host without port, lowercase: `id.dashhq.org`. */
   host: string;
   /** Origin of the bare domain as browsers reach it: `https://id.dashhq.org`. */
   origin: string;
-}
-
-export interface Denylist {
-  names: Set<string>;
-  owners: Set<string>;
-  content: Set<string>;
 }
 
 export interface GatewayConfig {
@@ -19,6 +17,11 @@ export interface GatewayConfig {
   extensionUrl: string;
   abuseContact: string;
   network: string;
+  /** The network has a dash-sites contract; without one, names resolve and no site exists yet. */
+  sitesLive: boolean;
+  /** The same service on the other network, e.g. `{ network: 'testnet', url: 'https://id.dashhq.org' }`. */
+  peer?: { network: string; url: string };
+  /** Replaced in place when the operator's denylist file changes. */
   denylist: Denylist;
   /** Largest site, in decoded bytes, this gateway serves. */
   maxSiteBytes: number;
@@ -42,24 +45,4 @@ export function siteOrigin(domain: GatewayDomain, label: string): string {
   const url = new URL(domain.origin);
   url.hostname = `${label}.${url.hostname}`;
   return url.origin;
-}
-
-export function emptyDenylist(): Denylist {
-  return { names: new Set(), owners: new Set(), content: new Set() };
-}
-
-/** One entry per line: `name alice`, `owner <identity id>`, `content <content URI>`. `#` starts a comment. */
-export function parseDenylist(text: string): Denylist {
-  const list = emptyDenylist();
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/#.*/, '').trim();
-    if (!line) continue;
-    const [kind, value] = line.split(/\s+/, 2);
-    if (!value) throw new Error(`denylist: missing value in "${raw}"`);
-    if (kind === 'name') list.names.add(value.toLowerCase().replace(/\.dash$/, ''));
-    else if (kind === 'owner') list.owners.add(value);
-    else if (kind === 'content') list.content.add(value);
-    else throw new Error(`denylist: unknown kind "${kind}"`);
-  }
-  return list;
 }

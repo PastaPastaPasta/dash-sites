@@ -4,15 +4,17 @@ import {
   ContentError,
   dashHeaders,
   decide,
+  DENIED_TITLE,
+  deniedDetail,
   describeResolution,
   escapeHtml,
   HOST_API,
+  isDenied,
   loadManifest,
   ManifestError,
   matchHost,
   messagePage,
   nameFromPath,
-  normalizeLabel,
   readFile,
   resolveName,
   sha256Hex,
@@ -101,7 +103,6 @@ export function createGateway(options: GatewayOptions): RequestListener {
   const log = options.log ?? (() => {});
   const hosts = config.domains.map((domain) => domain.host);
   const domainByHost = new Map(config.domains.map((domain) => [domain.host, domain]));
-  const deniedNames = new Set([...config.denylist.names].map(normalizeLabel));
   const limiter = new RateLimiter(config.rateLimitPerMinute, now);
   const limits = { maxSiteBytes: config.maxSiteBytes, maxFiles: config.maxFiles };
 
@@ -187,14 +188,13 @@ export function createGateway(options: GatewayOptions): RequestListener {
   async function site(req: IncomingMessage, url: URL, domain: GatewayDomain, label: string, normalized: string): Promise<Reply> {
     const dashName = `${escapeHtml(label)}.dash`;
     if (url.pathname.startsWith('/.well-known/acme-challenge/')) return { status: 404, headers: { 'Content-Type': 'text/plain' }, body: 'not found\n' };
-    const denied = () => html(451, messagePage('451', 'Unavailable on this gateway', `The operator of this gateway does not serve <code>${dashName}</code>. The site itself is on Dash Platform and other gateways may serve it.`, config), domain);
-    if (deniedNames.has(normalized)) return denied();
+    const denied = () => html(451, messagePage('451', DENIED_TITLE, deniedDetail(dashName), config), domain);
+    if (config.denylist.names.has(normalized)) return denied();
 
     const cached = await resolutions.get(normalized);
     const resolution = cached.value;
-    const blocked =
-      'ownerId' in resolution && (config.denylist.owners.has(resolution.ownerId) || ('site' in resolution && config.denylist.content.has(resolution.site.content)));
-    if (url.pathname.startsWith(HOST_API) && !blocked) {
+    if (isDenied(config.denylist, resolution)) return denied();
+    if (url.pathname.startsWith(HOST_API)) {
       const path = url.pathname.slice(HOST_API.length);
       if (path === 'site.json') return json(200, { ...describe(resolution, domain), servedBy: 'gateway' }, domain);
       if (path.startsWith('resolve/')) return lookup(path.slice('resolve/'.length), domain);
@@ -207,11 +207,9 @@ export function createGateway(options: GatewayOptions): RequestListener {
     if (label !== resolution.canonicalLabel) {
       return { status: 308, headers: { ...baseHeaders(domain), Location: `${siteOrigin(domain, resolution.canonicalLabel)}${url.pathname}${url.search}`, 'Cache-Control': 'public, max-age=300' } };
     }
-    if (config.denylist.owners.has(resolution.ownerId)) return denied();
     if (resolution.status === 'no-site') {
       return html(404, messagePage('No site', `${dashName} has no site yet`, `The name is registered, and its owner has not published a site. If it is yours, <a href="${escapeHtml(config.builderUrl)}">publish one</a>.`, config), domain);
     }
-    if (config.denylist.content.has(resolution.site.content)) return denied();
     const unsupported = () => html(502, messagePage('Unsupported', `${dashName} cannot be served here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this gateway does not serve.`, config), domain);
     if (resolution.status === 'unsupported' || resolution.content.scheme !== 'dash-manifest') return unsupported();
 

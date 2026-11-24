@@ -30,6 +30,7 @@ function config(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
     extensionUrl: 'https://ext.example/',
     abuseContact: 'abuse@example.org',
     network: 'testnet',
+    sitesLive: true,
     denylist: emptyDenylist(),
     maxSiteBytes: 1024 * 1024,
     maxFiles: 100,
@@ -45,6 +46,7 @@ class Harness {
   clock = 1_000_000;
   reads = 0;
   failReads = false;
+  config = config();
   private server?: Server;
   private port = 0;
 
@@ -60,7 +62,8 @@ class Harness {
       getSite: (owner, domain) => inner.getSite(owner, domain),
       getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
     };
-    this.server = createServer(createGateway({ reader, config: config(overrides), now: () => this.clock }));
+    this.config = config(overrides);
+    this.server = createServer(createGateway({ reader, config: this.config, now: () => this.clock }));
     await new Promise<void>((resolve) => this.server?.listen(0, '127.0.0.1', resolve));
     this.port = (this.server.address() as AddressInfo).port;
     return this;
@@ -220,6 +223,74 @@ describe('gateway', () => {
 
     const worker = await h.get('alice.id.example.org', '/sw.js', { 'service-worker': 'script', cookie: '__Host-dash-epoch=seller-id.1' });
     expect(worker.headers['clear-site-data']).toBe('"cache", "storage"');
+  });
+});
+
+describe('gateway denylist', () => {
+  const h = new Harness();
+  let contentUri = '';
+
+  beforeAll(async () => {
+    h.platform.registerName('alice', 'alice-id');
+    h.platform.registerName('bob', 'bob-id');
+    h.platform.registerName('carol', 'carol-id');
+    h.platform.registerName('dave', 'carol-id');
+    const bundle = buildSite(SITE);
+    contentUri = bundle.contentUri;
+    await publishSite(h.platform.as('alice-id'), 'alice', bundle);
+    await publishSite(h.platform.as('bob-id'), 'bob', buildSite([{ path: '/index.html', bytes: text('bob') }]));
+    await publishSite(h.platform.as('carol-id'), 'carol', buildSite([{ path: '/index.html', bytes: text('carol') }]));
+    await h.start();
+  });
+  afterAll(() => h.stop());
+
+  const status = async (host: string, path = '/') => (await h.get(host, path)).status;
+
+  it('refuses a name, an owner or a content on pages and on the host API', async () => {
+    h.config.denylist = parseDenylist(`name bob\nowner carol-id\ncontent ${contentUri}\n`);
+    for (const host of ['alice.id.example.org', 'bob.id.example.org', 'carol.id.example.org', 'dave.id.example.org']) {
+      const page = await h.get(host, '/');
+      expect(page.status).toBe(451);
+      expect(page.body.toString()).toContain('Unavailable on this gateway');
+      expect(await status(host, '/.well-known/dash/site.json')).toBe(451);
+      expect(await status(host, '/.well-known/dash/manifest.json')).toBe(451);
+    }
+    expect(await status('B0B.id.example.org')).toBe(451);
+  });
+
+  it('follows a denylist replaced while running, as a reload does', async () => {
+    h.config.denylist = emptyDenylist();
+    expect(await status('bob.id.example.org')).toBe(200);
+    h.config.denylist = parseDenylist('name bob.dash\n');
+    expect(await status('bob.id.example.org')).toBe(451);
+    expect(await status('alice.id.example.org')).toBe(200);
+    h.config.denylist = emptyDenylist();
+    expect(await status('bob.id.example.org')).toBe(200);
+  });
+});
+
+describe('gateway landing', () => {
+  it('says publishing has not opened on a network without a contract, and links the peer gateway', async () => {
+    const h = await new Harness().start({ network: 'mainnet', sitesLive: false, peer: { network: 'testnet', url: 'https://id.dashhq.org' } });
+    try {
+      const page = (await h.get('id.example.org', '/')).body.toString();
+      expect(page).toContain('Dash Sites · mainnet');
+      expect(page).toContain('Publishing on mainnet has not opened yet');
+      expect(page).toContain('<a href="https://id.dashhq.org">testnet: id.dashhq.org</a>');
+    } finally {
+      await h.stop();
+    }
+  });
+
+  it('shows neither notice nor peer when the network is live and has no peer', async () => {
+    const h = await new Harness().start();
+    try {
+      const page = (await h.get('id.example.org', '/')).body.toString();
+      expect(page).not.toContain('has not opened yet');
+      expect(page).not.toContain('id.dashhq.org');
+    } finally {
+      await h.stop();
+    }
   });
 });
 

@@ -20,6 +20,17 @@ https://__DOMAIN__ {
 # Platform and verifies it; this server holds no site content on that path.
 https://*.__DOMAIN__ {
 	import dash_sites_tls
+
+	# The operator's denylist, written by dash-sites-deny. Only a hosted shell build reads it,
+	# and it stays readable on refused hosts so an installed worker learns of the refusal.
+	handle /.well-known/dash-gateway/denylist.json {
+		root * /etc/dash-sites/public
+		rewrite * /denylist.json
+		header Cache-Control "no-cache"
+		header Access-Control-Allow-Origin *
+		file_server
+	}
+
 	import /etc/dash-sites/denied.caddy
 
 	# Hosts that are not names (RESERVED_LABELS) never get the shell.
