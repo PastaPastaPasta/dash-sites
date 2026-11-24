@@ -22,21 +22,16 @@ const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 const verifier = (await build({ ...common, entryPoints: [join(root, 'src', 'verifier.ts')], write: false })).outputFiles[0].contents;
 const verifierName = `dash-sites-verifier-${sha256(verifier).slice(0, 16)}.js`;
 writeFileSync(join(out, verifierName), verifier);
-await build({
-  ...common,
-  entryPoints: { sw: join(root, 'src', 'sw.ts') },
-  outdir: out,
-  define: {
-    __NETWORK__: JSON.stringify(network),
-    __CONTRACT_ID__: JSON.stringify(process.env.CONTRACT_ID ?? ''),
-    __BUILDER_URL__: JSON.stringify(builderUrl),
-    __VERIFIER__: JSON.stringify(`/${verifierName}`),
-    __VERIFIER_SHA256__: JSON.stringify(sha256(verifier)),
-    __DENYLIST__: JSON.stringify(hosted),
-  },
-});
+// On a static deployment every name's worker fetches the verifier from the bare domain, so the
+// browser downloads it once for all names (they are one site for the HTTP cache).
+const verifierUrl = gatewayDomain ? `https://${gatewayDomain}/${verifierName}` : `/${verifierName}`;
 copyFileSync(join(root, 'src', 'denied-sw.js'), join(out, 'denied-sw.js'));
-const boot = await build({ ...common, entryPoints: [join(root, 'src', 'boot.ts')], write: false, define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain) } });
+const boot = await build({
+  ...common,
+  entryPoints: [join(root, 'src', 'boot.ts')],
+  write: false,
+  define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER__: JSON.stringify(verifierUrl) },
+});
 const { DENIED_TITLE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, readerConfig } = await import('@dash-sites/core');
 if (hosted) writeFileSync(join(out, 'unavailable.html'), messagePage('451', DENIED_TITLE, deniedDetail('this name'), { builderUrl }));
 const script = boot.outputFiles[0].text.trim();
@@ -64,6 +59,21 @@ const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
   .replaceAll('__NETWORK__', network)
   .replaceAll('__SOURCE_URL__', sourceUrl);
 writeFileSync(join(out, 'index.html'), html);
+await build({
+  ...common,
+  entryPoints: { sw: join(root, 'src', 'sw.ts') },
+  outdir: out,
+  define: {
+    __NETWORK__: JSON.stringify(network),
+    __CONTRACT_ID__: JSON.stringify(process.env.CONTRACT_ID ?? ''),
+    __BUILDER_URL__: JSON.stringify(builderUrl),
+    __VERIFIER__: JSON.stringify(verifierUrl),
+    __VERIFIER_SHA256__: JSON.stringify(sha256(verifier)),
+    __VERIFIER_SIZE__: String(verifier.length),
+    __DENYLIST__: JSON.stringify(hosted),
+    __BOOT_PAGE__: JSON.stringify(html),
+  },
+});
 if (gatewayDomain) {
   writeFileSync(
     join(out, '_headers'),
@@ -75,6 +85,7 @@ if (gatewayDomain) {
 /dash-sites-verifier-*
   ! Cache-Control
   Cache-Control: public, max-age=31536000, immutable
+  Access-Control-Allow-Origin: *
 `,
   );
 }

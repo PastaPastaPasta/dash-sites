@@ -110,7 +110,7 @@ fetch('${RESET_PATH}?done=${nonce}',{cache:'no-store'}).then(back,back);
  */
 export class SiteHost {
   private readonly now: () => number;
-  private proved?: { resolution: Resolution; at: number };
+  private answer?: { resolution: Resolution; at: number };
   private saved?: Saved;
   private refreshing?: Promise<Resolution>;
   private resetNonce?: string;
@@ -120,6 +120,16 @@ export class SiteHost {
     this.now = options.now ?? Date.now;
   }
 
+  /** Whether Platform has answered since this host started. */
+  get proved(): boolean {
+    return this.answer !== undefined;
+  }
+
+  /** Starts the first check, or joins the one under way. */
+  prove(): Promise<Resolution> {
+    return this.refresh();
+  }
+
   /**
    * The site to serve now. A new worker serves nothing until Platform has answered: a site kept
    * from an earlier run could be a previous owner's, and running its code would let it tamper
@@ -127,12 +137,12 @@ export class SiteHost {
    * seconds and then refreshed without making the page wait.
    */
   private async current(request: HostRequest): Promise<Resolution> {
-    if (!this.proved) return this.refresh();
-    if (this.now() - this.proved.at >= FRESH_MS) {
+    if (!this.answer) return this.refresh();
+    if (this.now() - this.answer.at >= FRESH_MS) {
       const work = this.refresh().catch((error: unknown) => this.options.log?.({ event: 'refresh-failed', error: String(error) }));
       request.waitUntil?.(work);
     }
-    return this.proved.resolution;
+    return this.answer.resolution;
   }
 
   private refresh(): Promise<Resolution> {
@@ -144,7 +154,7 @@ export class SiteHost {
 
   private async check(): Promise<Resolution> {
     const resolution = await resolveName(await this.options.reader(), this.options.label);
-    const before = this.proved?.resolution;
+    const before = this.answer?.resolution;
     if (before && 'meta' in resolution && 'meta' in before && resolution.meta.height < before.meta.height) return before;
     if (!before) this.saved = parseSaved(await this.options.store.loadState().catch(() => undefined));
     const epoch = epochOf(resolution);
@@ -155,7 +165,7 @@ export class SiteHost {
       this.saved = { epoch, resetPending: true };
       await this.options.store.saveState(this.saved).catch(() => undefined);
     }
-    this.proved = { resolution, at: this.now() };
+    this.answer = { resolution, at: this.now() };
     if (ownerChanged && before) this.options.onOwnerChange?.();
     return resolution;
   }

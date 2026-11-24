@@ -11,6 +11,7 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { base58 } from '@scure/base';
 import { concat, fromHex, sha256, toHex } from './bytes.js';
 import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
+import { KNOWN_CONTRACTS } from './known-contracts.js';
 import { CHUNK_FIELD_SIZE, CHUNK_SIZE } from './limits.js';
 import { DASH_TLD, isValidLabel, normalizeLabel } from './names.js';
 import type { DomainRecord, PlatformReader, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
@@ -67,6 +68,35 @@ export interface ConnectOptions {
   /** DAPI addresses to use instead of the network's own list. */
   addresses?: string[];
   timeoutMs?: number;
+  /** Fetch every contract from the network instead of starting from the bundled snapshots. */
+  fetchContracts?: boolean;
+}
+
+export const knownContract = (bytes: string): DataContract => DataContract.fromBase64(bytes, false, PROTOCOL_VERSION);
+
+/**
+ * Seeds the SDK with the bundled DPNS and dash-sites contracts, so the first queries need no contract
+ * fetch, then checks in the background that they are still the network's current versions and
+ * replaces any that are not.
+ */
+async function seedContracts(sdk: EvoSDK, config: NetworkConfig): Promise<void> {
+  const known = Object.entries(KNOWN_CONTRACTS[config.network] ?? {});
+  for (const [, { bytes }] of known) {
+    try {
+      await sdk.contracts.addKnown(knownContract(bytes));
+    } catch {
+      // Unusable snapshot: queries fetch the contract as before.
+    }
+  }
+  if (known.length === 0) return;
+  void (async () => {
+    const latest = await sdk.contracts.getLatestVersions({ contractIds: known.map(([id]) => id) });
+    const stale = known.filter(([id, { version }]) => latest.get(id) !== undefined && latest.get(id)?.version !== version).map(([id]) => id);
+    if (stale.length === 0) return;
+    for (const entry of (await sdk.contracts.getLatestVersions({ contractIds: stale, includeContracts: true })).values()) {
+      if (entry?.dataContract) await sdk.contracts.addKnown(entry.dataContract);
+    }
+  })().catch(() => undefined);
 }
 
 export async function connectSdk(config: NetworkConfig, options: ConnectOptions = {}): Promise<EvoSDK> {
@@ -77,6 +107,7 @@ export async function connectSdk(config: NetworkConfig, options: ConnectOptions 
     settings: { connectTimeoutMs: 10000, timeoutMs: options.timeoutMs ?? 30000, retries: 4 },
   });
   await sdk.connect();
+  if (!options.fetchContracts) await seedContracts(sdk, config);
   return sdk;
 }
 

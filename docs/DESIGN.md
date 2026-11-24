@@ -345,7 +345,13 @@ three files, whatever the name: a bootstrap page, a small service worker, and
 the verifier (the Dash SDK, about 9 MB compressed, cached as immutable). The
 worker fetches the verifier itself, checks it against a SHA-256 built into
 the worker, and keeps it in Cache Storage; browsers will not store a worker
-script that large for a private window. The server holds no site content and makes no Platform
+script that large for a private window. On a static deployment (`GATEWAY_DOMAIN`)
+every name's worker fetches the verifier from the bare domain
+(`https://dash.site/dash-sites-verifier-<hash>.js`, CORS-enabled), so the
+browser downloads it once for every name: until the domain is on the PSL all
+names are one site, which is how browsers partition their HTTP cache. The
+landing page starts that download when someone focuses its name box, and the
+worker reports download progress to the bootstrap page. The server holds no site content and makes no Platform
 queries for browsers.
 
 - **First visit**: the bootstrap page registers the service worker for that
@@ -369,7 +375,14 @@ queries for browsers.
   site code shares the origin and could have rewritten it, and showing a
   remembered site would run that code before the check (§6). The cost is one
   proof query (about a second) on the first page load after the browser has
-  stopped the worker, and no offline viewing.
+  stopped the worker, and no offline viewing. Until that answer arrives, a
+  page load gets the bootstrap page, built into the worker, which shows
+  progress and loads the site once the name is proved.
+- **Contracts**: the readers start from snapshots of the DPNS and dash-sites
+  contracts bundled in the verifier (`scripts/snapshot-contracts.mjs`), so
+  proving a name needs two queries, not four. A background query checks that
+  the snapshots are still the contracts' current versions and replaces any
+  that are not.
 - **Serving**: GET/HEAD only. `/` → `/index.html`; `/dir/` →
   `/dir/index.html`; `/page` → `/page.html` when present; missing → the site's
   `/404.html` with status 404; `spa` fallback; single byte ranges. Content
