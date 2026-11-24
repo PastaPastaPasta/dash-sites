@@ -117,8 +117,8 @@ function graceMs(): number {
 
 /** What a prune plan deletes and roughly returns: a delete in the epoch of the store, and one a mainnet year later. */
 function describePlan(plan: PrunePlan): Record<string, unknown> {
-  if (plan.deferredUntil !== undefined) return { deferredUntil: new Date(plan.deferredUntil).toISOString(), reason: 'a site record changed within the grace period' };
   return {
+    ...(plan.deferredUntil !== undefined ? { deferredUntil: new Date(plan.deferredUntil).toISOString() } : {}),
     chunks: plan.remove.length,
     bytes: plan.bytes,
     kept: plan.kept,
@@ -179,7 +179,7 @@ const commands: Record<string, () => Promise<void>> = {
       uploaded: result.uploaded,
       reused: result.reused,
       spent: formatDash(result.creditsSpent),
-      ...(result.pruned ? { pruned: { deleted: result.pruned.deleted, ...describePlan(result.pruned) } } : {}),
+      ...(result.pruned ? { pruned: { deleted: result.pruned.deleted, failed: result.pruned.failed, skipped: result.pruned.skipped, ...describePlan(result.pruned) } } : {}),
     });
   },
 
@@ -200,10 +200,10 @@ const commands: Record<string, () => Promise<void>> = {
   async gc() {
     const writer = await EvoWriter.connectAs(network(), credentials());
     const plan = await planPrune(writer, { graceMs: graceMs() });
-    if (values['dry-run'] || plan.remove.length === 0) return print({ dryRun: values['dry-run'], ...describePlan(plan) });
+    if (values['dry-run']) return print({ dryRun: true, ...describePlan(plan) });
     const before = await writer.balance();
-    const deleted = await prune(writer, plan, (hash) => console.error(`deleted chunk ${hash}`));
-    print({ deleted, refunded: formatDash((await writer.balance()) - before) });
+    const result = await prune(writer, plan, (hash) => console.error(`deleted chunk ${hash}`));
+    print({ deleted: result.deleted, failed: result.failed, skipped: result.skipped, refunded: formatDash((await writer.balance()) - before) });
   },
 
   async register() {

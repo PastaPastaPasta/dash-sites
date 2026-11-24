@@ -23,7 +23,7 @@ export interface PublishResult {
   reused: number;
   creditsSpent: bigint;
   /** With `prune`: the chunks of releases before the one replaced, deleted after the record changed. */
-  pruned?: PrunePlan & { deleted: number };
+  pruned?: PruneResult;
 }
 
 const QUERY_BATCH = 100;
@@ -67,12 +67,19 @@ export async function publishSite(
     done += 1;
     onProgress({ step: 'upload', done, total: missing.length, hash });
   }
-  // Planned while the record still names the release being replaced, so that release is kept
-  // and only older ones go, once the record being replaced has been live for the grace period.
-  const plan = options.prune ? await planPrune(writer, { ...options.prune, keep: [...all, ...(options.prune.keep ?? [])] }) : undefined;
+  const replaced = options.prune ? (await writer.getSite(writer.identityId, domain.id)).value : undefined;
   onProgress({ step: 'record' });
   const site = await writer.putSite(domain, bundle.contentUri);
-  const pruned = plan ? { ...plan, deleted: await prune(writer, plan) } : undefined;
+  // The record is live whatever happens to the prune, so a prune that cannot run is reported, not thrown.
+  let pruned: PruneResult | undefined;
+  if (options.prune) {
+    try {
+      const plan = await planPrune(writer, { ...options.prune, keep: [...all, ...(options.prune.keep ?? [])], published: { site, replaced } });
+      pruned = await prune(writer, plan);
+    } catch (error) {
+      pruned = { remove: [], bytes: 0, kept: 0, sites: [], deleted: 0, failed: [], skipped: String((error as Error)?.message ?? error) };
+    }
+  }
   onProgress({ step: 'done' });
   return { site, uploaded: missing.length, reused: present.size, creditsSpent: before - (await writer.balance()), ...(pruned ? { pruned } : {}) };
 }
@@ -85,16 +92,33 @@ export async function publishPointer(writer: PlatformWriter, name: string, conte
 
 /**
  * How long a site record must have been live before the chunks it replaced are deleted. Readers
- * that resolved the name just before an update (a service worker reuses an answer for 30 seconds,
- * a gateway caches longer, a lagging node can prove an older record) still fetch the old chunks.
+ * that resolved the name just before an update still fetch them: a service worker reuses an answer
+ * for 30 seconds, a gateway serves a cached one for up to 24 hours when Platform is unreachable,
+ * and a lagging node can prove an older record.
  */
-export const DEFAULT_PRUNE_GRACE_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_PRUNE_GRACE_MS = 25 * 60 * 60 * 1000;
+
+/** How many times, 1.5 s apart, a listing is read again until it shows a write this process made. */
+const LIST_ATTEMPTS = 12;
+
+export class PruneError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PruneError';
+  }
+}
 
 export interface PruneOptions {
-  /** Chunks to keep besides those the identity's site records reference, e.g. a release about to be published. */
+  /** Chunks to keep besides those the identity's site records reference, e.g. a release being published. */
   keep?: Iterable<string>;
   graceMs?: number;
   now?: number;
+  /**
+   * A record this process just wrote, and the record it replaced. The listing is read until it
+   * shows the write, so it is not older than it; the replaced release is kept and its age, not the
+   * new record's, is what the grace period applies to.
+   */
+  published?: { site: SiteRecord; replaced?: SiteRecord };
 }
 
 export interface PrunePlan {
@@ -102,51 +126,114 @@ export interface PrunePlan {
   remove: Array<StoredChunk & { bytes: number }>;
   bytes: number;
   kept: number;
-  /** Set when nothing may be deleted yet: a site record changed less than the grace period before. */
+  /** The site records the plan was made from, as `id content`, so a delete can check nothing changed. */
+  sites: string[];
+  /** Set while a site record is younger than the grace period: the plan may be shown, not carried out. */
   deferredUntil?: number;
 }
 
+export interface PruneResult extends PrunePlan {
+  deleted: number;
+  /** Chunks whose delete failed, with the error. */
+  failed: string[];
+  /** Why nothing was deleted, when the plan could not be made or carried out. */
+  skipped?: string;
+}
+
+const snapshot = (sites: SiteRecord[]): string[] => sites.map((site) => `${site.id} ${site.content}`).sort();
+
+async function listSites(writer: PlatformWriter, published?: SiteRecord): Promise<SiteRecord[]> {
+  let sites = await writer.listSites();
+  for (let attempt = 1; published && attempt < LIST_ATTEMPTS && !sites.some((site) => site.id === published.id && site.content === published.content); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    sites = await writer.listSites();
+  }
+  if (published && !sites.some((site) => site.id === published.id && site.content === published.content)) {
+    throw new PruneError('the site listing does not show the record just written yet');
+  }
+  return sites;
+}
+
+async function referenced(writer: PlatformWriter, sites: Iterable<{ name?: string; id: string; content: string }>): Promise<Set<string>> {
+  const out = new Set<string>();
+  const source = (hashes: string[]) => writer.getChunks(writer.identityId, hashes);
+  for (const site of sites) {
+    const ref = parseContentUri(site.content);
+    if (ref?.scheme === 'ipfs') continue;
+    if (ref?.scheme !== 'dash-manifest') throw new PruneError(`site record ${site.id} has content this version cannot read (${site.content.slice(0, 40)}); nothing is deleted`);
+    let manifest;
+    try {
+      manifest = await loadManifest(ref, source);
+    } catch (error) {
+      throw new PruneError(`the manifest of site record ${site.id} cannot be read (${String((error as Error)?.message ?? error)}); nothing is deleted`);
+    }
+    for (const hash of referencedChunks(ref, manifest)) out.add(hash);
+  }
+  return out;
+}
+
 /**
- * Finds the chunks the identity can delete: its own chunks that no site record of the identity
+ * Lists the chunks the identity can delete: its own chunks that no site record of the identity
  * references (chunks are read by owner, so no other identity's site can use them). While any of
  * its records changed within the grace period, the chunks that record replaced cannot be told
- * apart from the rest, so nothing is deleted.
+ * apart from the rest, so the plan is marked deferred and `prune` refuses it. A record whose
+ * content cannot be read stops the plan, rather than letting its chunks count as unused.
  */
 export async function planPrune(writer: PlatformWriter, options: PruneOptions = {}): Promise<PrunePlan> {
   const graceMs = options.graceMs ?? DEFAULT_PRUNE_GRACE_MS;
   const now = options.now ?? Date.now();
-  const sites = await writer.listSites();
-  const newest = Math.max(0, ...sites.map((site) => site.updatedAt));
-  if (graceMs > 0 && newest > now - graceMs) return { remove: [], bytes: 0, kept: 0, deferredUntil: newest + graceMs };
+  const { published } = options;
+  const sites = await listSites(writer, published?.site);
+  const ages = sites.map((site) => (site.id === published?.site.id ? (published.replaced?.updatedAt ?? 0) : site.updatedAt));
+  const newest = Math.max(0, ...ages);
 
-  const keep = new Set<string>(options.keep);
-  const source = (hashes: string[]) => writer.getChunks(writer.identityId, hashes);
-  for (const site of sites) {
-    const ref = parseContentUri(site.content);
-    if (ref?.scheme !== 'dash-manifest') continue;
-    for (const hash of referencedChunks(ref, await loadManifest(ref, source))) keep.add(hash);
-  }
+  const keep = await referenced(writer, published?.replaced ? [...sites, published.replaced] : sites);
+  for (const hash of options.keep ?? []) keep.add(hash);
   const stored = await writer.listChunks();
   const unused = stored.filter((chunk) => !keep.has(chunk.hash));
   const sizes = new Map<string, number>();
   for (let i = 0; i < unused.length; i += QUERY_BATCH) {
-    for (const [hash, data] of await source(unused.slice(i, i + QUERY_BATCH).map((chunk) => chunk.hash))) sizes.set(hash, data.length);
+    for (const [hash, data] of await writer.getChunks(writer.identityId, unused.slice(i, i + QUERY_BATCH).map((chunk) => chunk.hash))) sizes.set(hash, data.length);
   }
   const remove = unused.map((chunk) => ({ ...chunk, bytes: sizes.get(chunk.hash) ?? 0 }));
-  return { remove, bytes: remove.reduce((sum, chunk) => sum + chunk.bytes, 0), kept: stored.length - remove.length };
+  return {
+    remove,
+    bytes: remove.reduce((sum, chunk) => sum + chunk.bytes, 0),
+    kept: stored.length - remove.length,
+    sites: snapshot(published?.replaced ? [...sites, published.replaced] : sites),
+    ...(graceMs > 0 && newest > now - graceMs ? { deferredUntil: newest + graceMs } : {}),
+  };
 }
 
-/** Deletes the chunks a plan lists, and returns how many were deleted. */
-export async function prune(writer: PlatformWriter, plan: PrunePlan, onDelete: (hash: string) => void = () => {}): Promise<number> {
+/**
+ * Deletes the chunks a plan lists. The site records are read again first, and nothing is deleted
+ * if they changed since the plan (another publish, or a first listing from a node behind the
+ * chain); a chunk a record references now is never deleted.
+ */
+export async function prune(writer: PlatformWriter, plan: PrunePlan, onDelete: (hash: string) => void = () => {}): Promise<PruneResult> {
+  const result = (deleted: number, failed: string[], skipped?: string): PruneResult => ({ ...plan, deleted, failed, ...(skipped ? { skipped } : {}) });
+  if (plan.deferredUntil !== undefined) return result(0, [], 'a site record changed within the grace period');
+  if (plan.remove.length === 0) return result(0, []);
+  const sites = await writer.listSites();
+  const now = snapshot(sites);
+  if (now.some((entry) => !plan.sites.includes(entry))) return result(0, [], 'the site records changed since the plan was made; plan again');
+  const keep = await referenced(writer, sites);
+  let deleted = 0;
+  const failed: string[] = [];
   for (const chunk of plan.remove) {
-    await writer.deleteChunk(chunk.id);
-    onDelete(chunk.hash);
+    if (keep.has(chunk.hash)) continue;
+    try {
+      await writer.deleteChunk(chunk.id);
+      onDelete(chunk.hash);
+      deleted += 1;
+    } catch (error) {
+      failed.push(`${chunk.hash}: ${String((error as Error)?.message ?? error)}`);
+    }
   }
-  return plan.remove.length;
+  return result(deleted, failed);
 }
 
 /** Deletes the chunks no site of this identity references, once every record is older than the grace period. */
-export async function collectGarbage(writer: PlatformWriter, options: PruneOptions & { onDelete?: (hash: string) => void } = {}): Promise<PrunePlan & { deleted: number }> {
-  const plan = await planPrune(writer, options);
-  return { ...plan, deleted: await prune(writer, plan, options.onDelete) };
+export async function collectGarbage(writer: PlatformWriter, options: PruneOptions & { onDelete?: (hash: string) => void } = {}): Promise<PruneResult> {
+  return prune(writer, await planPrune(writer, options), options.onDelete);
 }

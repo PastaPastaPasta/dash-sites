@@ -5,6 +5,8 @@ import {
   collectGarbage,
   DEFAULT_PRUNE_GRACE_MS,
   planPrune,
+  prune,
+  type PlatformWriter,
   refundCredits,
   ContentError,
   decide,
@@ -376,6 +378,87 @@ describe('resolve and publish', () => {
     for (const h of shared.chunks.keys()) expect((await bob.getChunks('bob-id', [h])).has(h)).toBe(true);
     expect((await collectGarbage(bob, { now })).deleted).toBe(shared.chunks.size);
     for (const h of shared.chunks.keys()) expect((await alice.getChunks('alice-id', [h])).has(h)).toBe(true);
+  });
+
+  const aged = () => {
+    const platform = setup();
+    let now = Date.now() + 1_000_000;
+    platform.now = () => now;
+    return { platform, alice: platform.as('alice-id'), later: () => (now += DEFAULT_PRUNE_GRACE_MS + 1000), now: () => now };
+  };
+
+  it('deletes nothing when the site listing it planned from was behind', async () => {
+    const { platform, alice, later, now } = aged();
+    const v1 = buildSite(SITE);
+    await publishSite(alice, 'alice', v1);
+    const stale = await alice.listSites();
+    const v2 = buildSite([{ path: '/index.html', bytes: text('v2') }]);
+    await publishSite(alice, 'alice', v2);
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('v3') }]));
+    later();
+    let calls = 0;
+    const lagging: PlatformWriter = { ...alice, listSites: async () => (calls++ === 0 ? stale : alice.listSites()) };
+    const result = await prune(lagging, await planPrune(lagging, { now: now() }));
+    expect(result.deleted).toBe(0);
+    expect(result.skipped).toMatch(/changed since the plan/);
+    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('ok');
+  });
+
+  it('refuses to plan over a record it cannot read, and still publishes', async () => {
+    const { platform, alice, later, now } = aged();
+    platform.registerName('alice2', 'alice-id');
+    await publishSite(alice, 'alice2', buildSite(SITE));
+    const site = [...platform.sites.values()].find((record) => record.ownerId === 'alice-id') as { content: string };
+    site.content = site.content.replace('dash-manifest:v1:', 'dash-manifest:v9:');
+    later();
+    await expect(planPrune(alice, { now: now() })).rejects.toThrow(/cannot read/);
+    const v1 = buildSite([{ path: '/index.html', bytes: text('one') }]);
+    const result = await publishSite(alice, 'alice', v1, undefined, { prune: { now: now() } });
+    expect(result.pruned?.skipped).toMatch(/cannot read/);
+    expect(result.pruned?.deleted).toBe(0);
+    const resolved = await resolveName(platform.as('anyone'), 'alice.dash');
+    expect(resolved.status === 'ok' && resolved.site.content).toBe(v1.contentUri);
+  });
+
+  it('skips ipfs records and keeps chunks a concurrent publish starts using', async () => {
+    const { platform, alice, later, now } = aged();
+    platform.registerName('alice2', 'alice-id');
+    platform.registerName('alice3', 'alice-id');
+    const old = buildSite(SITE);
+    await publishSite(alice, 'alice', old);
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('new') }]));
+    await alice.putSite((await alice.getDomain('a11ce3')).value!, 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
+    later();
+    const plan = await planPrune(alice, { now: now() });
+    expect(plan.remove.length).toBe(old.chunks.size);
+    await publishSite(alice, 'alice2', old);
+    const result = await prune(alice, plan);
+    expect(result.deleted).toBe(0);
+    for (const hash of old.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+  });
+
+  it('reports chunks whose delete fails and keeps the publish', async () => {
+    const { alice, later, now } = aged();
+    for (const n of [1, 2]) await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text(`v${n}`) }]));
+    later();
+    const failing: PlatformWriter = { ...alice, deleteChunk: async () => { throw new Error('node unavailable'); } };
+    const v3 = buildSite([{ path: '/index.html', bytes: text('v3') }]);
+    const result = await publishSite(failing, 'alice', v3, undefined, { prune: { now: now() } });
+    expect(result.site.content).toBe(v3.contentUri);
+    expect(result.pruned?.deleted).toBe(0);
+    expect(result.pruned?.failed.length).toBeGreaterThan(0);
+  });
+
+  it('lets a dry run list what a deferred plan would delete', async () => {
+    const { alice, now } = aged();
+    const v1 = buildSite(SITE);
+    await publishSite(alice, 'alice', v1);
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('new') }]));
+    const plan = await planPrune(alice, { now: now() });
+    expect(plan.deferredUntil).toBeDefined();
+    expect(plan.remove.length).toBe(v1.chunks.size);
+    expect((await prune(alice, plan)).deleted).toBe(0);
+    expect((await collectGarbage(alice, { now: now(), graceMs: 0 })).deleted).toBe(v1.chunks.size);
   });
 
   it('estimates refunds from the storage fee distribution table', () => {

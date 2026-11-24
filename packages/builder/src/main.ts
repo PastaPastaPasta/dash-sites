@@ -817,8 +817,10 @@ function start(): void {
   });
   $<HTMLButtonElement>('gc').addEventListener('click', (event) => {
     void manage(event.currentTarget as HTMLButtonElement, async (w) => {
-      const { deleted, deferredUntil } = await collectGarbage(w);
+      const { deleted, deferredUntil, skipped, failed } = await collectGarbage(w);
       if (deferredUntil !== undefined) return `Nothing deleted yet: a site changed recently, and visitors may still load its previous files. Try again after ${new Date(deferredUntil).toLocaleString()}.`;
+      if (skipped) return `Nothing deleted: ${skipped}.`;
+      if (failed.length > 0) return `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}; ${failed.length} could not be deleted. Try again later.`;
       return deleted === 0 ? 'Nothing to delete: every stored file is in use.' : `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}.`;
     });
   });
