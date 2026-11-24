@@ -1,0 +1,18 @@
+// dash.site/new and dash.site/publish: the builder and the publish page, an assets-only Worker of
+// their own. Only the bare dash.site host routes here, so no site's origin ever serves a page that
+// takes keys; these routes are more specific than dash-site's dash.site/*. Deploy with deploy.sh.
+{
+  "name": "dash-site-app",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "../../packages/builder/dist-site",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "routes": [
+    { "pattern": "dash.site/new*", "zone_name": "dash.site" },
+    { "pattern": "dash.site/publish*", "zone_name": "dash.site" }
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}

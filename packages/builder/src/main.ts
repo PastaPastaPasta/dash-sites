@@ -6,6 +6,7 @@ import {
   formatDash,
   isValidLabel,
   networkConfig,
+  normalizeLabel,
   parseName,
   publishSite,
   requireOwnedName,
@@ -21,6 +22,7 @@ import { EMPTY_DRAFT, isBlank, renderPage, THEMES, type PageDraft, type Theme } 
 
 declare const __GATEWAY_DOMAIN__: string;
 declare const __NETWORK__: string;
+declare const __REMEMBER_WALLET__: boolean;
 
 const GATEWAY = __GATEWAY_DOMAIN__;
 const NETWORK = __NETWORK__ as Network;
@@ -50,6 +52,7 @@ const draft: PageDraft = loadDraft();
 let upload: SiteFile[] = [];
 let bundle: SiteBundle | undefined;
 let publishing = false;
+let wantedName: string | undefined;
 
 function loadDraft(): PageDraft {
   try {
@@ -193,7 +196,10 @@ async function enter(connected: EvoWriter, attempt: number): Promise<void> {
   renderNames();
   refresh();
   await refreshBalance().catch(() => {});
-  if (attempt === session && !chosen && names.length === 1) await choose(names[0] as DomainRecord).catch(() => {});
+  const wanted = names.find((domain) => normalizeLabel(domain.label) === wantedName);
+  if (wanted) $<HTMLInputElement>('new-label').value = '';
+  const preferred = wanted ?? (names.length === 1 ? names[0] : undefined);
+  if (attempt === session && !chosen && preferred) await choose(preferred).catch(() => {});
 }
 
 async function signIn(identity: string, key: string): Promise<void> {
@@ -341,8 +347,10 @@ async function signInWithWallet(): Promise<void> {
       const connected = await evo.EvoWriter.on(sdk, config, { identityId: grant.identityId, privateKey: grant.privateKey });
       if (attempt !== session) return;
       if (expiring(connected)) throw new Error('The key your wallet approved has run out. Start again.');
-      saveSession(storage('sessionStorage'), NETWORK, { identityId: grant.identityId, privateKey: grant.privateKey });
-      saved = true;
+      if (__REMEMBER_WALLET__) {
+        saveSession(storage('sessionStorage'), NETWORK, { identityId: grant.identityId, privateKey: grant.privateKey });
+        saved = true;
+      }
       await enter(connected, attempt);
       if (attempt === session) cancelWallet();
     } finally {
@@ -566,7 +574,6 @@ async function publish(): Promise<void> {
     const link = $<HTMLAnchorElement>('result-link');
     link.href = url;
     link.textContent = `${published}.${GATEWAY}`;
-    $('result-dash').textContent = `${published}.dash`;
     $('result').hidden = false;
     if (label() === published) $('site-status').textContent = `${published}.dash has a site (revision ${result.site.revision}). Publishing again replaces it.`;
   } catch (caught) {
@@ -597,6 +604,23 @@ async function manage(button: HTMLButtonElement, action: (writer: EvoWriter, dom
     status.textContent = message(caught);
   } finally {
     button.disabled = false;
+  }
+}
+
+/** Another page can send a visitor here as `#signin=wallet|key&name=alice`. */
+function takeHandoff(): void {
+  const wanted = new URLSearchParams(location.hash.slice(1));
+  const how = wanted.get('signin');
+  if (!how && !wanted.has('name')) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  wantedName = parseName(wanted.get('name') ?? '')?.normalized;
+  const typed = parseName(wanted.get('name') ?? '')?.label;
+  if (typed) $<HTMLInputElement>('new-label').value = typed;
+  if (how === 'key') {
+    $<HTMLDetailsElement>('key-signin').open = true;
+    $('identity').focus();
+  } else if (how === 'wallet') {
+    void signInWithWallet();
   }
 }
 
@@ -723,9 +747,11 @@ function start(): void {
   });
 
   refresh();
-  void resumeWallet();
+  if (__REMEMBER_WALLET__) void resumeWallet();
+  takeHandoff();
   const idle = (window as { requestIdleCallback?: (fn: () => void) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
   idle(() => void Promise.all([loadEvo(), loadConnect()]).catch(() => {}));
 }
 
-start();
+if (location.protocol === 'http:' && location.hostname === GATEWAY) location.replace(`https:${location.href.slice(5)}`);
+else start();

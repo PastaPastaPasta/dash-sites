@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b && npm run bundle -w @dash-sites/gateway && npm run bundle -w @dash-sites/cli && node packages/extension/build.mjs && node packages/builder/build.mjs && node packages/shell/build.mjs && node packages/showcase/build.mjs",
+    "build": "tsc -b && npm run bundle -w @dash-sites/gateway && npm run bundle -w @dash-sites/cli && node packages/extension/build.mjs && node packages/builder/build.mjs && SITE=1 NETWORK=mainnet GATEWAY_DOMAIN=dash.site node packages/builder/build.mjs && node packages/shell/build.mjs && node packages/showcase/build.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "lint": "eslint .",

@@ -16,3 +16,5 @@ dist-types/
 *.crx
 *.pem
 bundle/
+packages/builder/dist-site/
+.wrangler/

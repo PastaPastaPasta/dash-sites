@@ -47,7 +47,7 @@ function landingHtml() {
 <p><code>alice.dash</code> is at <code>alice.${domain}</code>. These pages are static files with no server behind them. Your browser reads the name, its site record and its files from Dash Platform, checks the proofs and every file's hash, and shows the site.</p>
 <form id="go"><input name="name" placeholder="alice.dash" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="DPNS name"><button>Open</button></form>
 ${live ? '' : `<p>Publishing on ${escapeHtml(network)} has not opened yet. Names already resolve here, and a name's site appears as soon as its owner publishes one.</p>`}
-<p><a href="${escapeHtml(builderUrl)}">Publish a site</a> · <a href="${escapeHtml(process.env.EXTENSION_URL ?? `${sourceUrl}/releases/latest`)}">Browser extension</a>${peer}</p>
+<p><a href="${escapeHtml(builderUrl)}">Make a site</a>${process.env.PUBLISH_URL ? ` · <a href="${escapeHtml(process.env.PUBLISH_URL)}">Publish your own</a>` : ''}${peer}</p>
 <footer>This gateway does not author or review these sites. Report abuse: ${escapeHtml(process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`)}.</footer>`;
 }
 const csp = `default-src 'none'; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'; style-src 'unsafe-inline'; connect-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'`;
