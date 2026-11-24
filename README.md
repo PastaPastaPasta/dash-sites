@@ -14,7 +14,7 @@ Platform; there is no web host.
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
-Sites are published on **testnet** today; the testnet data contract is
+The testnet data contract is
 `3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. The mainnet contract is
 `5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, and `dash.site` is the mainnet
 gateway (`alice.dash.site`): static files on a Cloudflare Worker with no
@@ -62,6 +62,9 @@ npm run serve -w @dash-sites/shell     # http://<name>.localhost:8080/
 and set the extension's gateway to `http://localhost:8080`.
 
 ## Publish a site
+
+The hosted builder publishes on testnet. To publish on mainnet, use the CLI
+below with `--network mainnet`.
 
 **In the browser**: open the [builder](https://dash-sites.thepasta.org/) and
 choose **Sign in with DashPay**. Scan the code with the DashPay app (More,

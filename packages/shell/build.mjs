@@ -74,7 +74,7 @@ if (gatewayDomain) {
   Cache-Control: no-cache, no-transform
 /dash-sites-verifier-*
   ! Cache-Control
-  Cache-Control: public, max-age=31536000, immutable, no-transform
+  Cache-Control: public, max-age=31536000, immutable
 `,
   );
 }
