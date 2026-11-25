@@ -637,9 +637,17 @@ queries for browsers.
   this. The worker loads the client only for a site that lists an IPFS place,
   so a site without one never runs it. Each name is its own origin with its
   own worker, so other names are out of reach. And the client is pinned by
-  hash, so it changes only when the shell does. The alternative is a shell
-  that fetches HTTPS places only and leaves `ipfs://` places to a later
-  version; a site would then need an HTTPS place for every file.
+  hash, so it changes only when the shell does.
+
+  The shell keeps the client all the same. What it returns is never trusted,
+  so the risk left is code execution from data inside a JavaScript library.
+  The worker already takes that kind of risk with the Platform SDK, and
+  handles it the same way: an exact version, pinned by hash. The pinned build
+  has no `eval` and builds no code from what it downloads. Leaving IPFS out
+  would also mean changing the shell for the first site that wants an IPFS
+  place, and until then every file kept outside would depend on one HTTPS
+  host staying up. An owner who wants none of this lists HTTPS places only,
+  and the client is never loaded for that site.
 - **Origin isolation**: one site per subdomain, so `localStorage`, IndexedDB,
   and permissions are per name. The canonical-host redirect keeps a name from
   having several origins.
