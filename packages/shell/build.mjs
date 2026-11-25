@@ -20,6 +20,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 const common = { bundle: true, format: 'iife', target: 'es2022', minify: true, legalComments: 'none', logLevel: 'warning' };
+const onlyNetwork = { __ONLY_NETWORK__: JSON.stringify(network) };
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
 /** Exactly one match of `pattern` in `text`, or the build stops: the SDK bundle changed shape. */
@@ -62,7 +63,7 @@ const verifier = (
     entryPoints: [join(root, 'src', 'verifier.ts')],
     write: false,
     plugins: [sdkPlugin],
-    define: { __BROTLI_DECODER__: JSON.stringify(decoderWasm.toString('base64')) },
+    define: { ...onlyNetwork, __BROTLI_DECODER__: JSON.stringify(decoderWasm.toString('base64')) },
   })
 ).outputFiles[0].contents;
 if (!sdkWasm) throw new Error('evo-sdk: the verifier build did not load the SDK bundle');
@@ -103,9 +104,9 @@ const boot = await build({
   ...common,
   entryPoints: [join(root, 'src', 'boot.ts')],
   write: false,
-  define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER_FILES__: JSON.stringify([verifierUrl, sdkUrl]) },
+  define: { ...onlyNetwork, __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER_FILES__: JSON.stringify([verifierUrl, sdkUrl]) },
 });
-const { DENIED_TITLE, FORMATS, IPFS_MODULE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, moduleUrls, readerConfig } = await import('@dash-sites/core');
+const { DENIED_TITLE, DEPLOYMENTS, FORMATS, IPFS_MODULE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, moduleUrls, readerConfig } = await import('@dash-sites/core');
 const abuseContact = process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`;
 const abuseHref = /^(https?|mailto):/i.test(abuseContact) ? abuseContact : /^[^\s@/]+@[^\s@/]+$/.test(abuseContact) ? `mailto:${abuseContact}` : '';
 const reportAbuse = abuseHref ? `<a href="${escapeHtml(abuseHref)}">Report abuse</a>` : `Report abuse: ${escapeHtml(abuseContact)}`;
@@ -145,6 +146,7 @@ await build({
   entryPoints: { sw: join(root, 'src', 'sw.ts') },
   outdir: out,
   define: {
+    ...onlyNetwork,
     __NETWORK__: JSON.stringify(network),
     __CONTRACT_ID__: JSON.stringify(process.env.CONTRACT_ID ?? ''),
     __BUILDER_URL__: JSON.stringify(builderUrl),
@@ -156,6 +158,11 @@ await build({
     __IPFS_ROUTERS__: JSON.stringify((process.env.IPFS_ROUTERS ?? '').split(/[\s,]+/).filter(Boolean)),
   },
 });
+const foreign = Object.values(DEPLOYMENTS).filter((d) => d.network !== network).map((d) => d.contractId);
+for (const file of ['sw.js', verifierName]) {
+  const text = readFileSync(join(out, file), 'utf8');
+  if (foreign.some((id) => text.includes(id))) throw new Error(`shell: ${file} carries another network's contract id`);
+}
 if (gatewayDomain) {
   writeFileSync(
     join(out, '_headers'),

@@ -690,7 +690,7 @@ function start(): void {
     cancelWallet();
   });
   $('wallet-origin').textContent = location.host;
-  $('wallet-testnet').hidden = NETWORK !== 'testnet';
+  if (__NETWORK__ === 'testnet') $('wallet-testnet').hidden = false;
 
   $<HTMLFormElement>('register').addEventListener('submit', (event) => {
     event.preventDefault();

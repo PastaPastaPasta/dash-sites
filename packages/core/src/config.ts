@@ -8,10 +8,17 @@ export interface NetworkConfig {
   contractId: string;
 }
 
+/** Set by a bundle built for one network, so that it carries nothing of the others. */
+declare const __ONLY_NETWORK__: Network | undefined;
+
 /** Where the dash-sites contract is registered. */
 export const DEPLOYMENTS: Partial<Record<Network, NetworkConfig>> = {
-  testnet: { network: 'testnet', contractId: 'CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT' },
-  mainnet: { network: 'mainnet', contractId: 'GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3' },
+  ...((typeof __ONLY_NETWORK__ === 'undefined' || __ONLY_NETWORK__ === 'testnet') && {
+    testnet: { network: 'testnet', contractId: 'CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT' },
+  }),
+  ...((typeof __ONLY_NETWORK__ === 'undefined' || __ONLY_NETWORK__ === 'mainnet') && {
+    mainnet: { network: 'mainnet', contractId: 'GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3' },
+  }),
 };
 
 /**

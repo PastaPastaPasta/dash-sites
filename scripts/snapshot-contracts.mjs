@@ -28,7 +28,14 @@ export interface KnownContract {
   bytes: string;
 }
 
-export const KNOWN_CONTRACTS: Partial<Record<Network, Record<string, KnownContract>>> = ${JSON.stringify(out, null, 2)};
+/** Set by a bundle built for one network, so that it carries nothing of the others. */
+declare const __ONLY_NETWORK__: Network | undefined;
+
+export const KNOWN_CONTRACTS: Partial<Record<Network, Record<string, KnownContract>>> = {
+${Object.entries(out)
+  .map(([network, contracts]) => `  ...((typeof __ONLY_NETWORK__ === 'undefined' || __ONLY_NETWORK__ === '${network}') && {\n    ${JSON.stringify(network)}: ${JSON.stringify(contracts, null, 2).replaceAll('\n', '\n    ')},\n  }),`)
+  .join('\n')}
+};
 `,
 );
 console.log(Object.fromEntries(Object.entries(out).map(([n, c]) => [n, Object.fromEntries(Object.entries(c).map(([id, v]) => [id, { version: v.version, bytes: v.bytes.length }]))])));

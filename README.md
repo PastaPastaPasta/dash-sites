@@ -243,8 +243,8 @@ npm run e2e:builder -- identity.json <label>  # a name the identity owns; publis
 later testnet builds:
 
 ```sh
-( export NETWORK=mainnet GATEWAY_DOMAIN=dash.site DENYLIST=0 \
-    BUILDER_URL=https://dash.site/new PEER_GATEWAY="testnet https://id.dashhq.org"
+( unset PEER_GATEWAY; export NETWORK=mainnet GATEWAY_DOMAIN=dash.site DENYLIST=0 \
+    BUILDER_URL=https://dash.site/new
   npx tsc -b && node packages/shell/build.mjs && SITE=1 node packages/builder/build.mjs )
 ```
 
