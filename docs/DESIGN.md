@@ -718,10 +718,16 @@ droplet gateway. What changes without a server:
   boot page moves to `https://` itself, since the Worker cannot redirect.
 - **No operator denylist in the build.** The `dash.site` build leaves the
   denylist out (`DENYLIST` unset). Blocking is done in front of it instead.
-- **Caching.** `_headers` sends `Cache-Control: no-cache` for everything but
-  the content-addressed verifier, so a browser revalidates `/sw.js` on every
-  navigation and a new worker, or a kill-switch worker, takes effect on the
-  next visit.
+- **Caching.** Every file named for its content is cached for a year as
+  `immutable`: the two verifier files, and everything under `/new/assets/`
+  (the builder's script chunks, stylesheet, font and icon). The entry points
+  stay `no-cache`, so they are revalidated (a 304 when unchanged) on every
+  visit: the shell's `index.html` and `/sw.js`, `/new` itself, and
+  `shell.json`. That keeps the kill switch: a new worker, or the blocking
+  Worker's page and `/sw.js`, takes effect on the next visit. A shell cached
+  for even a minute could keep a blocked host's visitors on the old page
+  until it expired, so there is no `max-age` or `stale-while-revalidate` on
+  the entry points.
 
 **Blocking a name on dash.site, when needed.** Route the exact host,
 `badname.dash.site/*`, to a second assets-only Worker; Cloudflare uses the

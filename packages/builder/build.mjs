@@ -1,4 +1,5 @@
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +14,11 @@ const app = site ? join(out, 'new') : out;
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(app, 'assets'), { recursive: true });
 
-await build({
+const result = await build({
   entryPoints: { app: join(root, 'src', 'main.ts') },
+  entryNames: '[name]-[hash]',
+  absWorkingDir: root,
+  metafile: true,
   outdir: join(app, 'assets'),
   bundle: true,
   splitting: true,
@@ -34,13 +38,29 @@ await build({
   logLevel: 'warning',
 });
 
-for (const file of ['index.html', 'styles.css', 'icon.svg']) cpSync(join(root, 'src', file), join(app, file));
-const font = join(dirname(require.resolve('@fontsource-variable/bricolage-grotesque/package.json')), 'files', 'bricolage-grotesque-latin-wght-normal.woff2');
-writeFileSync(join(app, 'assets', 'bricolage.woff2'), readFileSync(font));
+// Everything under assets/ is named for its content, so it can be cached for good; only index.html revalidates.
+const fingerprint = (name, bytes) => {
+  const [base, ext] = name.split(/\.(?=[^.]+$)/);
+  const file = `${base}-${createHash('sha256').update(bytes).digest('hex').slice(0, 12)}.${ext}`;
+  writeFileSync(join(app, 'assets', file), bytes);
+  return `assets/${file}`;
+};
+const fontFile = join(dirname(require.resolve('@fontsource-variable/bricolage-grotesque/package.json')), 'files', 'bricolage-grotesque-latin-wght-normal.woff2');
+const font = fingerprint('bricolage.woff2', readFileSync(fontFile));
+const css = readFileSync(join(root, 'src', 'styles.css'), 'utf8');
+if (!css.includes('url(assets/bricolage.woff2)')) throw new Error('builder: styles.css no longer loads the font from assets/bricolage.woff2');
+const styles = fingerprint('styles.css', css.replace('url(assets/bricolage.woff2)', `url(${font.slice('assets/'.length)})`));
+const icon = fingerprint('icon.svg', readFileSync(join(root, 'src', 'icon.svg')));
+const script = Object.entries(result.metafile.outputs).find(([, output]) => output.entryPoint === 'src/main.ts')?.[0];
+if (!script) throw new Error('builder: no app entry in the esbuild output');
+const assets = { 'styles.css': styles, 'icon.svg': icon, 'assets/app.js': `assets/${script.split('/').pop()}` };
+const html = readFileSync(join(root, 'src', 'index.html'), 'utf8').replace(/(href|src)="(styles\.css|icon\.svg|assets\/app\.js)"/g, (_, attr, path) => `${attr}="${assets[path]}"`);
+if (Object.values(assets).some((path) => !html.includes(`"${path}"`))) throw new Error('builder: index.html no longer links every asset');
+writeFileSync(join(app, 'index.html'), html);
 
 if (site) {
   // /new is served without a trailing slash, so the page's relative links are made absolute.
-  const page = readFileSync(join(app, 'index.html'), 'utf8').replace(/(href|src)="(styles\.css|icon\.svg|assets\/app\.js)"/g, '$1="/new/$2"').replace('<a class="mark" href="./">', '<a class="mark" href="/">');
+  const page = readFileSync(join(app, 'index.html'), 'utf8').replace(/(href|src)="(assets\/[^"]+)"/g, '$1="/new/$2"').replace('<a class="mark" href="./">', '<a class="mark" href="/">');
   writeFileSync(join(app, 'index.html'), page);
   // /publish was a separate name-check page; /new does all of it now, so old links land there.
   writeFileSync(join(out, '_redirects'), '/publish /new 301\n/publish/* /new 301\n');
@@ -68,7 +88,9 @@ if (site) {
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Origin-Agent-Cluster: ?1
-/new/assets/c/*
+/new
+  Cache-Control: no-cache
+/new/assets/*
   Cache-Control: public, max-age=31536000, immutable
 `,
   );
