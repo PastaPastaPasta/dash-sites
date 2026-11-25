@@ -31,7 +31,6 @@ function landing(): boolean {
   const host = location.hostname;
   if (!__GATEWAY_DOMAIN__ || (host !== __GATEWAY_DOMAIN__ && host !== `www.${__GATEWAY_DOMAIN__}`)) return false;
   document.title = 'Dash Sites';
-  document.body.classList.remove('loader');
   (document.getElementById('shell') as HTMLElement).hidden = true;
   (document.getElementById('landing') as HTMLElement).hidden = false;
   const form = document.getElementById('go') as HTMLFormElement;
