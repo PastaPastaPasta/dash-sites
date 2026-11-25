@@ -79,7 +79,6 @@ button.button:disabled{opacity:.5;cursor:progress}
 .diagram text.hot{fill:var(--accent);stroke:none}
 figure{margin:0}
 figcaption{font:13px var(--mono);color:var(--muted);margin-top:8px}
-.shot{display:block;max-width:340px;width:100%;height:auto;border:1.5px solid var(--ink)}
 table{border-collapse:collapse;width:100%;font:13.5px var(--mono);border:1.5px solid var(--ink);background:var(--panel)}
 th,td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--muted);overflow-wrap:anywhere}
 th{color:var(--muted);font-weight:400;font-size:12px}
