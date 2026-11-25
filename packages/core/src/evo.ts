@@ -390,26 +390,35 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     return Document.fromObject({ ...(base.toObject() as object), ...properties } as never, this.sdk.wasm.version() as never);
   }
 
-  private async all(type: string, orderBy: string): Promise<Array<[string, Document]>> {
+  /** Every document of a type this identity owns, and the proof of the oldest page. */
+  private async all(type: string, orderBy: string): Promise<Proved<Array<[string, Document]>>> {
     const out: Array<[string, Document]> = [];
+    let meta: ProofMeta | undefined;
     let startAfter: string | undefined;
     for (;;) {
       const where: Where[] = [['$ownerId', '==', this.identityId]];
       const extra = { orderBy: [[orderBy, 'asc']], limit: PAGE, ...(startAfter ? { startAfter } : {}) };
       const result = await this.query(this.config.contractId, type, where, extra);
+      const pageMeta = toMeta(result.metadata);
+      if (!meta || pageMeta.timeMs < meta.timeMs) meta = pageMeta;
       const page = [...result.data].filter((entry): entry is [string, Document] => entry[1] !== undefined);
       out.push(...page);
-      if (page.length < PAGE) return out;
+      if (page.length < PAGE) return { value: out, meta };
       startAfter = page[page.length - 1]?.[0];
     }
   }
 
   async listSites(): Promise<SiteRecord[]> {
-    return (await this.all('site', 'domainId')).map(([id, document]) => toSite(id, document));
+    return (await this.listSitesProved()).value;
+  }
+
+  async listSitesProved(): Promise<Proved<SiteRecord[]>> {
+    const { value, meta } = await this.all('site', 'domainId');
+    return { value: value.map(([id, document]) => toSite(id, document)), meta };
   }
 
   async listChunks(): Promise<StoredChunk[]> {
-    return (await this.all('chunk', 'hash')).map(([id, document]) => ({
+    return (await this.all('chunk', 'hash')).value.map(([id, document]) => ({
       id,
       hash: toHex((document.toObject() as Record<string, unknown>).hash as Uint8Array),
     }));

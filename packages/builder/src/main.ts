@@ -105,6 +105,9 @@ function refresh(): void {
   setLocked('step-name', !writer);
   setLocked('step-publish', !writer || !chosen);
   $<HTMLButtonElement>('signout').disabled = publishing || working > 0;
+  // Deleting unused files while a publish uploads could delete the new release's files before its
+  // record points at them, and a publish during a delete could reuse a file being deleted.
+  for (const id of ['gc', 'unpublish']) $<HTMLButtonElement>(id).disabled = publishing || working > 0;
 
   const current = files();
   bundle = undefined;
@@ -127,7 +130,7 @@ function refresh(): void {
     cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs at most about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${noIndex}`;
   }
   const button = $<HTMLButtonElement>('publish');
-  button.disabled = !bundle || !chosen || publishing;
+  button.disabled = !bundle || !chosen || publishing || working > 0;
   button.textContent = chosen ? `Publish to ${label()}.dash` : 'Publish';
 
   clearTimeout(previewTimer);
@@ -587,7 +590,7 @@ async function fromDrop(items: DataTransferItemList): Promise<void> {
 
 async function publish(): Promise<void> {
   const signer = writer;
-  if (!signer || !chosen || !bundle || publishing) return;
+  if (!signer || !chosen || !bundle || publishing || working > 0) return;
   if (expiring(signer)) {
     $('publish-error').textContent = 'Your wallet sign-in has run out. Sign out, sign in with DashPay again, then publish.';
     return;
@@ -649,7 +652,7 @@ async function publish(): Promise<void> {
 
 async function manage(button: HTMLButtonElement, action: (writer: EvoWriter, domain: DomainRecord) => Promise<string>): Promise<void> {
   const signer = writer;
-  if (!signer || !chosen) return;
+  if (!signer || !chosen || publishing || working > 0) return;
   const status = $('manage-status');
   button.disabled = true;
   working += 1;
@@ -663,7 +666,6 @@ async function manage(button: HTMLButtonElement, action: (writer: EvoWriter, dom
     if (signer === writer) status.textContent = message(caught);
   } finally {
     working -= 1;
-    button.disabled = false;
     refresh();
   }
 }
@@ -812,7 +814,7 @@ function start(): void {
     void manage(event.currentTarget as HTMLButtonElement, async (w, domain) => {
       const removed = await w.deleteSite(domain.id);
       $('site-status').textContent = `${label()}.dash has no site.`;
-      return removed ? 'The site is down. Its files stay stored until you delete them.' : 'There was no site to take down.';
+      return removed ? 'The site is down. Its files stay stored; "Delete files no site uses" removes them for good, at once.' : 'There was no site to take down.';
     });
   });
   $<HTMLButtonElement>('gc').addEventListener('click', (event) => {

@@ -1,7 +1,7 @@
 import { parseContentUri } from './content.js';
 import { parseName } from './names.js';
 import type { SiteBundle } from './pack.js';
-import type { DomainRecord, PlatformWriter, SiteRecord, StoredChunk } from './platform.js';
+import type { DomainRecord, PlatformWriter, Proved, SiteRecord, StoredChunk } from './platform.js';
 import { loadManifest, referencedChunks } from './reader.js';
 
 export class NotOwnerError extends Error {
@@ -53,7 +53,7 @@ export async function publishSite(
   name: string,
   bundle: SiteBundle,
   onProgress: (progress: PublishProgress) => void = () => {},
-  options: { prune?: PruneOptions } = {},
+  options: { prune?: PruneOptions & PruneRunOptions } = {},
 ): Promise<PublishResult> {
   onProgress({ step: 'check' });
   const domain = await requireOwnedName(writer, name);
@@ -88,9 +88,9 @@ export async function publishSite(
         throw new PruneError('the record read before publishing is not the one this publish replaced');
       }
       const plan = await planPrune(writer, { ...options.prune, keep: [...all, ...(options.prune.keep ?? [])], published: { site, replaced } });
-      pruned = await prune(writer, plan);
+      pruned = await prune(writer, plan, options.prune);
     } catch (error) {
-      pruned = { remove: [], bytes: 0, kept: 0, sites: [], deleted: 0, failed: [], skipped: String((error as Error)?.message ?? error) };
+      pruned = { remove: [], bytes: 0, kept: 0, sites: [], provedAt: 0, startedAt: 0, deleted: 0, failed: [], skipped: String((error as Error)?.message ?? error) };
     }
   }
   onProgress({ step: 'done' });
@@ -143,6 +143,27 @@ export interface PrunePlan {
   sites: string[];
   /** Set while a site record is younger than the grace period: the plan may be shown, not carried out. */
   deferredUntil?: number;
+  /** Block time of the listing the plan was made from, and the local time it was made. */
+  provedAt: number;
+  startedAt: number;
+}
+
+/**
+ * Before deleting, the site records are read again from a block at least this much later than the
+ * one the plan was made from (and later than when the plan was made, by the local clock), so that a
+ * publish a lagging node did not show the plan is seen before anything is deleted.
+ */
+export const PRUNE_RECHECK_MS = 3 * 60 * 1000;
+const RECHECK_LOCAL_MARGIN_MS = 30 * 1000;
+const RECHECK_POLL_MS = 15 * 1000;
+const RECHECK_GIVE_UP_MS = 10 * 60 * 1000;
+
+export interface PruneRunOptions {
+  onDelete?: (hash: string) => void;
+  recheckMs?: number;
+  /** Waits between re-reads; and the local clock. For tests. */
+  sleep?: (ms: number) => Promise<void>;
+  clock?: () => number;
 }
 
 export interface PruneResult extends PrunePlan {
@@ -155,16 +176,15 @@ export interface PruneResult extends PrunePlan {
 
 const snapshot = (sites: SiteRecord[]): string[] => sites.map((site) => `${site.id} ${site.revision} ${site.content}`).sort();
 
-async function listSites(writer: PlatformWriter, published?: SiteRecord): Promise<SiteRecord[]> {
-  let sites = await writer.listSites();
-  for (let attempt = 1; published && attempt < LIST_ATTEMPTS && !sites.some((site) => site.id === published.id && site.revision >= published.revision); attempt++) {
+async function listSites(writer: PlatformWriter, published?: SiteRecord): Promise<Proved<SiteRecord[]>> {
+  let listed = await writer.listSitesProved();
+  const shows = (sites: SiteRecord[]) => !published || sites.some((site) => site.id === published.id && site.revision >= published.revision);
+  for (let attempt = 1; attempt < LIST_ATTEMPTS && !shows(listed.value); attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    sites = await writer.listSites();
+    listed = await writer.listSitesProved();
   }
-  if (published && !sites.some((site) => site.id === published.id && site.revision >= published.revision)) {
-    throw new PruneError('the site listing does not show the record just written yet');
-  }
-  return sites;
+  if (!shows(listed.value)) throw new PruneError('the site listing does not show the record just written yet');
+  return listed;
 }
 
 async function referenced(writer: PlatformWriter, sites: Iterable<{ name?: string; id: string; content: string }>): Promise<Set<string>> {
@@ -194,9 +214,12 @@ async function referenced(writer: PlatformWriter, sites: Iterable<{ name?: strin
  */
 export async function planPrune(writer: PlatformWriter, options: PruneOptions = {}): Promise<PrunePlan> {
   const graceMs = options.graceMs ?? DEFAULT_PRUNE_GRACE_MS;
-  const now = options.now ?? Date.now();
+  const startedAt = Date.now();
   const { published } = options;
-  const sites = await listSites(writer, published?.site);
+  const listed = await listSites(writer, published?.site);
+  const sites = listed.value;
+  // The grace period is measured in Platform's time (the listing's block), not this machine's clock.
+  const now = options.now ?? listed.meta.timeMs;
   const ages = sites.map((site) => (site.id === published?.site.id ? (published.replaced?.updatedAt ?? 0) : site.updatedAt));
   const newest = Math.max(0, ...ages);
 
@@ -214,20 +237,35 @@ export async function planPrune(writer: PlatformWriter, options: PruneOptions = 
     bytes: remove.reduce((sum, chunk) => sum + chunk.bytes, 0),
     kept: stored.length - remove.length,
     sites: snapshot(published?.replaced ? [...sites, published.replaced] : sites),
+    provedAt: listed.meta.timeMs,
+    startedAt,
     ...(graceMs > 0 && newest > now - graceMs ? { deferredUntil: newest + graceMs } : {}),
   };
 }
 
 /**
- * Deletes the chunks a plan lists. The site records are read again first, and nothing is deleted
- * if they changed since the plan (another publish, or a first listing from a node behind the
- * chain); a chunk a record references now is never deleted.
+ * Deletes the chunks a plan lists. The site records are read again first, from a block at least
+ * {@link PRUNE_RECHECK_MS} after the plan's (waiting for one if needed), and nothing is deleted if
+ * they changed since the plan (another publish, or a first listing from a node behind the chain);
+ * a chunk a record references now is never deleted.
  */
-export async function prune(writer: PlatformWriter, plan: PrunePlan, onDelete: (hash: string) => void = () => {}): Promise<PruneResult> {
+export async function prune(writer: PlatformWriter, plan: PrunePlan, options: PruneRunOptions | ((hash: string) => void) = {}): Promise<PruneResult> {
+  const run = typeof options === 'function' ? { onDelete: options } : options;
+  const onDelete = run.onDelete ?? (() => {});
+  const sleep = run.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const clock = run.clock ?? Date.now;
   const result = (deleted: number, failed: string[], skipped?: string): PruneResult => ({ ...plan, deleted, failed, ...(skipped ? { skipped } : {}) });
   if (plan.deferredUntil !== undefined) return result(0, [], 'a site record changed within the grace period');
   if (plan.remove.length === 0) return result(0, []);
-  const sites = await writer.listSites();
+  const fresh = Math.max(plan.provedAt + (run.recheckMs ?? PRUNE_RECHECK_MS), plan.startedAt + RECHECK_LOCAL_MARGIN_MS);
+  const giveUp = clock() + RECHECK_GIVE_UP_MS;
+  let listed = await writer.listSitesProved();
+  while (listed.meta.timeMs < fresh) {
+    if (clock() >= giveUp) return result(0, [], 'no Platform node answered from a recent enough block to check the site records again; try again later');
+    await sleep(RECHECK_POLL_MS);
+    listed = await writer.listSitesProved();
+  }
+  const sites = listed.value;
   const now = snapshot(sites);
   if (now.some((entry) => !plan.sites.includes(entry))) return result(0, [], 'the site records changed since the plan was made; plan again');
   const keep = await referenced(writer, sites);
@@ -247,6 +285,6 @@ export async function prune(writer: PlatformWriter, plan: PrunePlan, onDelete: (
 }
 
 /** Deletes the chunks no site of this identity references, once every record is older than the grace period. */
-export async function collectGarbage(writer: PlatformWriter, options: PruneOptions & { onDelete?: (hash: string) => void } = {}): Promise<PruneResult> {
-  return prune(writer, await planPrune(writer, options), options.onDelete);
+export async function collectGarbage(writer: PlatformWriter, options: PruneOptions & PruneRunOptions = {}): Promise<PruneResult> {
+  return prune(writer, await planPrune(writer, options), options);
 }

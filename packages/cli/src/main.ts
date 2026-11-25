@@ -181,7 +181,16 @@ const commands: Record<string, () => Promise<void>> = {
       uploaded: result.uploaded,
       reused: result.reused,
       spent: formatDash(result.creditsSpent),
-      ...(result.pruned ? { pruned: { deleted: result.pruned.deleted, failed: result.pruned.failed, skipped: result.pruned.skipped, ...describePlan(result.pruned) } } : {}),
+      ...(result.pruned
+        ? {
+            pruned: {
+              deleted: result.pruned.deleted,
+              failed: result.pruned.failed,
+              skipped: result.pruned.skipped,
+              ...(result.pruned.deleted > 0 ? describePlan(result.pruned) : result.pruned.deferredUntil !== undefined ? { deferredUntil: new Date(result.pruned.deferredUntil).toISOString() } : {}),
+            },
+          }
+        : {}),
     });
   },
 
@@ -204,6 +213,7 @@ const commands: Record<string, () => Promise<void>> = {
     const plan = await planPrune(writer, { graceMs: graceMs() });
     if (values['dry-run']) return print({ dryRun: true, ...describePlan(plan) });
     const before = await writer.balance();
+    console.error('checking the site records again from a newer block before deleting (a few minutes)');
     const result = await prune(writer, plan, (hash) => console.error(`deleted chunk ${hash}`));
     print({ deleted: result.deleted, failed: result.failed, skipped: result.skipped, refunded: formatDash((await writer.balance()) - before) });
   },

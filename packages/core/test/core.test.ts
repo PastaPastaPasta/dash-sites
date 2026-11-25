@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildSite,
   CHUNK_SIZE,
   collectGarbage,
   DEFAULT_PRUNE_GRACE_MS,
   planPrune,
+  PRUNE_RECHECK_MS,
   prune,
   type PlatformWriter,
   refundCredits,
@@ -313,13 +314,13 @@ describe('resolve and publish', () => {
     await publishSite(alice, 'alice', v2);
     const before = (await alice.listChunks()).length;
 
-    const early = await collectGarbage(alice, { now });
+    const early = await collectGarbage(alice, { now, recheckMs: 0 });
     expect(early.deleted).toBe(0);
     expect(early.deferredUntil).toBeGreaterThan(now);
     expect((await alice.listChunks()).length).toBe(before);
 
     now += DEFAULT_PRUNE_GRACE_MS + 1000;
-    const result = await collectGarbage(alice, { now });
+    const result = await collectGarbage(alice, { now, recheckMs: 0 });
     expect(result.deleted).toBe(v1.chunks.size);
     expect(result.bytes).toBe([...v1.chunks.values()].reduce((sum, chunk) => sum + chunk.length, 0));
     expect((await alice.listChunks()).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
@@ -335,19 +336,19 @@ describe('resolve and publish', () => {
     const hashes = async () => new Set((await alice.listChunks()).map((c) => c.hash));
     const only = (a: typeof v1, ...others: Array<typeof v1>) => [...a.chunks.keys()].filter((h) => others.every((o) => !o.chunks.has(h)));
 
-    await publishSite(alice, 'alice', v1, undefined, { prune: { now } });
+    await publishSite(alice, 'alice', v1, undefined, { prune: { now, recheckMs: 0 } });
     now += 60_000;
     // v1 went live a minute ago: replacing it keeps it, and nothing older exists.
-    const second = await publishSite(alice, 'alice', v2, undefined, { prune: { now } });
+    const second = await publishSite(alice, 'alice', v2, undefined, { prune: { now, recheckMs: 0 } });
     expect(second.pruned?.deferredUntil).toBeDefined();
     now += 60_000;
     // v2 went live a minute ago: v1's own chunks are still kept.
-    const third = await publishSite(alice, 'alice', v3, undefined, { prune: { now } });
+    const third = await publishSite(alice, 'alice', v3, undefined, { prune: { now, recheckMs: 0 } });
     expect(third.pruned?.deleted).toBe(0);
     for (const h of only(v1, v2, v3)) expect((await hashes()).has(h)).toBe(true);
 
     now += DEFAULT_PRUNE_GRACE_MS + 1000;
-    const fourth = await publishSite(alice, 'alice', v4, undefined, { prune: { now } });
+    const fourth = await publishSite(alice, 'alice', v4, undefined, { prune: { now, recheckMs: 0 } });
     const left = await hashes();
     // v3 (replaced now) and v4 stay; v1 and v2 go, except chunks they share with v3 or v4.
     for (const h of [...v3.chunks.keys(), ...v4.chunks.keys()]) expect(left.has(h)).toBe(true);
@@ -374,9 +375,9 @@ describe('resolve and publish', () => {
 
     const plan = await planPrune(alice, { now });
     expect(plan.remove).toEqual([]);
-    expect((await collectGarbage(alice, { now })).deleted).toBe(0);
+    expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBe(0);
     for (const h of shared.chunks.keys()) expect((await bob.getChunks('bob-id', [h])).has(h)).toBe(true);
-    expect((await collectGarbage(bob, { now })).deleted).toBe(shared.chunks.size);
+    expect((await collectGarbage(bob, { now, recheckMs: 0 })).deleted).toBe(shared.chunks.size);
     for (const h of shared.chunks.keys()) expect((await alice.getChunks('alice-id', [h])).has(h)).toBe(true);
   });
 
@@ -397,8 +398,8 @@ describe('resolve and publish', () => {
     await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('v3') }]));
     later();
     let calls = 0;
-    const lagging: PlatformWriter = { ...alice, listSites: async () => (calls++ === 0 ? stale : alice.listSites()) };
-    const result = await prune(lagging, await planPrune(lagging, { now: now() }));
+    const lagging: PlatformWriter = { ...alice, listSitesProved: async () => (calls++ === 0 ? { value: stale, meta: platform.meta() } : alice.listSitesProved()) };
+    const result = await prune(lagging, await planPrune(lagging, { now: now() }), { recheckMs: 0 });
     expect(result.deleted).toBe(0);
     expect(result.skipped).toMatch(/changed since the plan/);
     expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('ok');
@@ -413,7 +414,7 @@ describe('resolve and publish', () => {
     later();
     await expect(planPrune(alice, { now: now() })).rejects.toThrow(/cannot read/);
     const v1 = buildSite([{ path: '/index.html', bytes: text('one') }]);
-    const result = await publishSite(alice, 'alice', v1, undefined, { prune: { now: now() } });
+    const result = await publishSite(alice, 'alice', v1, undefined, { prune: { now: now(), recheckMs: 0 } });
     expect(result.pruned?.skipped).toMatch(/cannot read/);
     expect(result.pruned?.deleted).toBe(0);
     const resolved = await resolveName(platform.as('anyone'), 'alice.dash');
@@ -432,7 +433,7 @@ describe('resolve and publish', () => {
     const plan = await planPrune(alice, { now: now() });
     expect(plan.remove.length).toBe(old.chunks.size);
     await publishSite(alice, 'alice2', old);
-    const result = await prune(alice, plan);
+    const result = await prune(alice, plan, { recheckMs: 0 });
     expect(result.deleted).toBe(0);
     for (const hash of old.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
   });
@@ -443,7 +444,7 @@ describe('resolve and publish', () => {
     later();
     const failing: PlatformWriter = { ...alice, deleteChunk: async () => { throw new Error('node unavailable'); } };
     const v3 = buildSite([{ path: '/index.html', bytes: text('v3') }]);
-    const result = await publishSite(failing, 'alice', v3, undefined, { prune: { now: now() } });
+    const result = await publishSite(failing, 'alice', v3, undefined, { prune: { now: now(), recheckMs: 0 } });
     expect(result.site.content).toBe(v3.contentUri);
     expect(result.pruned?.deleted).toBe(0);
     expect(result.pruned?.failed.length).toBeGreaterThan(0);
@@ -457,8 +458,8 @@ describe('resolve and publish', () => {
     const plan = await planPrune(alice, { now: now() });
     expect(plan.deferredUntil).toBeDefined();
     expect(plan.remove.length).toBe(v1.chunks.size);
-    expect((await prune(alice, plan)).deleted).toBe(0);
-    expect((await collectGarbage(alice, { now: now(), graceMs: 0 })).deleted).toBe(v1.chunks.size);
+    expect((await prune(alice, plan, { recheckMs: 0 })).deleted).toBe(0);
+    expect((await collectGarbage(alice, { now: now(), graceMs: 0, recheckMs: 0 })).deleted).toBe(v1.chunks.size);
   });
 
   it('skips the prune when the record read before publishing is stale', async () => {
@@ -471,7 +472,7 @@ describe('resolve and publish', () => {
     await publishSite(alice, 'alice', v2);
     const lagging: PlatformWriter = { ...alice, getSite: async () => stale };
     const v3 = buildSite([{ path: '/index.html', bytes: text('v3') }]);
-    const result = await publishSite(lagging, 'alice', v3, undefined, { prune: { now: now() + 60_000 } });
+    const result = await publishSite(lagging, 'alice', v3, undefined, { prune: { now: now() + 60_000, recheckMs: 0 } });
     expect(result.pruned?.deleted).toBe(0);
     expect(result.pruned?.skipped).toMatch(/not the one this publish replaced/);
     for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
@@ -484,11 +485,62 @@ describe('resolve and publish', () => {
     await publishSite(alice, 'alice', v1);
     await publishSite(alice, 'alice', v2);
     later();
-    await publishSite(alice, 'alice', v2, undefined, { prune: { now: now() } });
+    await publishSite(alice, 'alice', v2, undefined, { prune: { now: now(), recheckMs: 0 } });
     later();
-    const result = await publishSite(alice, 'alice', v2, undefined, { prune: { now: now() } });
+    const result = await publishSite(alice, 'alice', v2, undefined, { prune: { now: now(), recheckMs: 0 } });
     expect(result.pruned?.skipped).toBeUndefined();
     expect((await alice.listChunks()).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+  });
+
+  it('waits for a re-read from a block later than the plan before deleting, so a lagging node cannot hide a publish', async () => {
+    const { platform, alice, later } = aged();
+    const v1 = buildSite(SITE);
+    await publishSite(alice, 'alice', v1);
+    later();
+    const v1Listing = await alice.listSitesProved();
+    // A node that has not seen v2 answers the plan and any re-read from before the plan + 3 minutes.
+    const v2 = buildSite([{ path: '/index.html', bytes: text('v2') }]);
+    await publishSite(alice, 'alice', v2);
+    const planBlock = v1Listing.meta.timeMs;
+    const lagging: PlatformWriter = {
+      ...alice,
+      listSitesProved: async () => (platform.now() < planBlock + PRUNE_RECHECK_MS ? v1Listing : alice.listSitesProved()),
+    };
+    const plan = await planPrune(lagging, { now: planBlock });
+    expect(plan.remove.map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+    let slept = 0;
+    const result = await prune(lagging, plan, { sleep: async (ms) => { slept += ms; platform.now = (() => { const t = platform.now() + ms; return () => t; })(); }, clock: () => 0 });
+    expect(slept).toBeGreaterThanOrEqual(PRUNE_RECHECK_MS);
+    expect(result.deleted).toBe(0);
+    expect(result.skipped).toMatch(/changed since the plan/);
+    for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+  });
+
+  it('gives up rather than delete when no node answers from a recent enough block', async () => {
+    const { alice, later, now } = aged();
+    for (const n of [1, 2]) await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text(`v${n}`) }]));
+    later();
+    const frozen = await alice.listSitesProved();
+    const stuck: PlatformWriter = { ...alice, listSitesProved: async () => frozen };
+    const plan = await planPrune(stuck, { now: now() });
+    let t = 0;
+    const result = await prune(stuck, plan, { sleep: async (ms) => void (t += ms), clock: () => t });
+    expect(result.deleted).toBe(0);
+    expect(result.skipped).toMatch(/recent enough block/);
+  });
+
+  it("measures the grace period in Platform's time, not the local clock", async () => {
+    const { alice } = aged();
+    for (const n of [1, 2]) await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text(`v${n}`) }]));
+    // No `now` given: a local clock days ahead must not make a minutes-old record look old.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60 * 1000);
+      const plan = await planPrune(alice);
+      expect(plan.deferredUntil).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('estimates refunds from the storage fee distribution table', () => {

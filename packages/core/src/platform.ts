@@ -49,6 +49,8 @@ export interface StoredChunk {
 export interface PlatformWriter extends PlatformReader {
   readonly identityId: string;
   listSites(): Promise<SiteRecord[]>;
+  /** {@link listSites} with the proof's block, the oldest when the listing took several pages. */
+  listSitesProved(): Promise<Proved<SiteRecord[]>>;
   listChunks(): Promise<StoredChunk[]>;
   createChunk(hash: string, data: Uint8Array): Promise<void>;
   /** Creates the site record for a name or replaces its content. */

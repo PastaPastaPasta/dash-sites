@@ -123,15 +123,17 @@ stale cache): a browser or gateway may still be serving the release a record rep
 no pruning. Only the identity's own chunks are listed and deleted; other identities' chunks
 are never read as references or touched.
 
-Before deleting, the site records are read again, and nothing is deleted if they changed
-since the plan, or if any record has content this version cannot read. A prune that cannot
-run is reported in the publish output; the new site is live regardless. What is not covered:
-two processes publishing for the same identity at the same moment (run one publisher at a
-time), and `unpublish`, after which the removed site's chunks count as unused at once. An
-identity that updates some site more often than the grace period never prunes on publish;
-run `gc` in a quiet period. `gc` trusts that the nodes it reads the site records from are not
-behind a publish made moments earlier; it reads them twice, but leave a minute between a
-publish and a `gc`.
+Before deleting, the site records are read again from a block at least three minutes newer
+than the one the plan was made from (waiting for one if needed), and nothing is deleted if
+they changed since the plan, or if any record has content this version cannot read. So a
+publish one lagging node did not show is seen before anything goes. The grace period is
+measured in Platform's block time, not this machine's clock. A prune that cannot run is
+reported in the publish output; the new site is live regardless. The builder does not let
+you delete files while it publishes, or publish while it deletes. What is not covered:
+**publishing for the same identity from two places at once** (another tab, the builder and
+the CLI) while one of them deletes, so run one publisher at a time; and `unpublish`, after
+which the removed site's chunks count as unused at once. An identity that updates some site
+more often than the grace period never prunes on publish; run `gc` in a quiet period.
 
 `--identity-file` takes the identity JSON that dash-bridge writes. You can
 also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
