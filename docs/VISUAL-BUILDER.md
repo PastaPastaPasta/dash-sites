@@ -292,8 +292,9 @@ Things to settle on the branch before widgets rely on it:
   and its 1.5 MB loader. Measured for 5.0.3: jsDelivr sends the WebAssembly
   as 7.5 MB; unpkg, the second mirror, sends all 26.7 MB uncompressed.
 - On the branch a named file counts toward a site's size limit. The
-  reader's 50 MB limit has room; the fallback process's 25 MB default does
-  not.
+  browser's 50 MB limit has room. The 25 MB default of the server process
+  that renders sites for crawlers on the testnet host (`packages/gateway`)
+  does not; `dash.site` runs no such process, so mainnet is unaffected.
 - Visitors' browsers contact jsDelivr or unpkg, which today's sites never do
   (`e2e/shell.mjs` asserts the list of hosts). With widgets that becomes
   normal for any site that has one.
