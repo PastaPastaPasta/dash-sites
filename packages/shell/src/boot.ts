@@ -46,13 +46,21 @@ function landing(): boolean {
   return true;
 }
 
-const TRIES = 'dash-sites-boot';
-const RETRY_WINDOW_MS = 30_000;
+const RELOADS = 'dash-sites-reloads';
+const LOOP_WINDOW_MS = 10_000;
+const LOOP_LIMIT = 8;
+/**
+ * Reloads into the worker, which serves every navigation in its scope, including one from a page a
+ * hard reload left uncontrolled. Each visit and each hard reload passes here once, so only a page that
+ * keeps coming back within seconds is looping.
+ */
 function reload(): void {
-  const [count, since] = (sessionStorage.getItem(TRIES) ?? '0:0').split(':').map(Number) as [number, number];
-  const recent = Date.now() - since < RETRY_WINDOW_MS;
-  if (recent && count >= 3) return fail('The verifier is installed but is not answering for this page. Close this tab and open the site again.');
-  sessionStorage.setItem(TRIES, recent ? `${count + 1}:${since}` : `1:${Date.now()}`);
+  const recent = (sessionStorage.getItem(RELOADS) ?? '').split(',').map(Number).filter((at) => Date.now() - at < LOOP_WINDOW_MS);
+  if (recent.length >= LOOP_LIMIT) {
+    sessionStorage.removeItem(RELOADS);
+    return fail('This site could not start in this tab. Reload the page to try again.');
+  }
+  sessionStorage.setItem(RELOADS, [...recent, Date.now()].join(','));
   location.reload();
 }
 
