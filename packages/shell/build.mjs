@@ -132,19 +132,35 @@ ${live ? '' : `<p>Publishing on ${escapeHtml(network)} has not opened yet. Names
 <p><a href="${escapeHtml(builderUrl)}">Make a site</a>${peer}</p>
 <footer>${domain} is a static page with no backend service. When you open a name here, your browser builds the site from what its author published to Dash Platform, a decentralized network. ${domain} does not host, own, control or review these sites, and does not condone or endorse them. It cannot change or remove anything on Dash Platform, but it can stop opening a name here. ${reportAbuse}</footer>`;
 }
+const preconnects = [
+  ...(gatewayDomain ? [`<link rel="preconnect" href="https://${escapeHtml(gatewayDomain)}" crossorigin>`] : []),
+  ...(network === 'mainnet' || network === 'testnet' ? [`<link rel="preconnect" href="https://quorums.${escapeHtml(network)}.networks.dash.org" crossorigin>`] : []),
+].join('\n');
 const csp = `default-src 'none'; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'; style-src 'unsafe-inline'; connect-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'`;
 const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
   .replace('/*STYLE*/', () => PAGE_STYLE)
   .replace('/*BOOT*/', () => script)
   .replace('__CSP__', () => csp)
+  .replace('<!--PRECONNECT-->', () => preconnects)
   .replace('<!--LANDING-->', () => landingHtml())
   .replace('<!--NOTICE-->', () => loadingNotice)
   .replaceAll('__NETWORK__', () => network);
 writeFileSync(join(out, 'index.html'), html);
+const noJsBrotliPlugin = {
+  name: 'no-js-brotli',
+  setup(b) {
+    b.onResolve({ filter: /^brotli\/decompress$/ }, () => ({ path: 'brotli-stub', namespace: 'stub' }));
+    b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({
+      contents: 'export function decompress() { throw new Error("brotli decoder must be supplied by the worker"); }',
+      loader: 'js',
+    }));
+  },
+};
 await build({
   ...common,
   entryPoints: { sw: join(root, 'src', 'sw.ts') },
   outdir: out,
+  plugins: [noJsBrotliPlugin],
   define: {
     ...onlyNetwork,
     __NETWORK__: JSON.stringify(network),
@@ -171,6 +187,9 @@ if (gatewayDomain) {
   Referrer-Policy: strict-origin-when-cross-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Cache-Control: no-cache, no-transform
+/sw.js
+  ! Cache-Control
+  Cache-Control: no-cache
 /dash-sites-verifier-*
   ! Cache-Control
   Cache-Control: public, max-age=31536000, immutable

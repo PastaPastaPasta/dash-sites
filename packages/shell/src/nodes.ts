@@ -1,4 +1,5 @@
 import type { PlatformReader } from '@dash-sites/core';
+import { selectBiasedCandidates, visitorCoords, type NodeGeo } from './geo.js';
 
 /** The masternode list from the quorum service the SDK uses for its trusted context. */
 interface Masternode {
@@ -11,6 +12,8 @@ export interface NodeOptions {
   /** `https://quorums.<network>.networks.dash.org`. */
   quorumUrl: string;
   fetch: typeof fetch;
+  /** Coarse node locations used to bias the probe pool toward nearby nodes. */
+  geo?: NodeGeo;
   /** Nodes tried at once. */
   tries?: number;
   /** Answers to wait for. */
@@ -44,16 +47,14 @@ export async function fastNodes(options: NodeOptions): Promise<string[] | undefi
       .filter((node) => node.status === 'ENABLED' && node.versionCheck === 'success')
       .map((node) => node.addresses?.platform_https?.[0])
       .filter((host): host is string => typeof host === 'string' && HOST.test(host));
-    for (let i = hosts.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [hosts[i], hosts[j]] = [hosts[j] as string, hosts[i] as string];
-    }
+    const visitor = visitorCoords(response.headers.get('x-amz-cf-pop'));
+    const selected = selectBiasedCandidates(hosts, visitor, options.geo, { tries });
     return await new Promise<string[] | undefined>((resolve) => {
       const answered: string[] = [];
       const settle = () => resolve(answered.length >= MIN_NODES ? answered.slice(0, keep) : undefined);
       stop.signal.addEventListener('abort', settle, { once: true });
       timer = setTimeout(() => stop.abort(), deadlineMs);
-      const probes = hosts.slice(0, tries).map(async (host) => {
+      const probes = selected.map(async (host) => {
         const address = `https://${host}`;
         const reply = await fetch(`${address}${PROBE_PATH}`, {
           method: 'POST',

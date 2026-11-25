@@ -65,6 +65,7 @@ function reload(): void {
 
 /** Resolves once the worker controls this page; rejects if its installation fails. */
 function controlled(registration: ServiceWorkerRegistration): Promise<void> {
+  if (navigator.serviceWorker.controller) return Promise.resolve();
   return new Promise((resolve, reject) => {
     navigator.serviceWorker.addEventListener('controllerchange', () => resolve(), { once: true });
     const worker = registration.installing ?? registration.waiting;
@@ -85,6 +86,11 @@ async function start(): Promise<void> {
   navigator.serviceWorker.addEventListener('message', (event: MessageEvent<{ dashSitesProgress?: number }>) => {
     const share = event.data?.dashSitesProgress;
     if (typeof share !== 'number' || document.body.classList.contains('failed')) return;
+    if (share >= 1) {
+      advance(0.95, true);
+      say(`Asking Dash Platform who owns ${label}.dash and checking the proof.`);
+      return;
+    }
     advance(share * 0.8);
     say(`Downloading the verifier, about 6 MB: ${Math.round(share * 100)}%. This happens once.`);
   });
@@ -93,11 +99,14 @@ async function start(): Promise<void> {
     const registration = await navigator.serviceWorker.register('/sw.js');
     if (registration.active) return reload();
     await controlled(registration);
-    advance(0.95, true);
   }
-  say(`Asking Dash Platform who owns ${label}.dash and checking the proof.`);
+  if (shown >= 0.8) say(`Asking Dash Platform who owns ${label}.dash and checking the proof.`);
   const response = await fetch('/.well-known/dash/site.json');
   if (response.status >= 500) {
+    const detail = (await response.json().catch(() => undefined)) as { reason?: string; message?: string } | undefined;
+    if (detail?.reason === 'verifier') {
+      return fail(`The verifier could not start: ${detail.message ?? 'Reload to try again.'}`);
+    }
     return fail(`Your browser could not get a proved answer about ${label}.dash from Dash Platform. Reload to try again.`, 'Dash Platform could not be reached');
   }
   const record = (await response.json()) as { proof?: { height: number } };

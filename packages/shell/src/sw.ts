@@ -5,6 +5,7 @@ import {
   ipfsFetcher,
   IPFS_MODULE,
   matchesFile,
+  parseName,
   readerConfig,
   startIpfs,
   toHex,
@@ -12,10 +13,12 @@ import {
   type PlatformReader,
 } from '@dash-sites/core';
 import { hostedDenylist } from './hosted-denylist.js';
-import { resetLocation, SiteHost, type Reply } from './host.js';
+import { parseSaved, resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Inflater } from './inflate.js';
-import { fastNodes, unpinOnFailure } from './nodes.js';
+import { NODE_GEO } from './node-geo.js';
+import { unpinOnFailure } from './nodes.js';
+import { PlatformPrefetch } from './prefetch.js';
 import type { Verifier } from './verifier.js';
 
 declare const self: ServiceWorkerGlobalScope & { dashSitesVerifier?: Verifier };
@@ -35,10 +38,53 @@ interface Pinned {
   size: number;
 }
 
+class VerifierError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VerifierError';
+  }
+}
+
+const nativeFetch = globalThis.fetch.bind(globalThis);
+
 const matches = async (bytes: Uint8Array, file: Pinned): Promise<boolean> =>
   toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))) === file.sha256;
 
 const VERIFIER_URLS = [__VERIFIER__.url, __SDK__.url];
+/** Where this worker keeps its copy of the IPFS client, which it downloads from npm by hash. */
+const IPFS_KEY = `/dash-sites-module-${IPFS_MODULE.sha256}`;
+const KEPT_URLS = [...VERIFIER_URLS, IPFS_KEY];
+
+const label = self.location.hostname.split('.')[0] as string;
+const parsedLabel = parseName(label);
+const config = readerConfig(__NETWORK__ as Network, __CONTRACT_ID__);
+const store = new BrowserStore(KEPT_URLS);
+const firstVisit = store.loadState().then(
+  (saved) => !parseSaved(saved),
+  () => true,
+);
+
+const QUORUM_URL = __NETWORK__ === 'mainnet' || __NETWORK__ === 'testnet' ? `https://quorums.${__NETWORK__}.networks.dash.org` : '';
+/** How long a worker whose verifier is ready waits for the node pick when fewer than 2 nodes have answered. */
+const NODE_GRACE_MS = 400;
+
+const prefetch = new PlatformPrefetch({
+  quorumUrl: QUORUM_URL,
+  fetch: nativeFetch,
+  geo: NODE_GEO[__NETWORK__ as Network],
+  contractId: config.contractId,
+  normalizedLabel: parsedLabel?.normalized,
+  preload: firstVisit,
+});
+globalThis.fetch = prefetch.wrapFetch(nativeFetch);
+
+const pendingWrites = new Set<Promise<unknown>>();
+function trackWrite(work: Promise<unknown> | undefined): void {
+  if (!work) return;
+  const settled = work.catch(() => undefined).finally(() => pendingWrites.delete(settled));
+  pendingWrites.add(settled);
+}
+const flushWrites = (): Promise<unknown> => Promise.all([...pendingWrites]);
 
 /**
  * The verifier is two files: its script, and the Dash SDK's WebAssembly served compressed with brotli.
@@ -47,12 +93,12 @@ const VERIFIER_URLS = [__VERIFIER__.url, __SDK__.url];
  * every read is checked against the hash this worker was built with, and nothing runs before that.
  */
 async function loadVerifier(): Promise<{ verifier: Verifier; sdk: WebAssembly.Module }> {
-  void pickNodes();
+  prefetch.start();
   const cache = await caches.open(SHELL_CACHE).catch(() => undefined);
   const keptSdk = kept(cache, __SDK__);
   // The SDK is most of the bytes, so its download starts while the script is still coming.
   const early = new AbortController();
-  const sdkResponse = keptSdk.then((bytes) => (bytes ? undefined : fetch(__SDK__.url, { signal: early.signal }))).catch(() => undefined);
+  const sdkResponse = keptSdk.then((bytes) => (bytes ? undefined : nativeFetch(__SDK__.url, { signal: early.signal }))).catch(() => undefined);
   let verifier: Verifier;
   try {
     const source = (await kept(cache, __VERIFIER__)) ?? (await downloadChecked(cache, __VERIFIER__, (body) => collect(body, __VERIFIER__.size)));
@@ -60,9 +106,10 @@ async function loadVerifier(): Promise<{ verifier: Verifier; sdk: WebAssembly.Mo
     verifier = self.dashSitesVerifier as Verifier;
   } catch (error) {
     early.abort();
-    throw error;
+    throw error instanceof VerifierError ? error : new VerifierError(error instanceof Error ? error.message : String(error));
   }
   const wasm = (await keptSdk) ?? (await downloadChecked(cache, __SDK__, (body) => inflate(body, verifier.inflater()), await sdkResponse));
+  void progress(1);
   return { verifier, sdk: await WebAssembly.compile(wasm as BufferSource) };
 }
 
@@ -88,13 +135,17 @@ async function downloadChecked(
 ): Promise<Uint8Array> {
   const attempt = async (response: Response | Promise<Response>): Promise<Uint8Array | undefined> => {
     const { ok, status, body } = await response;
-    if (!ok || !body) throw new Error(`the verifier could not be downloaded (${status})`);
+    if (!ok || !body) throw new VerifierError(`the verifier could not be downloaded (${status})`);
     const bytes = await decode(body);
     return (await matches(bytes, file)) ? bytes : undefined;
   };
-  const bytes = (await attempt(first ?? fetch(file.url)).catch(() => undefined)) ?? (await attempt(fetch(file.url, { cache: 'reload' })));
-  if (!bytes) throw new Error('the verifier does not match the hash this worker was built with');
-  await cache?.put(file.url, new Response(bytes as BodyInit)).catch(() => undefined);
+  const bytes =
+    (await attempt(first ?? nativeFetch(file.url)).catch(() => undefined)) ??
+    (await attempt(nativeFetch(file.url, { cache: 'reload' })).catch((error: unknown) => {
+      throw error instanceof VerifierError ? error : new VerifierError(error instanceof Error ? error.message : String(error));
+    }));
+  if (!bytes) throw new VerifierError('the verifier does not match the hash this worker was built with');
+  trackWrite(cache?.put(file.url, new Response(bytes as BodyInit)));
   return bytes;
 }
 
@@ -111,19 +162,25 @@ async function collect(
   const bytes = new Uint8Array(size);
   let loaded = 0;
   let told = 0;
+  let lastYield = Date.now();
   const reader = body.getReader();
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) return bytes.subarray(0, loaded);
       for (const out of transform(value, size - loaded)) {
-        if (loaded + out.length > size) throw new Error('the verifier is larger than the one this worker was built with');
+        if (loaded + out.length > size) throw new VerifierError('the verifier is larger than the one this worker was built with');
         bytes.set(out, loaded);
         loaded += out.length;
       }
-      if (tell && Date.now() - told > 100) {
-        told = Date.now();
+      const now = Date.now();
+      if (tell && now - told > 100) {
+        told = now;
         tell(loaded / size);
+      }
+      if (now - lastYield > 12) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        lastYield = Date.now();
       }
     }
   } catch (error) {
@@ -136,7 +193,7 @@ async function collect(
 async function inflate(body: ReadableStream<Uint8Array>, inflater: Inflater): Promise<Uint8Array> {
   try {
     const bytes = await collect(body, __SDK__.size, (chunk, room) => inflater.push(chunk, room), (share) => void progress(share));
-    if (!inflater.done) throw new Error('the verifier download was cut short');
+    if (!inflater.done) throw new VerifierError('the verifier download was cut short');
     return bytes;
   } finally {
     inflater.free();
@@ -157,16 +214,6 @@ function retryable<T>(start: () => Promise<T>): () => Promise<T> {
     }));
 }
 
-const QUORUM_URL = __NETWORK__ === 'mainnet' || __NETWORK__ === 'testnet' ? `https://quorums.${__NETWORK__}.networks.dash.org` : '';
-/** How long a worker whose verifier is ready waits for the node pick; a restarted worker gets here fast. */
-const NODE_GRACE_MS = 600;
-let nodes: Promise<string[] | undefined> | undefined;
-/** Started with the verifier download, so that by the time the SDK runs its nodes are warm. */
-function pickNodes(): Promise<string[] | undefined> {
-  nodes ??= QUORUM_URL ? fastNodes({ quorumUrl: QUORUM_URL, fetch: (input, init) => fetch(input, init) }) : Promise.resolve(undefined);
-  return nodes;
-}
-
 const load = retryable(loadVerifier);
 let pinned = true;
 let reader: Promise<PlatformReader> | undefined;
@@ -181,9 +228,8 @@ function connect(): Promise<PlatformReader> {
 
 async function open(): Promise<PlatformReader> {
   const { verifier, sdk } = await load();
-  const grace = new Promise<undefined>((resolve) => setTimeout(resolve, NODE_GRACE_MS));
-  const addresses = pinned ? await Promise.race([pickNodes(), grace]) : undefined;
-  const opened = await verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk, addresses);
+  const addresses = pinned && QUORUM_URL ? await prefetch.takeAddresses(NODE_GRACE_MS, 1) : undefined;
+  const opened = await verifier.connect(config, sdk, addresses);
   return addresses ? unpinOnFailure(opened, unpin) : opened;
 }
 
@@ -195,10 +241,6 @@ function unpin(): Promise<PlatformReader> {
   }
   return connect();
 }
-
-/** Where this worker keeps its copy of the IPFS client, which it downloads from npm by hash. */
-const IPFS_KEY = `/dash-sites-module-${IPFS_MODULE.sha256}`;
-const KEPT_URLS = [...VERIFIER_URLS, IPFS_KEY];
 
 /**
  * The IPFS client is fetched the first time a site asks for a file at an IPFS place, and never
@@ -213,9 +255,26 @@ const loadIpfs = retryable(async () => {
   const kept = stored && new Uint8Array(stored);
   if (kept && (await matchesFile(kept, IPFS_MODULE))) return startIpfs(kept, { routers: __IPFS_ROUTERS__ });
   const source = await fetchPinned(IPFS_MODULE);
-  await cache?.put(IPFS_KEY, new Response(source as BodyInit)).catch(() => undefined);
+  trackWrite(cache?.put(IPFS_KEY, new Response(source as BodyInit)));
   return startIpfs(source, { routers: __IPFS_ROUTERS__ });
 });
+
+async function decompressBrotli(data: Uint8Array, size: number): Promise<Uint8Array> {
+  const { verifier } = await load();
+  const inflater = verifier.inflater();
+  try {
+    const out = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of inflater.push(data, size)) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    if (!inflater.done || offset !== size) throw new Error('brotli stream did not match expected size');
+    return out;
+  } finally {
+    inflater.free();
+  }
+}
 
 /** Earlier versions' verifier and module files are dropped once this worker is in charge. */
 async function pruneShellCache(): Promise<void> {
@@ -238,7 +297,7 @@ const DENYLIST_URL = '/.well-known/dash-gateway/denylist.json';
 const hostedDenied = __DENYLIST__
   ? hostedDenylist({
       fetchList: async () => {
-        const response = await fetch(DENYLIST_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        const response = await nativeFetch(DENYLIST_URL, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
         return response.ok ? ((await response.json()) as unknown) : undefined;
       },
       load: async () => (await (await caches.open(SHELL_CACHE)).match(DENYLIST_URL))?.json() as Promise<unknown>,
@@ -247,11 +306,12 @@ const hostedDenied = __DENYLIST__
   : undefined;
 
 const host = new SiteHost({
-  label: self.location.hostname.split('.')[0] as string,
+  label,
   network: __NETWORK__,
   reader: connect,
-  store: new BrowserStore(KEPT_URLS),
+  store,
   places: { https: httpsFetcher(), ipfs: ipfsFetcher(loadIpfs) },
+  brotli: decompressBrotli,
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
   onNewerFormat: () => void self.registration.update().catch(() => undefined),
@@ -271,7 +331,14 @@ function toResponse(reply: Reply, request: Request): Response {
   return new Response(request.method === 'HEAD' || reply.body === undefined ? null : (reply.body as BodyInit), { status: reply.status, headers });
 }
 
-self.addEventListener('install', (event) => event.waitUntil(load().then(() => self.skipWaiting())));
+self.addEventListener('install', (event) => {
+  if (self.registration.active) {
+    event.waitUntil(load().then(() => self.skipWaiting()));
+    return;
+  }
+  void load().catch(() => undefined);
+  event.waitUntil(self.skipWaiting());
+});
 self.addEventListener('activate', (event) => event.waitUntil(Promise.all([self.clients.claim(), pruneShellCache().catch(() => undefined)])));
 self.addEventListener('fetch', (event) => {
   const { request } = event;
@@ -283,16 +350,16 @@ self.addEventListener('fetch', (event) => {
   }
   if (request.mode === 'navigate' && request.destination === 'document' && !host.proved) {
     event.respondWith(new Response(__BOOT_PAGE__, { headers: BOOT_HEADERS }));
-    event.waitUntil(host.prove().catch(() => undefined));
+    event.waitUntil(host.prove().catch(() => undefined).then(flushWrites));
     return;
   }
-  event.respondWith(
-    host
-      .respond({ url, navigation: request.mode === 'navigate', topLevel: request.destination === 'document', range: request.headers.get('range'), waitUntil: (work) => event.waitUntil(work) })
-      .then((reply) => toResponse(reply, request))
-      .catch((error: unknown) => {
-        console.error('dash-sites', error);
-        return new Response('The verifier failed while loading this file.\n', { status: 500, headers: { 'Content-Type': 'text/plain' } });
-      }),
-  );
+  const reply = host
+    .respond({ url, navigation: request.mode === 'navigate', topLevel: request.destination === 'document', range: request.headers.get('range'), waitUntil: (work) => event.waitUntil(work) })
+    .then((result) => toResponse(result, request))
+    .catch((error: unknown) => {
+      console.error('dash-sites', error);
+      return new Response('The verifier failed while loading this file.\n', { status: 500, headers: { 'Content-Type': 'text/plain' } });
+    });
+  event.respondWith(reply);
+  event.waitUntil(reply.then(flushWrites, flushWrites));
 });

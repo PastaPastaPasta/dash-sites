@@ -104,14 +104,16 @@ async function seedContracts(sdk: EvoSDK, config: NetworkConfig): Promise<void> 
     }
   }
   if (known.length === 0) return;
-  void (async () => {
+  const check = async (): Promise<void> => {
     const latest = await sdk.contracts.getLatestVersions({ contractIds: known.map(([id]) => id) });
     const stale = known.filter(([id, { version }]) => latest.get(id) !== undefined && latest.get(id)?.version !== version).map(([id]) => id);
     if (stale.length === 0) return;
     for (const entry of (await sdk.contracts.getLatestVersions({ contractIds: stale, includeContracts: true })).values()) {
       if (entry?.dataContract) await sdk.contracts.addKnown(entry.dataContract);
     }
-  })().catch(() => undefined);
+  };
+  const timer = setTimeout(() => void check().catch(() => undefined), 1500);
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref();
 }
 
 /** How long a Platform read may wait for its response headers before it counts as failed. */

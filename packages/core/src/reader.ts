@@ -83,6 +83,8 @@ export interface Outside {
   external?: ExternalSource;
   /** Fetches a file kept at places (`src`). Defaults to fetching nothing. */
   elsewhere?: (path: string, file: ManifestFile) => Promise<Uint8Array>;
+  /** Decompresses a brotli-encoded file (`enc: "br"`). Defaults to the bundled JS decoder. */
+  brotli?: (data: Uint8Array, size: number) => Uint8Array | Promise<Uint8Array>;
 }
 
 /** Reads one file of a manifest and checks it against the manifest's size and hash. */
@@ -113,7 +115,12 @@ export async function readFile(manifest: Manifest, path: string, source: ChunkSo
   let bytes = stored;
   if (file.enc) {
     try {
-      bytes = file.enc === 'gzip' ? gunzip(stored, file.size) : (await import('brotli/decompress')).decompress(stored, file.size);
+      bytes =
+        file.enc === 'gzip'
+          ? gunzip(stored, file.size)
+          : outside.brotli
+            ? await outside.brotli(stored, file.size)
+            : (await import('brotli/decompress')).decompress(stored, file.size);
     } catch (error) {
       throw new ContentError(`${path} cannot be decompressed: ${(error as Error).message}`);
     }
