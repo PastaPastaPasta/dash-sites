@@ -1,9 +1,10 @@
 import { concat, sha256Hex } from './bytes.js';
 import { formatContentUri } from './content.js';
 import { gzip } from './gzip.js';
-import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_MANIFEST_BYTES, MAX_MANIFEST_CHUNKS, type Limits } from './limits.js';
+import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_ELSEWHERE_FILE_BYTES, MAX_MANIFEST_BYTES, MAX_MANIFEST_CHUNKS, MAX_PLACES, type Limits } from './limits.js';
 import { encodeManifest, isValidContentType, isValidPath, type Manifest, type ManifestFile, type Part } from './manifest.js';
 import { contentTypeFor, isCompressible } from './mime.js';
+import { parsePlace } from './places.js';
 
 export interface SiteFile {
   /** Absolute site path, e.g. `/index.html`. */
@@ -11,6 +12,11 @@ export interface SiteFile {
   bytes: Uint8Array;
   /** Defaults to a type derived from the extension. */
   type?: string;
+  /**
+   * Places outside Platform that hold these bytes. The file is then not stored on Platform: the
+   * manifest keeps its size, its hash and this list.
+   */
+  src?: string[];
 }
 
 export interface SiteBundle {
@@ -20,7 +26,8 @@ export interface SiteBundle {
   contentUri: string;
   /** Every chunk to store, manifest chunks included, by hash. */
   chunks: Map<string, Uint8Array>;
-  stats: { files: number; bytes: number; storedBytes: number; chunks: number };
+  /** `bytes` and `storedBytes` count the files stored on Platform; `elsewhere` counts the rest. */
+  stats: { files: number; bytes: number; storedBytes: number; chunks: number; elsewhere: { files: number; bytes: number } };
 }
 
 export class PackError extends Error {
@@ -70,6 +77,10 @@ class ChunkWriter {
   }
 }
 
+function fail(message: string): never {
+  throw new PackError(message);
+}
+
 function split(data: Uint8Array): Uint8Array[] {
   const out: Uint8Array[] = [];
   for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) out.push(data.subarray(offset, offset + CHUNK_SIZE));
@@ -89,12 +100,24 @@ export function buildSite(files: SiteFile[], options: { spa?: boolean; limits?: 
   const entries: Record<string, ManifestFile> = {};
   let bytes = 0;
   let storedBytes = 0;
+  const elsewhere = { files: 0, bytes: 0 };
 
   for (const file of sorted) {
     if (!isValidPath(file.path)) throw new PackError(`invalid path: ${file.path}`);
     if (entries[file.path]) throw new PackError(`duplicate path: ${file.path}`);
     const type = file.type ?? contentTypeFor(file.path);
     if (!isValidContentType(type)) throw new PackError(`invalid content type for ${file.path}: ${type}`);
+    if (file.src) {
+      if (file.src.length === 0 || file.src.length > MAX_PLACES) throw new PackError(`${file.path} needs between 1 and ${MAX_PLACES} places`);
+      const places = file.src.map((uri) => parsePlace(uri)?.uri ?? fail(`${file.path}: not an https:// address or an ipfs:// CID: ${uri}`));
+      if (new Set(places).size !== places.length) throw new PackError(`${file.path} lists a place twice`);
+      if (file.bytes.length === 0) throw new PackError(`${file.path} is empty, so it cannot be stored elsewhere`);
+      if (file.bytes.length > MAX_ELSEWHERE_FILE_BYTES) throw new PackError(`${file.path} is larger than ${MAX_ELSEWHERE_FILE_BYTES} bytes`);
+      elsewhere.files++;
+      elsewhere.bytes += file.bytes.length;
+      entries[file.path] = { type, size: file.bytes.length, sha256: sha256Hex(file.bytes), parts: [], src: places };
+      continue;
+    }
     bytes += file.bytes.length;
     if (bytes > limits.maxSiteBytes) throw new PackError(`site is larger than ${limits.maxSiteBytes} bytes`);
 
@@ -117,7 +140,7 @@ export function buildSite(files: SiteFile[], options: { spa?: boolean; limits?: 
   }
   writer.flush();
 
-  const manifest: Manifest = { v: 1, chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
+  const manifest: Manifest = { v: elsewhere.files > 0 ? 2 : 1, chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
   const encoded = encodeManifest(manifest);
   if (encoded.length > MAX_MANIFEST_BYTES) throw new PackError('manifest is too large');
   const manifestPieces = split(gzip(encoded));
@@ -134,6 +157,6 @@ export function buildSite(files: SiteFile[], options: { spa?: boolean; limits?: 
     manifestChunks,
     contentUri: formatContentUri({ scheme: 'dash-manifest', chunks: manifestChunks }),
     chunks,
-    stats: { files: sorted.length, bytes, storedBytes, chunks: chunks.size },
+    stats: { files: sorted.length, bytes, storedBytes, chunks: chunks.size, elsewhere },
   };
 }

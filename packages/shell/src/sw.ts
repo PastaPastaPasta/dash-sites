@@ -1,5 +1,16 @@
 /// <reference lib="webworker" />
-import { readerConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
+import {
+  fetchPinned,
+  httpsFetcher,
+  ipfsFetcher,
+  IPFS_MODULE,
+  matchesFile,
+  readerConfig,
+  startIpfs,
+  toHex,
+  type Network,
+  type PlatformReader,
+} from '@dash-sites/core';
 import { hostedDenylist } from './hosted-denylist.js';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
@@ -15,6 +26,7 @@ declare const __CONTRACT_ID__: string;
 declare const __BUILDER_URL__: string;
 declare const __DENYLIST__: boolean;
 declare const __BOOT_PAGE__: string;
+declare const __IPFS_ROUTERS__: string[];
 
 /** A file this worker was built with: where it is served, and the SHA-256 and size of its bytes. */
 interface Pinned {
@@ -184,12 +196,33 @@ function unpin(): Promise<PlatformReader> {
   return connect();
 }
 
-/** Earlier versions' verifier files are dropped once this worker is in charge. */
+/** Where this worker keeps its copy of the IPFS client, which it downloads from npm by hash. */
+const IPFS_KEY = `/dash-sites-module-${IPFS_MODULE.sha256}`;
+const KEPT_URLS = [...VERIFIER_URLS, IPFS_KEY];
+
+/**
+ * The IPFS client is fetched the first time a site asks for a file at an IPFS place, and never
+ * for a site that lists none. Like the verifier, the stored copy is checked on every read.
+ */
+const loadIpfs = retryable(async () => {
+  const cache = await caches.open(SHELL_CACHE).catch(() => undefined);
+  const stored = await cache
+    ?.match(IPFS_KEY)
+    .then((response) => response?.arrayBuffer())
+    .catch(() => undefined);
+  const kept = stored && new Uint8Array(stored);
+  if (kept && (await matchesFile(kept, IPFS_MODULE))) return startIpfs(kept, { routers: __IPFS_ROUTERS__ });
+  const source = await fetchPinned(IPFS_MODULE);
+  await cache?.put(IPFS_KEY, new Response(source as BodyInit)).catch(() => undefined);
+  return startIpfs(source, { routers: __IPFS_ROUTERS__ });
+});
+
+/** Earlier versions' verifier and module files are dropped once this worker is in charge. */
 async function pruneShellCache(): Promise<void> {
   const cache = await caches.open(SHELL_CACHE);
-  const current = new Set(VERIFIER_URLS.map((url) => new URL(url, self.location.href).href));
+  const current = new Set(KEPT_URLS.map((url) => new URL(url, self.location.href).href));
   for (const request of await cache.keys()) {
-    if (new URL(request.url).pathname.startsWith('/dash-sites-verifier-') && !current.has(request.url)) await cache.delete(request);
+    if (/^\/dash-sites-(verifier|module)-/.test(new URL(request.url).pathname) && !current.has(request.url)) await cache.delete(request);
   }
 }
 
@@ -217,7 +250,8 @@ const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,
   network: __NETWORK__,
   reader: connect,
-  store: new BrowserStore(VERIFIER_URLS),
+  store: new BrowserStore(KEPT_URLS),
+  places: { https: httpsFetcher(), ipfs: ipfsFetcher(loadIpfs) },
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
   denied: hostedDenied,

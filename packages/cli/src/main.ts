@@ -11,6 +11,7 @@ import {
   parseName,
   publishPointer,
   publishSite,
+  readElsewhere,
   readFile,
   decide,
   requireOwnedName,
@@ -23,10 +24,13 @@ import { MemoryPlatform } from '@dash-sites/core/memory';
 import { EvoReader, EvoWriter, registerContract, type Credentials } from '@dash-sites/core/evo';
 import { createGateway, emptyDenylist, parseDomain } from '@dash-sites/gateway';
 import { readSiteDirectory } from './files.js';
+import { checkPlaces, cliPlaces, parsePlaceMap, storeElsewhere, type CliPlaces } from './places.js';
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
   dash-sites publish <dir> --name <name> [--spa] [--dry-run]   publish a folder as <name>.dash
+      [--elsewhere <file>]                                     keep some files outside Platform (see below)
+  dash-sites check <name>                                      ask every outside place of a site for its file
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
   dash-sites unpublish --name <name>                           remove the site record
   dash-sites gc                                                delete stored chunks no site uses
@@ -46,6 +50,14 @@ Options
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity
+
+Files kept outside Platform
+  --elsewhere takes a JSON file that maps site paths to the places holding them, each an
+  https:// address or an ipfs:// CID:  { "/img/hero.webp": ["ipfs://bafy...", "https://media.example.com/hero.webp"] }
+  Platform then stores only the file's size, its hash and that list. Visitors' browsers fetch the
+  file from the first place that serves those exact bytes. Upload the file with your provider's own
+  tools first: publish asks every place and stops if one does not serve it. A file that is not in
+  the folder is taken from its first place. An https:// place must allow reading from other sites.
 `;
 
 interface IdentityFile {
@@ -71,6 +83,7 @@ const { values, positionals } = parseArgs({
     port: { type: 'string', default: '8080' },
     domain: { type: 'string', default: 'localhost' },
     output: { type: 'string', short: 'o' },
+    elsewhere: { type: 'string' },
     spa: { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -99,6 +112,10 @@ function requireName(): string {
   if (!values.name || !parseName(values.name)) fail('--name must be a DPNS name such as alice or alice.dash');
   return values.name;
 }
+
+let places: CliPlaces | undefined;
+/** The origin a site is served on decides nothing here; it only makes storage hosts answer as they would a browser. */
+const outside = (label = 'site'): CliPlaces => (places ??= cliPlaces(`https://${label.toLowerCase()}.dash.site`));
 
 const print = (value: unknown): void => console.log(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
 
@@ -129,8 +146,15 @@ const commands: Record<string, () => Promise<void>> = {
   async publish() {
     const dir = positionals[1] ?? fail('publish needs a directory');
     const name = requireName();
-    const bundle = buildSite(await readSiteDirectory(dir), { spa: values.spa });
-    console.error(`${bundle.stats.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
+    let files = await readSiteDirectory(dir);
+    if (values.elsewhere) {
+      const map = parsePlaceMap(JSON.parse(readFileSync(values.elsewhere, 'utf8')));
+      files = await storeElsewhere(files, map, outside(parseName(name)?.label).fetchers, (line) => console.error(line));
+    }
+    const bundle = buildSite(files, { spa: values.spa });
+    const { elsewhere } = bundle.stats;
+    console.error(`${bundle.stats.files - elsewhere.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
+    if (elsewhere.files > 0) console.error(`${elsewhere.files} files, ${elsewhere.bytes} bytes kept outside Platform`);
     if (!bundle.manifest.files['/index.html']) console.error('warning: the site has no /index.html');
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
@@ -188,9 +212,23 @@ const commands: Record<string, () => Promise<void>> = {
     const manifest = await loadManifest(resolution.content, source);
     const decision = decide(manifest, positionals[2] ?? '/');
     if (decision.kind !== 'file') fail(`no file at ${positionals[2] ?? '/'}`);
-    const { bytes } = await readFile(manifest, decision.path, source);
+    const { fetchers } = outside(resolution.canonicalLabel);
+    const { bytes } = await readFile(manifest, decision.path, source, (path, file) => readElsewhere(path, file, fetchers));
     if (values.output) writeFileSync(values.output, bytes);
     else process.stdout.write(bytes);
+  },
+
+  async check() {
+    const name = positionals[1] ?? fail('check needs a name');
+    const reader = await EvoReader.connect(network());
+    const resolution = await resolveName(reader, name);
+    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
+    const manifest = await loadManifest(resolution.content, (hashes) => reader.getChunks(resolution.ownerId, hashes));
+    const count = Object.values(manifest.files).filter((file) => file.src).length;
+    if (count === 0) return console.log(`${resolution.canonicalLabel}.dash keeps every file on Platform`);
+    const good = await checkPlaces(manifest.files, outside(resolution.canonicalLabel).fetchers, (line) => console.log(line));
+    console.log(good ? `every one of the ${count} files kept outside Platform can be loaded` : 'some files cannot be loaded from any place they list');
+    if (!good) process.exitCode = 1;
   },
 
   async gateway() {
@@ -220,4 +258,9 @@ if (values.help || !command) {
   console.log(USAGE);
   process.exit(values.help || positionals.length === 0 ? 0 : 1);
 }
-command().catch((error: unknown) => fail(String((error as Error)?.message ?? error)));
+command().then(
+  () => {
+    if (places?.ipfsStarted()) process.exit(process.exitCode ?? 0);
+  },
+  (error: unknown) => fail(String((error as Error)?.message ?? error)),
+);

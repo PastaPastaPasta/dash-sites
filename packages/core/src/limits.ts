@@ -12,6 +12,10 @@ export const MAX_PATH_BYTES = 512;
 export const MAX_SITE_BYTES = 50 * 1024 * 1024;
 export const MAX_SITE_CHUNKS = Math.ceil(MAX_SITE_BYTES / CHUNK_SIZE) + MAX_FILES;
 export const MAX_TYPE_LENGTH = 128;
+/** A file stored outside Platform is read whole before any of it is served, so its size is capped. */
+export const MAX_ELSEWHERE_FILE_BYTES = 64 * 1024 * 1024;
+export const MAX_PLACES = 8;
+export const MAX_PLACE_LENGTH = 2048;
 
 export interface Limits {
   maxSiteBytes: number;

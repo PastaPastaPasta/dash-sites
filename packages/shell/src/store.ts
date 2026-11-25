@@ -10,8 +10,8 @@ const WIPE_LIMIT_MS = 5000;
 
 /** Keeps host state and verified chunks in the origin's Cache Storage. */
 export class BrowserStore implements Store {
-  /** `verifierUrls` are the entries a wipe keeps, so that a reset does not download the verifier again. */
-  constructor(private readonly verifierUrls: string[]) {}
+  /** `keptUrls` are the entries a wipe keeps, so that a reset does not download the verifier again. */
+  constructor(private readonly keptUrls: string[]) {}
 
   private cache(): Promise<Cache> {
     return caches.open(CACHE);
@@ -40,7 +40,7 @@ export class BrowserStore implements Store {
       async () => Promise.all((await caches.keys()).filter((name) => name !== SHELL_CACHE).map((name) => caches.delete(name))),
       async () => {
         const shell = await caches.open(SHELL_CACHE);
-        const keep = new Set(this.verifierUrls.map((url) => new URL(url, location.href).href));
+        const keep = new Set(this.keptUrls.map((url) => new URL(url, location.href).href));
         for (const request of await shell.keys()) if (!keep.has(request.url)) await shell.delete(request);
       },
       async () => {

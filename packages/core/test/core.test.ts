@@ -174,7 +174,7 @@ describe('manifest validation', () => {
 
   it('rejects malformed manifests', () => {
     const cases: Array<[string, (m: any) => void]> = [
-      ['version', (m) => (m.v = 2)],
+      ['version', (m) => (m.v = 3)],
       ['extra key', (m) => (m.extra = 1)],
       ['chunk hash', (m) => (m.chunks[0] = 'zz')],
       ['duplicate chunk', (m) => m.chunks.push(m.chunks[0])],

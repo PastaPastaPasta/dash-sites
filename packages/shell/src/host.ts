@@ -1,5 +1,6 @@
 import {
   ContentError,
+  ElsewhereError,
   HOST_API,
   ManifestError,
   DENIED_TITLE,
@@ -10,13 +11,17 @@ import {
   escapeHtml,
   hostPage,
   loadManifest,
+  matchesFile,
   messagePage,
   nameFromPath,
+  readElsewhere,
   readFile,
   resolveName,
   sha256Hex,
   type ChunkSource,
   type Manifest,
+  type ManifestFile,
+  type PlaceFetchers,
   type PlatformReader,
   type Resolution,
 } from '@dash-sites/core';
@@ -73,6 +78,8 @@ export interface HostOptions {
   network: string;
   reader: () => Promise<PlatformReader>;
   store: Store;
+  /** How files kept outside Platform are fetched, by kind of place. None by default. */
+  places?: PlaceFetchers;
   builderUrl: string;
   now?: () => number;
   /** The name changed owner while this worker was serving it: open pages show the previous owner's site. */
@@ -115,6 +122,7 @@ export class SiteHost {
   private refreshing?: Promise<Resolution>;
   private resetNonce?: string;
   private readonly manifests = new Map<string, Promise<Manifest>>();
+  private readonly fetching = new Map<string, Promise<Uint8Array>>();
 
   constructor(private readonly options: HostOptions) {
     this.now = options.now ?? Date.now;
@@ -218,6 +226,22 @@ export class SiteHost {
     };
   }
 
+  /**
+   * A file kept outside Platform: the browser's copy when it still matches, else a download from
+   * the places the manifest lists, shared by the requests that want the same file at once.
+   */
+  private readonly elsewhere = async (path: string, file: ManifestFile): Promise<Uint8Array> => {
+    const kept = await this.options.store.getChunk(file.sha256).catch(() => undefined);
+    if (kept && (await matchesFile(kept, file))) return kept;
+    let download = this.fetching.get(file.sha256);
+    if (!download) {
+      download = readElsewhere(path, file, this.options.places ?? {}).finally(() => this.fetching.delete(file.sha256));
+      this.fetching.set(file.sha256, download);
+      void download.then((bytes) => this.options.store.putChunk(file.sha256, bytes)).catch(() => undefined);
+    }
+    return download;
+  };
+
   private manifestFor(resolution: Ok): Promise<Manifest> {
     const ref = resolution.content;
     if (ref.scheme !== 'dash-manifest') return Promise.reject(new ContentError('not stored on Dash Platform'));
@@ -303,9 +327,13 @@ export class SiteHost {
     if (decision.kind === 'not-found') return this.page(404, '404', 'Page not found', `<code>${dashName}</code> has no page at this address.`);
     let file: Awaited<ReturnType<typeof readFile>>;
     try {
-      file = await readFile(manifest, decision.path, this.chunks(resolution.ownerId));
+      file = await readFile(manifest, decision.path, this.chunks(resolution.ownerId), this.elsewhere);
     } catch (error) {
       if (!(error instanceof ContentError)) throw error;
+      if (error instanceof ElsewhereError) {
+        this.options.log?.({ event: 'elsewhere-failed', path: error.path, attempts: error.attempts });
+        return this.page(502, 'Unavailable', 'This file cannot be shown', `<code>${dashName}</code> keeps this file outside Dash Platform, and none of the places its owner listed served the file that was published.`);
+      }
       return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');
     }
     const headers: Record<string, string> = {

@@ -105,7 +105,7 @@ const boot = await build({
   write: false,
   define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER_FILES__: JSON.stringify([verifierUrl, sdkUrl]) },
 });
-const { DENIED_TITLE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, readerConfig } = await import('@dash-sites/core');
+const { DENIED_TITLE, IPFS_MODULE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, moduleUrls, readerConfig } = await import('@dash-sites/core');
 if (hosted) writeFileSync(join(out, 'unavailable.html'), messagePage('451', DENIED_TITLE, deniedDetail('this name'), { builderUrl }));
 const script = boot.outputFiles[0].text.trim();
 
@@ -144,6 +144,8 @@ await build({
     __SDK__: JSON.stringify({ url: sdkUrl, sha256: sha256(sdkWasm), size: sdkWasm.length }),
     __DENYLIST__: JSON.stringify(hosted),
     __BOOT_PAGE__: JSON.stringify(html),
+    // Services asked which peers hold an IPFS CID; empty keeps the IPFS client's own default.
+    __IPFS_ROUTERS__: JSON.stringify((process.env.IPFS_ROUTERS ?? '').split(/[\s,]+/).filter(Boolean)),
   },
 });
 if (gatewayDomain) {
@@ -163,5 +165,7 @@ if (gatewayDomain) {
 }
 
 const hashes = Object.fromEntries(['index.html', 'sw.js', verifierName, sdkName].map((file) => [file, sha256(readFileSync(join(out, file)))]));
-writeFileSync(join(out, 'shell.json'), `${JSON.stringify({ network, hosted, gatewayDomain, files: hashes }, null, 2)}\n`);
+// `fetched` is what the worker downloads from elsewhere, by hash, when a site needs it: no host of the shell serves it.
+const fetched = { ipfs: { urls: moduleUrls(IPFS_MODULE), sha256: IPFS_MODULE.sha256 } };
+writeFileSync(join(out, 'shell.json'), `${JSON.stringify({ network, hosted, gatewayDomain, files: hashes, fetched }, null, 2)}\n`);
 console.log(out, hashes);

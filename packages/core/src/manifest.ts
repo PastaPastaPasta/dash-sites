@@ -2,11 +2,14 @@ import { isHash, utf8 } from './bytes.js';
 import {
   CHUNK_SIZE,
   DEFAULT_LIMITS,
+  MAX_ELSEWHERE_FILE_BYTES,
   MAX_PATH_BYTES,
+  MAX_PLACES,
   MAX_SITE_CHUNKS,
   MAX_TYPE_LENGTH,
   type Limits,
 } from './limits.js';
+import { isPlaceUri } from './places.js';
 
 /** `[chunkIndex, offset, length]`: a slice of one chunk. */
 export type Part = [number, number, number];
@@ -17,13 +20,21 @@ export interface ManifestFile {
   size: number;
   /** sha256 of the decoded file, hex. */
   sha256: string;
-  /** Present when the stored bytes are gzip. */
-  enc?: 'gzip';
+  /** How the stored bytes are encoded. `gzip` is the only encoding this version reads. */
+  enc?: string;
   parts: Part[];
+  /** Places outside Platform that hold the file, as URIs, tried in order. The file then has no parts. */
+  src?: string[];
 }
 
+/**
+ * Version 2 adds `src`. A version 2 reader ignores keys it does not know, skips places whose kind it
+ * does not know, and refuses only the files whose encoding it does not know, so later additions
+ * leave older readers serving everything they still understand. A change they must not ignore
+ * raises the version.
+ */
 export interface Manifest {
-  v: 1;
+  v: 1 | 2;
   chunks: string[];
   files: Record<string, ManifestFile>;
   spa?: boolean;
@@ -73,13 +84,23 @@ export function storedLength(file: ManifestFile): number {
   return total;
 }
 
+const ENCODING = /^[a-z0-9-]{1,16}$/;
+
+function validatePlaces(value: unknown, path: string): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_PLACES) throw new ManifestError(`bad src in ${path}`);
+  if (!value.every(isPlaceUri)) throw new ManifestError(`bad place in ${path}`);
+  if (new Set(value).size !== value.length) throw new ManifestError(`duplicate place in ${path}`);
+  return [...(value as string[])];
+}
+
 export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS): Manifest {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new ManifestError('not an object');
   const raw = input as Record<string, unknown>;
+  if (raw.v !== 1 && raw.v !== 2) throw new ManifestError('unsupported version');
+  const strict = raw.v === 1;
   for (const key of Object.keys(raw)) {
-    if (!['v', 'chunks', 'files', 'spa'].includes(key)) throw new ManifestError(`unknown key ${key}`);
+    if (strict && !['v', 'chunks', 'files', 'spa'].includes(key)) throw new ManifestError(`unknown key ${key}`);
   }
-  if (raw.v !== 1) throw new ManifestError('unsupported version');
   if (raw.spa !== undefined && typeof raw.spa !== 'boolean') throw new ManifestError('spa is not a boolean');
   const chunks = raw.chunks;
   if (!Array.isArray(chunks) || chunks.length > MAX_SITE_CHUNKS) throw new ManifestError('bad chunk table');
@@ -98,13 +119,20 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ManifestError(`bad entry ${path}`);
     const file = value as Record<string, unknown>;
     for (const key of Object.keys(file)) {
-      if (!['type', 'size', 'sha256', 'enc', 'parts'].includes(key)) throw new ManifestError(`unknown key ${key} in ${path}`);
+      if (strict && !['type', 'size', 'sha256', 'enc', 'parts'].includes(key)) throw new ManifestError(`unknown key ${key} in ${path}`);
     }
     if (typeof file.type !== 'string' || !isValidContentType(file.type)) throw new ManifestError(`bad type in ${path}`);
     if (!isUint(file.size)) throw new ManifestError(`bad size in ${path}`);
     if (!isHash(file.sha256)) throw new ManifestError(`bad sha256 in ${path}`);
-    if (file.enc !== undefined && file.enc !== 'gzip') throw new ManifestError(`bad enc in ${path}`);
+    if (file.enc !== undefined && (strict ? file.enc !== 'gzip' : typeof file.enc !== 'string' || !ENCODING.test(file.enc))) throw new ManifestError(`bad enc in ${path}`);
     if (!Array.isArray(file.parts)) throw new ManifestError(`bad parts in ${path}`);
+    if (file.src !== undefined) {
+      const src = validatePlaces(file.src, path);
+      if (file.parts.length > 0 || file.enc !== undefined) throw new ManifestError(`${path} is stored elsewhere and also on Platform`);
+      if (file.size === 0 || file.size > MAX_ELSEWHERE_FILE_BYTES) throw new ManifestError(`bad size in ${path}`);
+      out[path] = { type: file.type, size: file.size, sha256: file.sha256, parts: [], src };
+      continue;
+    }
     const parts: Part[] = [];
     let stored = 0;
     for (const part of file.parts) {
@@ -118,9 +146,9 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
     if (stored > limits.maxSiteBytes) throw new ManifestError(`file too large: ${path}`);
     total += file.size;
     if (total > limits.maxSiteBytes) throw new ManifestError('site too large');
-    out[path] = { type: file.type, size: file.size, sha256: file.sha256, parts, ...(file.enc ? { enc: file.enc } : {}) };
+    out[path] = { type: file.type, size: file.size, sha256: file.sha256, parts, ...(file.enc ? { enc: file.enc as string } : {}) };
   }
-  return { v: 1, chunks: chunks as string[], files: out, ...(raw.spa ? { spa: true } : {}) };
+  return { v: raw.v, chunks: chunks as string[], files: out, ...(raw.spa ? { spa: true } : {}) };
 }
 
 /** Canonical form: keys sorted, no whitespace, UTF-8. */
@@ -136,7 +164,7 @@ export function decodeManifest(bytes: Uint8Array, limits: Limits = DEFAULT_LIMIT
     throw new ManifestError('not UTF-8 JSON');
   }
   const manifest = validateManifest(parsed, limits);
-  const canonical = encodeManifest(manifest);
+  const canonical = manifest.v === 1 ? encodeManifest(manifest) : utf8.encode(JSON.stringify(sortKeys(parsed)));
   if (canonical.length !== bytes.length || canonical.some((byte, i) => byte !== bytes[i])) throw new ManifestError('not in canonical form');
   return manifest;
 }

@@ -3,6 +3,7 @@ import type { ContentRef } from './content.js';
 import { gunzip } from './gzip.js';
 import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_MANIFEST_BYTES, type Limits } from './limits.js';
 import { decodeManifest, type Manifest, type ManifestFile } from './manifest.js';
+import { matchesFile, tryPlace, type PlaceAttempt, type PlaceFetchers } from './places.js';
 
 /** Returns chunks by hash. Results are untrusted: the reader hashes every chunk. */
 export type ChunkSource = (hashes: string[]) => Promise<Map<string, Uint8Array>>;
@@ -12,6 +13,28 @@ export class ContentError extends Error {
     super(message);
     this.name = 'ContentError';
   }
+}
+
+/** No place a file lists served the bytes its owner published. The rest of the site is unaffected. */
+export class ElsewhereError extends ContentError {
+  constructor(
+    readonly path: string,
+    readonly attempts: PlaceAttempt[],
+  ) {
+    super(`${path} could not be loaded from where it is stored: ${attempts.map(({ place, problem }) => `${place}: ${problem}`).join('; ')}`);
+    this.name = 'ElsewhereError';
+  }
+}
+
+/** Fetches a file kept outside Platform from the first of its places that serves the published bytes. */
+export async function readElsewhere(path: string, file: ManifestFile, fetchers: PlaceFetchers): Promise<Uint8Array> {
+  const attempts: PlaceAttempt[] = [];
+  for (const place of file.src ?? []) {
+    const result = await tryPlace(place, file, fetchers);
+    if ('bytes' in result) return result.bytes;
+    attempts.push({ place, problem: result.problem });
+  }
+  throw new ElsewhereError(path, attempts);
 }
 
 async function fetchVerified(source: ChunkSource, hashes: string[]): Promise<Map<string, Uint8Array>> {
@@ -51,10 +74,24 @@ export interface FileContent {
   stored: Uint8Array;
 }
 
-/** Reads one file of a manifest and checks it against the manifest's size and hash. */
-export async function readFile(manifest: Manifest, path: string, source: ChunkSource): Promise<FileContent> {
+/**
+ * Reads one file of a manifest and checks it against the manifest's size and hash. A file stored
+ * elsewhere comes from `elsewhere`, which defaults to fetching nothing.
+ */
+export async function readFile(
+  manifest: Manifest,
+  path: string,
+  source: ChunkSource,
+  elsewhere: (path: string, file: ManifestFile) => Promise<Uint8Array> = (at, entry) => readElsewhere(at, entry, {}),
+): Promise<FileContent> {
   const file = manifest.files[path];
   if (!file) throw new ContentError(`no such file: ${path}`);
+  if (file.src) {
+    const bytes = await elsewhere(path, file);
+    if (!(await matchesFile(bytes, file))) throw new ContentError(`${path} does not match its hash`);
+    return { file, bytes, stored: bytes };
+  }
+  if (file.enc !== undefined && file.enc !== 'gzip') throw new ContentError(`${path} is stored in a form this version cannot read`);
   const hashes = file.parts.map(([index]) => manifest.chunks[index] as string);
   const chunks = await fetchVerified(source, hashes);
   const pieces: Uint8Array[] = [];
