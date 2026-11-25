@@ -11,10 +11,11 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { base58 } from '@scure/base';
 import { concat, fromHex, sha256, toHex } from './bytes.js';
 import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
+import { FORMATS, formatVersion, isNewer, refuseNewer } from './formats.js';
 import { KNOWN_CONTRACTS } from './known-contracts.js';
-import { CHUNK_FIELD_SIZE, CHUNK_SIZE } from './limits.js';
+import { CHUNK_FIELD_SIZE, CHUNK_SIZE, PRELOAD_CHUNKS } from './limits.js';
 import { DASH_TLD, isValidLabel, normalizeLabel } from './names.js';
-import type { DomainRecord, PlatformReader, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
+import type { DomainRecord, NameRecord, PlatformReader, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
 
 const PAGE = 100;
 const PROTOCOL_VERSION = 14;
@@ -38,12 +39,14 @@ function toMeta(metadata: ProvedDocuments['metadata']): ProofMeta {
 
 function toDomain(id: string, document: Document): DomainRecord {
   const object = document.toObject() as Record<string, unknown>;
+  const transferredAt = document.transferredAt ?? document.createdAt;
+  if (transferredAt === undefined) throw new Error('DPNS answered with a name that carries no time');
   return {
     id,
     ownerId: document.ownerId.toBase58(),
     label: String(object.label),
     normalizedLabel: String(object.normalizedLabel),
-    transferredAt: Number(document.transferredAt ?? document.createdAt ?? 0),
+    transferredAt: Number(transferredAt),
   };
 }
 
@@ -52,17 +55,29 @@ function toSite(id: string, document: Document): SiteRecord {
   return {
     id,
     ownerId: document.ownerId.toBase58(),
-    domainId: base58.encode(object.domainId as Uint8Array),
-    content: String(object.content),
+    normalizedLabel: String(object.normalizedLabel),
+    v: formatVersion(object.v),
+    ...(typeof object.content === 'string' ? { content: object.content } : {}),
     revision: Number(document.revision ?? 1),
     updatedAt: Number(document.updatedAt ?? 0),
   };
 }
 
-function chunkData(object: Record<string, unknown>): Uint8Array {
+const dashName = (normalizedLabel: string): Where[] => [
+  ['normalizedParentDomainName', '==', DASH_TLD],
+  ['normalizedLabel', '==', normalizedLabel],
+];
+
+function toChunk(document: Document): [hash: string, data: Uint8Array] {
+  const object = document.toObject() as Record<string, unknown>;
+  refuseNewer('chunk', formatVersion(object.v));
   const fields = [object.d0, object.d1, object.d2].filter((field): field is Uint8Array => field instanceof Uint8Array);
-  return concat(fields);
+  return [toHex(object.hash as Uint8Array), concat(fields)];
 }
+
+const PRELOADED_SITES = 4;
+
+const named = (domain: DomainRecord, site?: SiteRecord): NameRecord => (site ? { domain, site } : { domain });
 
 export interface ConnectOptions {
   /** DAPI addresses to use instead of the network's own list. */
@@ -167,45 +182,76 @@ export class EvoReader implements PlatformReader {
   }
 
   async getDomain(normalizedLabel: string): Promise<Proved<DomainRecord | undefined>> {
-    const where: Where[] = [
-      ['normalizedParentDomainName', '==', DASH_TLD],
-      ['normalizedLabel', '==', normalizedLabel],
-    ];
-    return this.one(await this.query(DPNS_CONTRACT_ID, 'domain', where, { limit: 1 }), toDomain);
+    return this.one(await this.query(DPNS_CONTRACT_ID, 'domain', dashName(normalizedLabel), { limit: 1 }), toDomain);
   }
 
   get noSiteContract(): boolean {
     return !this.config.contractId;
   }
 
-  async getSite(ownerId: string, domainId: string): Promise<Proved<SiteRecord | undefined>> {
-    return this.one(await this.siteDocuments(ownerId, domainId), toSite);
+  protected readonly preloaded = new Map<string, Map<string, Uint8Array>>();
+
+  /**
+   * One composite read under one proof. The page is the name's DPNS domain. The site record is
+   * looked up by the name and the domain's `$ownerId`, so it is the owner's record or nothing, and
+   * with `preload` the chunks are looked up by that record's `$id`; `getChunks` answers from them.
+   * A node that cannot answer the composite read is asked for the domain and the record in turn;
+   * the record then counts only if it was last written by the block that proved the owner, so the
+   * answer is still what one block held.
+   */
+  async getName(normalizedLabel: string, preload = false): Promise<Proved<NameRecord | undefined>> {
+    const composite = this.noSiteContract ? undefined : await this.nameWithSite(normalizedLabel, preload).catch(() => undefined);
+    if (!composite) return this.nameInTwoReads(normalizedLabel);
+    const { data, metadata } = composite;
+    const [sites, chunks] = data.subResults;
+    const domain = data.pageDocuments[0];
+    const record = sites?.kind === 'documents' ? sites.documents[0] : undefined;
+    if (record && chunks?.kind === 'documents' && chunks.documents.length > 0) {
+      this.preloaded.set(record.id.toBase58(), new Map(chunks.documents.filter((chunk: Document) => !isNewer('chunk', formatVersion((chunk.toObject() as Record<string, unknown>).v))).map(toChunk)));
+      for (const oldest of this.preloaded.keys()) {
+        if (this.preloaded.size <= PRELOADED_SITES) break;
+        this.preloaded.delete(oldest);
+      }
+    }
+    return { value: domain && named(toDomain(domain.id.toBase58(), domain), record && toSite(record.id.toBase58(), record)), meta: toMeta(metadata) };
   }
 
-  protected siteDocuments(ownerId: string, domainId: string): Promise<ProvedDocuments> {
-    const where: Where[] = [
-      ['$ownerId', '==', ownerId],
-      ['domainId', '==', domainId],
-    ];
-    return this.query(this.config.contractId, 'site', where, { limit: 1 });
+  private nameWithSite(normalizedLabel: string, preload: boolean) {
+    const where = dashName(normalizedLabel);
+    const contract = { dataContractId: this.config.contractId };
+    const subQueries: object[] = [{ ...contract, documentType: 'site', where, bind: { sourceProperty: '$ownerId', field: '$ownerId' } }];
+    if (preload) subQueries.push({ ...contract, documentType: 'chunk', bind: { source: 0, sourceProperty: '$id', field: 'site' }, limit: PRELOAD_CHUNKS });
+    const query = { dataContractId: DPNS_CONTRACT_ID, documentType: 'domain', where, limit: 1, subQueries };
+    return this.sdk.documents.compositeWithProof(query as never);
   }
 
-  async getChunks(ownerId: string, hashes: string[]): Promise<Map<string, Uint8Array>> {
+  private async nameInTwoReads(normalizedLabel: string): Promise<Proved<NameRecord | undefined>> {
+    const domain = await this.getDomain(normalizedLabel);
+    if (!domain.value || this.noSiteContract) return { value: domain.value && named(domain.value), meta: domain.meta };
+    const where: Where[] = [...dashName(normalizedLabel), ['$ownerId', '==', domain.value.ownerId]];
+    const site = await this.one(await this.query(this.config.contractId, 'site', where, { limit: 1 }), toSite);
+    const record = site.value && site.value.updatedAt <= domain.meta.timeMs ? site.value : undefined;
+    return { value: named(domain.value, record), meta: site.meta.height < domain.meta.height ? site.meta : domain.meta };
+  }
+
+  async getChunks(siteId: string, hashes: string[]): Promise<Map<string, Uint8Array>> {
     const out = new Map<string, Uint8Array>();
     if (this.noSiteContract) return out;
-    const wanted = [...new Set(hashes)];
+    const held = this.preloaded.get(siteId);
+    const wanted: string[] = [];
+    for (const hash of new Set(hashes)) {
+      const bytes = held?.get(hash);
+      if (bytes) out.set(hash, bytes);
+      else wanted.push(hash);
+    }
     for (let i = 0; i < wanted.length; i += PAGE) {
       const batch = wanted.slice(i, i + PAGE).map((hash) => base58.encode(fromHex(hash)));
       const where: Where[] = [
-        ['$ownerId', '==', ownerId],
+        ['site', '==', siteId],
         ['hash', 'in', batch],
       ];
       const result = await this.query(this.config.contractId, 'chunk', where, { orderBy: [['hash', 'asc']], limit: PAGE });
-      for (const document of result.data.values()) {
-        if (!document) continue;
-        const object = document.toObject() as Record<string, unknown>;
-        out.set(toHex(object.hash as Uint8Array), chunkData(object));
-      }
+      for (const document of result.data.values()) if (document) out.set(...toChunk(document));
     }
     return out;
   }
@@ -390,15 +436,14 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     return Document.fromObject({ ...(base.toObject() as object), ...properties } as never, this.sdk.wasm.version() as never);
   }
 
-  /** Every document of a type this identity owns, and the proof of the oldest page. */
-  private async all(type: string, orderBy: string): Promise<Proved<Array<[string, Document]>>> {
+  /** Every document of a type this identity's query selects, and the proof of the oldest page. */
+  private async all(type: string, where: Where, orderBy: string): Promise<Proved<Array<[string, Document]>>> {
     const out: Array<[string, Document]> = [];
     let meta: ProofMeta | undefined;
     let startAfter: string | undefined;
     for (;;) {
-      const where: Where[] = [['$ownerId', '==', this.identityId]];
       const extra = { orderBy: [[orderBy, 'asc']], limit: PAGE, ...(startAfter ? { startAfter } : {}) };
-      const result = await this.query(this.config.contractId, type, where, extra);
+      const result = await this.query(this.config.contractId, type, [where], extra);
       const pageMeta = toMeta(result.metadata);
       if (!meta || pageMeta.timeMs < meta.timeMs) meta = pageMeta;
       const page = [...result.data].filter((entry): entry is [string, Document] => entry[1] !== undefined);
@@ -408,25 +453,32 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     }
   }
 
+  /** This identity's site records, none older than this writer left it: a node can answer from before a write. */
   async listSites(): Promise<SiteRecord[]> {
     return (await this.listSitesProved()).value;
   }
 
+  /** {@link listSites} with the proof's block, the oldest when the listing took several pages. */
   async listSitesProved(): Promise<Proved<SiteRecord[]>> {
-    const { value, meta } = await this.all('site', 'domainId');
-    return { value: value.map(([id, document]) => toSite(id, document)), meta };
+    const read = async (): Promise<Proved<SiteRecord[]>> => {
+      const { value, meta } = await this.all('site', ['$ownerId', '==', this.identityId], 'normalizedParentDomainName');
+      return { value: value.map(([id, document]) => toSite(id, document)), meta };
+    };
+    const revision = (sites: SiteRecord[], label: string) => sites.find((site) => site.normalizedLabel === label)?.revision ?? 0;
+    return settled(read, ({ value }) => [...this.written].every(([label, written]) => revision(value, label) >= written));
   }
 
-  async listChunks(): Promise<StoredChunk[]> {
-    return (await this.all('chunk', 'hash')).value.map(([id, document]) => ({
+  async listChunks(siteId: string): Promise<StoredChunk[]> {
+    return (await this.all('chunk', ['site', '==', siteId], 'hash')).value.map(([id, document]) => ({
       id,
       hash: toHex((document.toObject() as Record<string, unknown>).hash as Uint8Array),
+      createdAt: document.createdAt === undefined ? Number.MAX_SAFE_INTEGER : Number(document.createdAt),
     }));
   }
 
-  async createChunk(hash: string, data: Uint8Array): Promise<void> {
+  async createChunk(siteId: string, hash: string, data: Uint8Array): Promise<void> {
     if (data.length === 0 || data.length > CHUNK_SIZE) throw new Error('chunk size out of range');
-    const properties: Record<string, unknown> = { hash: fromHex(hash) };
+    const properties: Record<string, unknown> = { site: base58.decode(siteId), hash: fromHex(hash), v: FORMATS.chunk };
     for (const index of [0, 1, 2]) {
       const part = field(data, index);
       if (part) properties[`d${index}`] = part;
@@ -436,41 +488,66 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
         await this.sdk.documents.create({ document: this.newDocument('chunk', properties), ...this.key });
         return;
       } catch (error) {
-        if ((await this.getChunks(this.identityId, [hash])).has(hash)) return;
+        if ((await this.getChunks(siteId, [hash])).has(hash)) return;
         if (attempt >= 2) throw error;
       }
     }
   }
 
-  async putSite(domain: DomainRecord, content: string): Promise<SiteRecord> {
-    const existing = [...(await this.siteDocuments(this.identityId, domain.id)).data].find((entry) => entry[1] !== undefined);
-    let revision = 1;
-    if (existing?.[1]) {
-      const object = existing[1].toObject() as Record<string, unknown>;
-      const next = { ...object, content, $revision: BigInt((object.$revision as bigint | number | undefined) ?? 1) + 1n };
-      revision = Number(next.$revision);
-      const document = Document.fromObject(next as never, this.sdk.wasm.version() as never);
-      await this.sdk.documents.replace({ document, ...this.key });
+  private readonly written = new Map<string, number>();
+
+  private async ownSite(normalizedLabel: string): Promise<[string, Document] | undefined> {
+    const where: Where[] = [...dashName(normalizedLabel), ['$ownerId', '==', this.identityId]];
+    const result = await this.query(this.config.contractId, 'site', where, { limit: 1 });
+    return [...result.data].find((entry): entry is [string, Document] => entry[1] !== undefined);
+  }
+
+  async putSite(domain: DomainRecord, content?: string): Promise<SiteRecord> {
+    const { normalizedLabel } = domain;
+    const known = this.written.get(normalizedLabel) ?? 0;
+    const existing = await settled(
+      () => this.ownSite(normalizedLabel),
+      (own) => Number(own?.[1].revision ?? 0) >= known,
+    );
+    const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, v: FORMATS.site, ...(content === undefined ? {} : { content }) };
+    const revision = existing ? Number(existing[1].revision ?? 1) + 1 : 1;
+    if (existing) {
+      refuseNewer('site', formatVersion(existing[1].toObject().v));
+      const next = { ...(existing[1].toObject() as Record<string, unknown>), ...properties, $revision: BigInt(revision) };
+      if (content === undefined) delete next.content;
+      await this.sdk.documents.replace({ document: Document.fromObject(next as never, this.sdk.wasm.version() as never), ...this.key });
     } else {
-      const properties = { domainId: base58.decode(domain.id), name: `${domain.normalizedLabel}.${DASH_TLD}`, content };
       await this.sdk.documents.create({ document: this.newDocument('site', properties), ...this.key });
     }
-    const stored = await settled(
-      async () => (await this.getSite(this.identityId, domain.id)).value,
-      (site) => site?.content === content && site.revision >= revision,
-    );
-    if (!stored || stored.content !== content || stored.revision < revision) throw new Error('the site record was not stored');
+    const current = (site: SiteRecord | undefined): site is SiteRecord => site?.revision === revision && site.content === content;
+    const stored = await settled(async () => {
+      const own = await this.ownSite(normalizedLabel);
+      return own && toSite(...own);
+    }, current);
+    if (!current(stored)) throw new Error('the site record was not stored');
+    this.written.set(normalizedLabel, revision);
     return stored;
   }
 
-  async deleteSite(domainId: string): Promise<boolean> {
-    const site = (await this.getSite(this.identityId, domainId)).value;
-    if (!site) return false;
-    await this.deleteDocument('site', site.id);
-    return true;
+  async ensureSite(domain: DomainRecord): Promise<SiteRecord> {
+    const { normalizedLabel } = domain;
+    const own = () => this.ownSite(normalizedLabel);
+    let existing = await own();
+    if (!existing) {
+      const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, v: FORMATS.site };
+      await this.sdk.documents.create({ document: this.newDocument('site', properties), ...this.key }).catch((error: unknown) => {
+        if (!/duplicate unique/.test(String(error))) throw error;
+      });
+      existing = await settled(own, (found) => found !== undefined);
+    }
+    if (!existing) throw new Error('the site record was not stored');
+    const site = toSite(...existing);
+    this.written.set(normalizedLabel, Math.max(site.revision, this.written.get(normalizedLabel) ?? 0));
+    return site;
   }
 
   deleteChunk(id: string): Promise<void> {
+    this.preloaded.clear();
     return this.deleteDocument('chunk', id);
   }
 

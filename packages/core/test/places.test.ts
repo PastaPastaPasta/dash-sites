@@ -10,6 +10,7 @@ import {
   ipfsFetcher,
   IPFS_MODULE,
   ManifestError,
+  NewerFormatError,
   MAX_ELSEWHERE_FILE_BYTES,
   moduleUrls,
   PackError,
@@ -210,7 +211,8 @@ describe('forward compatibility', () => {
     expect(() => validateManifest({ ...second, files: { ...second.files, '/a.js': { ...second.files['/a.js'], pieces: [] } } })).toThrow(/unknown key pieces/);
     expect(() => validateManifest({ ...bundle.manifest, v: 2 })).toThrow(/unknown key src/);
     expect(() => validateManifest({ ...second, v: 3 })).toThrow(/version 3 without a version 3 feature/);
-    expect(() => validateManifest({ ...bundle.manifest, v: 4 })).toThrow(/unsupported version/);
+    expect(() => validateManifest({ ...bundle.manifest, v: 4 })).toThrow(NewerFormatError);
+    expect(() => validateManifest({ ...bundle.manifest, v: 0 })).toThrow(/unsupported version/);
     expect(() => decodeManifest(utf8.encode(JSON.stringify(later)))).toThrow(/canonical/);
     expect(() => decodeManifest(utf8.encode(`${utf8.decode(canonical(later))} `))).toThrow(/canonical/);
   });

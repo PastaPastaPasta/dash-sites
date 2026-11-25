@@ -1,10 +1,10 @@
-import { decide, loadManifest, networkConfig, readFile, resolveName, type Network, type Resolution } from '@dash-sites/core';
+import { decide, loadManifest, readerConfig, readFile, resolveName, type Network, type Resolution } from '@dash-sites/core';
 import { EvoReader } from '@dash-sites/core/evo';
 
 let reader: Promise<EvoReader> | undefined;
 
 function connect(network: Network): Promise<EvoReader> {
-  reader ??= EvoReader.connect(networkConfig(network));
+  reader ??= EvoReader.connect(readerConfig(network));
   return reader;
 }
 
@@ -18,7 +18,7 @@ export type Audit = { ok: true; path: string } | { ok: false; reason: string };
 /** Checks the SHA-256 of what the page was served for `pathname` against the file the owner published. */
 export async function auditFile(resolution: Resolution, pathname: string, servedSha256: string, network: Network): Promise<Audit> {
   if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') return { ok: false, reason: 'This site is not stored on Dash Platform.' };
-  const source = async (hashes: string[]) => (await connect(network)).getChunks(resolution.ownerId, hashes);
+  const source = async (hashes: string[]) => (await connect(network)).getChunks(resolution.site.id, hashes);
   const manifest = await loadManifest(resolution.content, source);
   const decision = decide(manifest, pathname);
   if (decision.kind !== 'file') return { ok: false, reason: 'The published site has no file at this address.' };

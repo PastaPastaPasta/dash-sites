@@ -100,7 +100,7 @@ export function unpinOnFailure(inner: PlatformReader, unpin: () => Promise<Platf
       return inner.noSiteContract;
     },
     getDomain: (label) => run((reader) => reader.getDomain(label)),
-    getSite: (ownerId, domainId) => run((reader) => reader.getSite(ownerId, domainId)),
-    getChunks: (ownerId, hashes) => run((reader) => reader.getChunks(ownerId, hashes)),
+    getName: (label, preload) => run((reader) => reader.getName(label, preload)),
+    getChunks: (siteId, hashes) => run((reader) => reader.getChunks(siteId, hashes)),
   };
 }

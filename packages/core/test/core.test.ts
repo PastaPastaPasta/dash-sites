@@ -15,6 +15,7 @@ import {
   decodeManifest,
   encodeManifest,
   formatContentUri,
+  isCurrent,
   gunzip,
   gzip,
   loadManifest,
@@ -26,9 +27,12 @@ import {
   readFile,
   resolveName,
   sha256Hex,
+  unpublishSite,
   utf8,
   validateManifest,
   type ContentRef,
+  type PlatformReader,
+  type PlatformWriter,
   type SiteFile,
 } from '../src/index.js';
 import { MemoryPlatform } from '../src/memory.js';
@@ -251,7 +255,7 @@ describe('resolve and publish', () => {
     expect(first.uploaded).toBe(bundle.chunks.size);
     const second = await publishSite(alice, 'ALICE', bundle);
     expect(second.uploaded).toBe(0);
-    expect(second.site.revision).toBe(2);
+    expect(second.site.revision).toBe(3);
 
     const resolved = await resolveName(alice, 'a1ice.dash');
     expect(resolved.status).toBe('ok');
@@ -277,31 +281,120 @@ describe('resolve and publish', () => {
     await expect(publishSite(platform.as('bob-id'), 'carol', buildSite(SITE))).rejects.toThrow(/not registered/);
   });
 
-  it('ignores a site published by someone who does not own the name', async () => {
-    const platform = setup();
-    await platform.as('mallory-id').putSite(platform.domains.get('a11ce')!, buildSite(SITE).contentUri);
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('no-site');
-  });
-
-  it('follows the name when it changes hands', async () => {
+  it('resolves a name with one read, whatever the answer', async () => {
     const platform = setup();
     await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
+    const inner = platform.as('anyone');
+    const reads: string[] = [];
+    const reader: PlatformReader = {
+      getDomain: (label) => (reads.push('domain'), inner.getDomain(label)),
+      getName: (label) => (reads.push('name'), inner.getName(label)),
+      getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
+    };
+    expect((await resolveName(reader, 'alice.dash')).status).toBe('ok');
+    expect((await resolveName(reader, 'bob.dash')).status).toBe('no-site');
+    expect((await resolveName(reader, 'carol.dash')).status).toBe('unregistered');
+    expect(reads).toEqual(['name', 'name', 'name']);
+  });
+
+  it('never shows a record written by an identity that does not own the name', async () => {
+    const platform = setup();
+    const reader = platform.as('anyone');
+    const mallory = platform.as('mallory-id');
+    const alice = platform.domains.get('a11ce')!;
+    await mallory.putSite(alice, 'ipfs://bafymallory');
+    expect(await mallory.listSites()).toHaveLength(1);
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'alice-id' });
+
+    const bundle = buildSite(SITE);
+    await publishSite(platform.as('alice-id'), 'alice', bundle);
+    await mallory.putSite(alice, 'ipfs://bafynewer');
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id', site: { ownerId: 'alice-id', content: bundle.contentUri } });
+  });
+
+  it('refuses an answer whose site record is not the name owner\'s', async () => {
+    const platform = setup();
+    const inner = platform.as('anyone');
+    await platform.as('mallory-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafymallory');
+    const [forged] = await platform.as('mallory-id').listSites();
+    const lying: PlatformReader = { ...inner, getName: async (label) => ({ value: { domain: (await inner.getDomain(label)).value!, site: forged! }, meta: platform.meta() }) };
+    await expect(resolveName(lying, 'alice.dash')).rejects.toThrow(/different site/);
+  });
+
+  it('stops showing the previous owner\'s site in the block a name changes hands', async () => {
+    const platform = setup();
+    const reader = platform.as('anyone');
+    const aliceSite = buildSite(SITE);
+    await publishSite(platform.as('alice-id'), 'alice', aliceSite);
     platform.transferName('alice', 'carol-id');
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('no-site');
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'carol-id', canonicalLabel: 'alice' });
+    await expect(publishSite(platform.as('alice-id'), 'alice', buildSite(SITE))).rejects.toThrow(/owned by carol-id/);
+    await platform.as('alice-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafyold');
+    expect((await resolveName(reader, 'alice.dash')).status).toBe('no-site');
+    expect(await unpublishSite(platform.as('carol-id'), 'alice')).toBe(false);
+
     const carolSite = buildSite([{ path: '/index.html', bytes: text('carol') }]);
     await publishSite(platform.as('carol-id'), 'alice', carolSite);
-    const resolved = await resolveName(platform.as('anyone'), 'alice.dash');
-    expect(resolved.status === 'ok' && resolved.site.content).toBe(carolSite.contentUri);
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'carol-id', site: { content: carolSite.contentUri } });
   });
 
-  it('does not bring back an old site when a name returns to a previous owner', async () => {
+  it('does not bring an identity\'s earlier site back when the name returns to it', async () => {
     const platform = setup();
-    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
+    const reader = platform.as('anyone');
+    const alice = platform.as('alice-id');
+    const aliceSite = buildSite(SITE);
+    await publishSite(alice, 'alice', aliceSite);
     platform.transferName('alice', 'carol-id');
     platform.transferName('alice', 'alice-id');
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('no-site');
-    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('ok');
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'alice-id' });
+    expect(await unpublishSite(alice, 'alice')).toBe(false);
+    expect((await collectGarbage(alice, gcLater(platform))).deleted).toBe(aliceSite.chunks.size);
+
+    await publishSite(alice, 'alice', aliceSite);
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id', site: { content: aliceSite.contentUri } });
+  });
+
+  it('counts a record written in the block the name came to its owner, and none from before', () => {
+    const domain = { id: 'd', ownerId: 'alice-id', label: 'Alice', normalizedLabel: 'a11ce', transferredAt: 100 };
+    const site = { id: 's', ownerId: 'alice-id', normalizedLabel: 'a11ce', content: 'ipfs://x', revision: 1, updatedAt: 100 };
+    expect(isCurrent(domain, site)).toBe(true);
+    expect(isCurrent(domain, { ...site, updatedAt: 99 })).toBe(false);
+    expect(isCurrent(domain, { ...site, ownerId: 'bob-id' })).toBe(false);
+  });
+
+  it('does not count a record written before the identity owned the name', async () => {
+    const platform = setup();
+    await platform.as('dave-id').putSite({ id: '', ownerId: '', label: 'dave', normalizedLabel: 'dave', transferredAt: 0 }, 'ipfs://bafyearly');
+    platform.registerName('dave', 'dave-id');
+    expect(await resolveName(platform.as('anyone'), 'dave.dash')).toMatchObject({ status: 'no-site', ownerId: 'dave-id' });
+  });
+
+  it('lets the owner take a site down', async () => {
+    const platform = setup();
+    const alice = platform.as('alice-id');
+    await publishSite(alice, 'alice', buildSite(SITE));
+    expect(await unpublishSite(alice, 'alice')).toBe(true);
+    expect(await resolveName(platform.as('anyone'), 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'alice-id', canonicalLabel: 'alice' });
+    expect(await unpublishSite(alice, 'alice')).toBe(false);
+    await expect(unpublishSite(platform.as('bob-id'), 'alice')).rejects.toThrow(/owned by alice-id/);
+  });
+
+  const stored = async (writer: PlatformWriter) => (await Promise.all((await writer.listSites()).map((site) => writer.listChunks(site.id)))).flat();
+  const holds = async (writer: PlatformWriter, hash: string) => (await stored(writer)).some((chunk) => chunk.hash === hash);
+  /** Moves Platform's clock past the grace period and the re-check margin, and returns prune options for that time. */
+  const gcLater = (platform: ReturnType<typeof setup>) => {
+    const t = Date.now() + 1e9;
+    platform.now = () => t;
+    return { now: t, recheckMs: 0 };
+  };
+
+  it('stores chunks under the owner\'s site record, and nobody else can add to it', async () => {
+    const platform = setup();
+    const bundle = buildSite(SITE);
+    const { site } = await publishSite(platform.as('alice-id'), 'alice', bundle);
+    expect((await platform.as('anyone').getChunks(site.id, [...bundle.chunks.keys()])).size).toBe(bundle.chunks.size);
+    const [hash, data] = [...buildSite([{ path: '/index.html', bytes: text('mallory') }]).chunks][0]!;
+    await expect(platform.as('mallory-id').createChunk(site.id, hash, data)).rejects.toThrow(/did not write site record/);
   });
 
   it('collects chunks no site references once every record is past the grace period', async () => {
@@ -313,18 +406,69 @@ describe('resolve and publish', () => {
     const v2 = buildSite([{ path: '/index.html', bytes: text('new') }]);
     await publishSite(alice, 'alice', v1);
     await publishSite(alice, 'alice', v2);
-    const before = (await alice.listChunks()).length;
+    const before = (await stored(alice)).length;
 
     const early = await collectGarbage(alice, { now, recheckMs: 0 });
     expect(early.deleted).toBe(0);
     expect(early.deferredUntil).toBeGreaterThan(now);
-    expect((await alice.listChunks()).length).toBe(before);
+    expect((await stored(alice)).length).toBe(before);
 
     now += DEFAULT_PRUNE_GRACE_MS + 1000;
     const result = await collectGarbage(alice, { now, recheckMs: 0 });
     expect(result.deleted).toBe(v1.chunks.size);
     expect(result.bytes).toBe([...v1.chunks.values()].reduce((sum, chunk) => sum + chunk.length, 0));
-    expect((await alice.listChunks()).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+    expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+  });
+
+  it('collects the chunks of a site taken down, and of a name that changed hands', async () => {
+    const platform = setup();
+    platform.registerName('second', 'alice-id');
+    const alice = platform.as('alice-id');
+    const kept = buildSite([{ path: '/index.html', bytes: text('kept') }]);
+    await publishSite(alice, 'alice', buildSite(SITE));
+    await publishSite(alice, 'second', kept);
+    await unpublishSite(alice, 'alice');
+    await collectGarbage(alice, gcLater(platform));
+    expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...kept.chunks.keys()].sort());
+
+    platform.transferName('second', 'carol-id');
+    expect((await collectGarbage(alice, gcLater(platform))).deleted).toBe(kept.chunks.size);
+    expect(await stored(alice)).toEqual([]);
+  });
+
+  it('keeps the chunks of a served site when a node answers from before its record was written', async () => {
+    const platform = setup();
+    const alice = platform.as('alice-id');
+    await publishSite(alice, 'alice', buildSite(SITE));
+    const earlier = { ...platform.meta(), timeMs: 0 };
+    const previousOwner = { domain: { ...platform.domains.get('a11ce')!, ownerId: 'bob-id' } };
+    for (const value of [undefined, previousOwner]) {
+      expect((await collectGarbage({ ...alice, getName: async () => ({ value, meta: earlier }) }, gcLater(platform))).deleted).toBe(0);
+    }
+    expect((await resolveName(alice, 'alice')).status).toBe('ok');
+  });
+
+  it('leaves the site up while a new version uploads, even when a node does not show the record yet', async () => {
+    const platform = setup();
+    const alice = platform.as('alice-id');
+    await publishSite(alice, 'alice', buildSite(SITE));
+    const behind = { ...alice, listSites: async () => [] };
+    const during: string[] = [];
+    const next = buildSite([{ path: '/index.html', bytes: text('next') }]);
+    await publishSite(behind, 'alice', next, (progress) => {
+      if (progress.step === 'upload') void resolveName(alice, 'alice').then((resolution) => during.push(resolution.status));
+    });
+    expect(during.length).toBeGreaterThan(0);
+    expect(new Set(during)).toEqual(new Set(['ok']));
+    expect(await resolveName(alice, 'alice')).toMatchObject({ status: 'ok', site: { content: next.contentUri, revision: 3 } });
+  });
+
+  it('writes nothing on a first publish the identity cannot pay for', async () => {
+    const platform = setup();
+    platform.funds = 1n;
+    const alice = platform.as('alice-id');
+    await expect(publishSite(alice, 'alice', buildSite(SITE))).rejects.toThrow(/costs about/);
+    expect(await alice.listSites()).toEqual([]);
   });
 
   it('prunes on publish only releases older than the one replaced', async () => {
@@ -334,7 +478,7 @@ describe('resolve and publish', () => {
     const alice = platform.as('alice-id');
     const release = (n: number) => buildSite([...SITE.slice(1), { path: '/index.html', bytes: text(`release ${n}`) }, { path: `/r${n}.bin`, bytes: random(CHUNK_SIZE + 10, n + 7) }]);
     const [v1, v2, v3, v4] = [1, 2, 3, 4].map(release) as [ReturnType<typeof release>, ReturnType<typeof release>, ReturnType<typeof release>, ReturnType<typeof release>];
-    const hashes = async () => new Set((await alice.listChunks()).map((c) => c.hash));
+    const hashes = async () => new Set((await stored(alice)).map((c) => c.hash));
     const only = (a: typeof v1, ...others: Array<typeof v1>) => [...a.chunks.keys()].filter((h) => others.every((o) => !o.chunks.has(h)));
 
     await publishSite(alice, 'alice', v1, undefined, { prune: { now, recheckMs: 0 } });
@@ -359,7 +503,7 @@ describe('resolve and publish', () => {
     expect(resolved.status === 'ok' && resolved.site.content).toBe(v4.contentUri);
   });
 
-  it('keeps chunks another site of the identity uses and never touches another identity', async () => {
+  it('keeps what each of the identity\'s records uses and never touches another identity', async () => {
     const platform = setup();
     let now = Date.now() + 1_000_000;
     platform.now = () => now;
@@ -367,19 +511,25 @@ describe('resolve and publish', () => {
     const alice = platform.as('alice-id');
     const bob = platform.as('bob-id');
     const shared = buildSite(SITE);
+    const other = buildSite([{ path: '/index.html', bytes: text('other') }]);
     await publishSite(alice, 'alice', shared);
     await publishSite(alice, 'alice2', shared);
     await publishSite(bob, 'bob', shared);
-    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('other') }]));
+    await publishSite(alice, 'alice', other);
     await publishSite(bob, 'bob', buildSite([{ path: '/index.html', bytes: text('bob other') }]));
     now += DEFAULT_PRUNE_GRACE_MS + 1000;
 
+    const aliceRecord = (await alice.listSites()).find((site) => site.normalizedLabel === 'a11ce')!;
     const plan = await planPrune(alice, { now });
-    expect(plan.remove).toEqual([]);
-    expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBe(0);
-    for (const h of shared.chunks.keys()) expect((await bob.getChunks('bob-id', [h])).has(h)).toBe(true);
+    const gone = [...shared.chunks.keys()].filter((hash) => !other.chunks.has(hash));
+    expect(plan.remove.every((chunk) => chunk.siteId === aliceRecord.id)).toBe(true);
+    expect(plan.remove.map((chunk) => chunk.hash).sort()).toEqual(gone.sort());
+    expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBe(gone.length);
+    expect((await resolveName(platform.as('anyone'), 'alice2.dash')).status).toBe('ok');
+    const alice2 = (await alice.listSites()).find((site) => site.normalizedLabel === 'a11ce2')!;
+    expect((await alice.listChunks(alice2.id)).length).toBe(shared.chunks.size);
+    for (const h of shared.chunks.keys()) expect(await holds(bob, h)).toBe(true);
     expect((await collectGarbage(bob, { now, recheckMs: 0 })).deleted).toBe(shared.chunks.size);
-    for (const h of shared.chunks.keys()) expect((await alice.getChunks('alice-id', [h])).has(h)).toBe(true);
   });
 
   it('keeps every chunk of a version 2 site (brotli and npm files)', async () => {
@@ -406,7 +556,7 @@ describe('resolve and publish', () => {
     const gone = [...old.chunks.keys()].filter((hash) => !v2.chunks.has(hash) && !current.chunks.has(hash));
     expect(plan.remove.map((chunk) => chunk.hash).sort()).toEqual(gone.sort());
     expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBe(gone.length);
-    for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+    for (const hash of v2.chunks.keys()) expect((await holds(alice, hash))).toBe(true);
   });
 
   it('keeps every chunk of a site with files kept at places, and deletes nothing while a manifest holds something it does not know', async () => {
@@ -434,13 +584,15 @@ describe('resolve and publish', () => {
     for (const hash of placed.chunks.keys()) expect(plan.remove.some((chunk) => chunk.hash === hash)).toBe(false);
     expect(plan.remove.length).toBeGreaterThan(0);
 
-    for (const [hash, data] of later.chunks) await alice.createChunk(hash, data);
-    await alice.createChunk(sha256Hex(piece), piece);
-    await alice.putSite((await alice.getDomain('a11ce3')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [sha256Hex(piece)] }));
+    const third = (await alice.getDomain('a11ce3')).value!;
+    const record = await alice.ensureSite(third);
+    for (const [hash, data] of later.chunks) await alice.createChunk(record.id, hash, data);
+    await alice.createChunk(record.id, sha256Hex(piece), piece);
+    await alice.putSite(third, formatContentUri({ scheme: 'dash-manifest', chunks: [sha256Hex(piece)] }));
     now += DEFAULT_PRUNE_GRACE_MS + 1000;
     await expect(planPrune(alice, { now })).rejects.toThrow(/holds something this version does not know/);
     await expect(collectGarbage(alice, { now, recheckMs: 0 })).rejects.toThrow(/nothing is deleted/);
-    for (const hash of [...old.chunks.keys(), ...later.manifest.chunks]) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+    for (const hash of [...old.chunks.keys(), ...later.manifest.chunks]) expect(await holds(alice, hash)).toBe(true);
   });
 
   it('deletes nothing while a site manifest fails validation', async () => {
@@ -454,8 +606,9 @@ describe('resolve and publish', () => {
     const future = { ...buildSite(SITE).manifest, v: 3 };
     const piece = gzip(utf8.encode(JSON.stringify(future)));
     const hash = sha256Hex(piece);
-    await alice.createChunk(hash, piece);
-    await alice.putSite((await alice.getDomain('a11ce2')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    const domain2 = (await alice.getDomain('a11ce2')).value!;
+    await alice.createChunk((await alice.ensureSite(domain2)).id, hash, piece);
+    await alice.putSite(domain2, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
     now += DEFAULT_PRUNE_GRACE_MS + 1000;
     await expect(planPrune(alice, { now })).rejects.toThrow(/cannot be read/);
     await expect(collectGarbage(alice, { now, recheckMs: 0 })).rejects.toThrow(/cannot be read/);
@@ -515,7 +668,7 @@ describe('resolve and publish', () => {
     await publishSite(alice, 'alice2', old);
     const result = await prune(alice, plan, { recheckMs: 0 });
     expect(result.deleted).toBe(0);
-    for (const hash of old.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+    for (const hash of old.chunks.keys()) expect((await holds(alice, hash))).toBe(true);
   });
 
   it('reports chunks whose delete fails and keeps the publish', async () => {
@@ -531,9 +684,10 @@ describe('resolve and publish', () => {
   });
 
   it('lets a dry run list what a deferred plan would delete', async () => {
-    const { alice, now } = aged();
+    const { alice, later, now } = aged();
     const v1 = buildSite(SITE);
     await publishSite(alice, 'alice', v1);
+    later();
     await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('new') }]));
     const plan = await planPrune(alice, { now: now() });
     expect(plan.deferredUntil).toBeDefined();
@@ -547,15 +701,15 @@ describe('resolve and publish', () => {
     const v1 = buildSite([{ path: '/index.html', bytes: text('v1') }, { path: '/a.bin', bytes: random(CHUNK_SIZE + 5, 3) }]);
     const v2 = buildSite([{ path: '/index.html', bytes: text('v2') }, { path: '/b.bin', bytes: random(CHUNK_SIZE + 5, 4) }]);
     await publishSite(alice, 'alice', v1);
-    const stale = await alice.getSite('alice-id', 'domain-1');
+    const stale = await alice.listSites();
     later();
     await publishSite(alice, 'alice', v2);
-    const lagging: PlatformWriter = { ...alice, getSite: async () => stale };
+    const lagging: PlatformWriter = { ...alice, listSites: async () => stale };
     const v3 = buildSite([{ path: '/index.html', bytes: text('v3') }]);
     const result = await publishSite(lagging, 'alice', v3, undefined, { prune: { now: now() + 60_000, recheckMs: 0 } });
     expect(result.pruned?.deleted).toBe(0);
     expect(result.pruned?.skipped).toMatch(/not the one this publish replaced/);
-    for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+    for (const hash of v2.chunks.keys()) expect((await holds(alice, hash))).toBe(true);
   });
 
   it('prunes when republishing identical content', async () => {
@@ -569,7 +723,44 @@ describe('resolve and publish', () => {
     later();
     const result = await publishSite(alice, 'alice', v2, undefined, { prune: { now: now(), recheckMs: 0 } });
     expect(result.pruned?.skipped).toBeUndefined();
-    expect((await alice.listChunks()).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+    expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+  });
+
+  it('keeps chunks stored within the grace period, which a publish still uploading has not referenced yet', async () => {
+    const { platform, alice, later, now } = aged();
+    await publishSite(alice, 'alice', buildSite(SITE));
+    later();
+    const record = await alice.ensureSite(platform.domains.get('a11ce')!);
+    const next = buildSite([{ path: '/index.html', bytes: text('uploading') }]);
+    for (const [hash, data] of next.chunks) await alice.createChunk(record.id, hash, data);
+    expect((await collectGarbage(alice, { now: now(), recheckMs: 0 })).deleted).toBe(0);
+    for (const hash of next.chunks.keys()) expect(await holds(alice, hash)).toBe(true);
+    later();
+    expect((await collectGarbage(alice, { now: now(), recheckMs: 0 })).deleted).toBe(next.chunks.size);
+  });
+
+  it('stores again a reused chunk that a gc deleted while the publish was uploading', async () => {
+    const { platform, alice, later } = aged();
+    const v1 = buildSite(SITE);
+    await publishSite(alice, 'alice', v1);
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('v2') }]));
+    later();
+    const v3 = buildSite([...SITE, { path: '/new.txt', bytes: text('new') }]);
+    const reused = [...v1.chunks.keys()].filter((hash) => v3.chunks.has(hash));
+    expect(reused.length).toBeGreaterThan(0);
+    let raced = false;
+    const racing: PlatformWriter = {
+      ...alice,
+      createChunk: async (siteId, hash, data) => {
+        if (!raced) for (const [key, chunk] of platform.chunks) if (reused.includes(chunk.hash)) platform.chunks.delete(key);
+        raced = true;
+        return alice.createChunk(siteId, hash, data);
+      },
+    };
+    const result = await publishSite(racing, 'alice', v3);
+    expect(result.uploaded + result.reused).toBe(v3.chunks.size);
+    expect(result.reused).toBe(0);
+    for (const hash of v3.chunks.keys()) expect(await holds(alice, hash)).toBe(true);
   });
 
   it('waits for a re-read from a block later than the plan before deleting, so a lagging node cannot hide a publish', async () => {
@@ -586,14 +777,14 @@ describe('resolve and publish', () => {
       ...alice,
       listSitesProved: async () => (platform.now() < planBlock + PRUNE_RECHECK_MS ? v1Listing : alice.listSitesProved()),
     };
-    const plan = await planPrune(lagging, { now: planBlock });
+    const plan = await planPrune(lagging, { now: platform.meta().timeMs, graceMs: 0 });
     expect(plan.remove.map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
     let slept = 0;
     const result = await prune(lagging, plan, { sleep: async (ms) => { slept += ms; platform.now = (() => { const t = platform.now() + ms; return () => t; })(); }, clock: () => 0 });
     expect(slept).toBeGreaterThanOrEqual(PRUNE_RECHECK_MS);
     expect(result.deleted).toBe(0);
     expect(result.skipped).toMatch(/changed since the plan/);
-    for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+    for (const hash of v2.chunks.keys()) expect((await holds(alice, hash))).toBe(true);
   });
 
   it('gives up rather than delete when no node answers from a recent enough block', async () => {

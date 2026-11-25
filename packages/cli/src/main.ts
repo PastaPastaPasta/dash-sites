@@ -21,10 +21,11 @@ import {
   publishSite,
   readElsewhere,
   readFile,
+  readerConfig,
   decide,
-  requireOwnedName,
   resolveName,
   siteChunks,
+  unpublishSite,
   type Network,
   type NetworkConfig,
   type PlatformReader,
@@ -42,7 +43,7 @@ const USAGE = `dash-sites: websites on Dash Platform names
                                                                publish a folder as <name>.dash
   dash-sites check <name>                                      ask every outside place of a site for its file
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
-  dash-sites unpublish --name <name>                           remove the site record
+  dash-sites unpublish --name <name>                           take the site down
   dash-sites gc [--dry-run]                                    delete stored chunks no site uses
   dash-sites register <label>                                  register <label>.dash for this identity
   dash-sites names                                             list the names this identity owns
@@ -58,7 +59,7 @@ Options
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
   --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
   --prune                       after publishing, delete chunks of releases before the one replaced
-  --grace <hours>               gc and --prune delete nothing until every site record is this old (default 25)
+  --grace <hours>               gc and --prune delete nothing until every site record is this old, and keep chunks younger than this (default 25)
   --brotli                      store a file as brotli when that is smaller than gzip (needs a current shell)
   --external <file>             JSON {"/site/path": {"npm": "pkg", "version": "1.2.3", "path": "dist/file"}}:
                                 files not stored, fetched by readers from npm CDNs and checked by SHA-384
@@ -122,9 +123,9 @@ function credentials(level: 'HIGH' | 'CRITICAL' = 'HIGH'): Credentials {
   return { identityId: values.identity, privateKeyWif };
 }
 
-function network(): NetworkConfig {
+function network(reading = false): NetworkConfig {
   if (values.network !== 'testnet' && values.network !== 'mainnet') fail('--network must be testnet or mainnet');
-  return networkConfig(values.network as Network, values.contract);
+  return (reading ? readerConfig : networkConfig)(values.network as Network, values.contract);
 }
 
 function requireName(): string {
@@ -269,8 +270,7 @@ const commands: Record<string, () => Promise<void>> = {
   async unpublish() {
     const name = requireName();
     const writer = await EvoWriter.connectAs(network(), credentials());
-    const domain = await requireOwnedName(writer, name);
-    print({ removed: await writer.deleteSite(domain.id) });
+    print({ removed: await unpublishSite(writer, name) });
   },
 
   async gc() {
@@ -291,20 +291,23 @@ const commands: Record<string, () => Promise<void>> = {
 
   async names() {
     const who = credentials();
-    const reader = await EvoReader.connect(network());
+    const reader = await EvoReader.connect(network(true));
     print((await reader.listOwnedNames(who.identityId)).map((domain) => `${domain.label}.dash`));
   },
 
   async resolve() {
     const name = positionals[1] ?? fail('resolve needs a name');
-    print(await resolveName(await EvoReader.connect(network()), name));
+    print(await resolveName(await EvoReader.connect(network(true)), name));
   },
 
   async fetch() {
     const name = positionals[1] ?? fail('fetch needs a name');
-    const reader = await EvoReader.connect(network());
-    const resolution = await resolveName(reader, name);
-    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
+    const reader = await EvoReader.connect(network(true));
+    const resolution = await resolveName(reader, name, { preload: true });
+    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
+      const why = resolution.status === 'unsupported' ? `${resolution.status}: ${resolution.reason === 'newer' ? 'a newer format than this version reads' : 'content this project does not define'}` : resolution.status;
+      fail(`${name} does not resolve to a site stored on Platform (${why})`);
+    }
     const source = siteChunks(reader, resolution);
     const manifest = await loadManifest(resolution.content, source);
     const decision = decide(manifest, positionals[2] ?? '/');
@@ -332,7 +335,7 @@ const commands: Record<string, () => Promise<void>> = {
   },
 
   async gateway() {
-    await serve(await EvoReader.connect(network()));
+    await serve(await EvoReader.connect(network(true)));
   },
 
   async preview() {

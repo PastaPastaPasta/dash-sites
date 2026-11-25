@@ -1,6 +1,7 @@
 import {
   buildSite,
   collectGarbage,
+  DEPLOYMENTS,
   estimateCredits,
   formatDash,
   isValidLabel,
@@ -9,6 +10,8 @@ import {
   parseName,
   publishSite,
   requireOwnedName,
+  resolveName,
+  unpublishSite,
   type DomainRecord,
   type Network,
   type SiteBundle,
@@ -30,6 +33,8 @@ declare const __REMEMBER_WALLET__: boolean;
 
 const GATEWAY = __GATEWAY_DOMAIN__;
 const NETWORK = __NETWORK__ as Network;
+const OPEN = DEPLOYMENTS[NETWORK] !== undefined;
+const CLOSED = `Publishing on ${NETWORK} is not open yet.`;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const message = (error: unknown): string => String((error as Error)?.message ?? error);
@@ -166,11 +171,10 @@ async function choose(domain: DomainRecord): Promise<void> {
   renderNames();
   refresh();
   if (!writer) return;
-  const site = (await writer.getSite(writer.identityId, domain.id)).value;
+  const resolved = await resolveName(writer, domain.normalizedLabel);
   if (chosen?.id !== domain.id) return;
-  const live = site && site.updatedAt >= domain.transferredAt;
-  $('site-status').textContent = live
-    ? `${label()}.dash has a site already (revision ${site.revision}, ${new Date(site.updatedAt).toLocaleDateString()}). Publishing replaces it.`
+  $('site-status').textContent = 'site' in resolved
+    ? `${label()}.dash has a site already (revision ${resolved.site.revision}, ${new Date(resolved.site.updatedAt).toLocaleDateString()}). Publishing replaces it.`
     : `${label()}.dash has no site yet.`;
 }
 
@@ -209,6 +213,10 @@ async function enter(connected: EvoWriter, attempt: number): Promise<void> {
 
 async function signIn(identity: string, key: string): Promise<void> {
   const error = $('signin-error');
+  if (!OPEN) {
+    error.textContent = CLOSED;
+    return;
+  }
   const button = $<HTMLButtonElement>('signin-button');
   cancelWallet();
   const attempt = ++session;
@@ -285,6 +293,10 @@ function confirmed(signal: AbortSignal): Promise<boolean> {
 }
 
 async function signInWithWallet(): Promise<void> {
+  if (!OPEN) {
+    $('wallet-error').textContent = CLOSED;
+    return;
+  }
   cancelWallet();
   const attempt = ++session;
   const abort = new AbortController();
@@ -383,7 +395,7 @@ async function signInWithWallet(): Promise<void> {
 }
 
 async function resumeWallet(): Promise<void> {
-  const saved = loadSession(storage('sessionStorage'), NETWORK);
+  const saved = OPEN ? loadSession(storage('sessionStorage'), NETWORK) : undefined;
   if (!saved) return;
   const attempt = ++session;
   const button = $<HTMLButtonElement>('wallet-button');
@@ -622,7 +634,8 @@ function takeHandoff(): void {
 
 function start(): void {
   $('net').textContent = NETWORK;
-  $('net-note').textContent = `This builder publishes on ${NETWORK}.`;
+  $('net-note').textContent = OPEN ? `This builder publishes on ${NETWORK}.` : CLOSED;
+  for (const id of ['signin-button', 'wallet-button']) $<HTMLButtonElement>(id).disabled = !OPEN;
   const places = browserFetchers();
   loadOutside(storage('localStorage'));
   mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, identity: () => writer?.identityId, places, onChange: refresh });
@@ -722,7 +735,7 @@ function start(): void {
   $<HTMLButtonElement>('unpublish').addEventListener('click', (event) => {
     if (!confirm(`Take down the site at ${label()}.dash? The name stays yours.`)) return;
     void manage(event.currentTarget as HTMLButtonElement, async (w, domain) => {
-      const removed = await w.deleteSite(domain.id);
+      const removed = await unpublishSite(w, domain.label);
       $('site-status').textContent = `${label()}.dash has no site.`;
       return removed ? 'The site is down. Its files stay stored; "Delete files no site uses" removes them for good, at once.' : 'There was no site to take down.';
     });
@@ -733,7 +746,7 @@ function start(): void {
       if (deferredUntil !== undefined) return `Nothing deleted yet: a site changed recently, and visitors may still load its previous files. Try again after ${new Date(deferredUntil).toLocaleString()}.`;
       if (skipped) return `Nothing deleted: ${skipped}.`;
       if (failed.length > 0) return `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}; ${failed.length} could not be deleted. Try again later.`;
-      return deleted === 0 ? 'Nothing to delete: every stored file is in use.' : `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}.`;
+      return deleted === 0 ? 'Nothing to delete: every stored file is in use or was stored too recently.' : `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}.`;
     });
   });
 

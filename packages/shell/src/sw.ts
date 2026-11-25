@@ -254,6 +254,7 @@ const host = new SiteHost({
   places: { https: httpsFetcher(), ipfs: ipfsFetcher(loadIpfs) },
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
+  onNewerFormat: () => void self.registration.update().catch(() => undefined),
   denied: hostedDenied,
   log: (entry) => console.warn('dash-sites', entry),
 });

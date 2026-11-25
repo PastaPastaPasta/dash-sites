@@ -1,5 +1,6 @@
 import { isHash, utf8 } from './bytes.js';
 import { isExternalAsset, type ExternalAsset } from './external.js';
+import { refuseNewer } from './formats.js';
 import {
   CHUNK_SIZE,
   DEFAULT_LIMITS,
@@ -130,7 +131,10 @@ export const versionFor = (files: Record<string, ManifestFile>): Manifest['v'] =
 export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS): Manifest {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new ManifestError('not an object');
   const raw = input as Record<string, unknown>;
-  if (raw.v !== 1 && raw.v !== 2 && raw.v !== 3) throw new ManifestError('unsupported version');
+  if (raw.v !== 1 && raw.v !== 2 && raw.v !== 3) {
+    refuseNewer('manifest', raw.v);
+    throw new ManifestError('unsupported version');
+  }
   const strict = raw.v !== 3;
   const known = ['type', 'size', 'sha256', 'enc', 'parts', ...(raw.v >= 2 ? ['ext'] : []), ...(raw.v === 3 ? ['src'] : [])];
   let later = false;

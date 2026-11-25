@@ -1,15 +1,16 @@
 // Writes packages/core/src/known-contracts.ts: the proved DPNS and dash-sites contracts of each network,
 // bundled so a reader does not fetch them on every start. Rerun after either contract is updated.
 import { writeFileSync } from 'node:fs';
-import { DEPLOYMENTS, DPNS_CONTRACT_ID } from '@dash-sites/core';
+import { DPNS_CONTRACT_ID, readerConfig } from '@dash-sites/core';
 import { connectSdk } from '@dash-sites/core/evo';
 
 const PROTOCOL_VERSION = 14;
 const out = {};
-for (const [network, config] of Object.entries(DEPLOYMENTS)) {
+for (const network of ['testnet', 'mainnet']) {
+  const config = readerConfig(network);
   const sdk = await connectSdk(config, { fetchContracts: true });
   out[network] = {};
-  for (const id of [DPNS_CONTRACT_ID, config.contractId]) {
+  for (const id of [DPNS_CONTRACT_ID, config.contractId].filter(Boolean)) {
     const contract = await sdk.contracts.fetch(id);
     if (!contract) throw new Error(`${network}: contract ${id} not found`);
     out[network][id] = { version: Number(contract.version), bytes: Buffer.from(contract.toBytes(PROTOCOL_VERSION)).toString('base64') };

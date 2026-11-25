@@ -9,10 +9,13 @@ import {
   CHUNK_FIELD_SIZE,
   CHUNK_FIELDS,
   CHUNK_SIZE,
+  DASH_TLD,
   estimateCredits,
   formatContentUri,
+  isValidLabel,
   MAX_CONTENT_URI_LENGTH,
   MAX_MANIFEST_CHUNKS,
+  normalizeLabel,
   sha256Hex,
   type SiteBundle,
 } from '../src/index.js';
@@ -23,6 +26,7 @@ const ID = base58.encode(new Uint8Array(32).fill(7));
 
 interface Property {
   position: number;
+  refersTo?: unknown;
   pattern?: string;
   maxLength?: number;
   minItems?: number;
@@ -31,7 +35,7 @@ interface Property {
 type DocumentTypeSchema = Record<string, unknown> & { properties: Record<string, Property> };
 type Schemas = Record<string, DocumentTypeSchema>;
 
-const schemas = (): Schemas => JSON.parse(readFileSync(new URL('../../../contract/dash-sites.v1.json', import.meta.url), 'utf8')) as Schemas;
+const schemas = (): Schemas => JSON.parse(readFileSync(new URL('../../../contract/dash-sites.v2.json', import.meta.url), 'utf8')) as Schemas;
 const registered = () => parseContract(OWNER, ID, schemas());
 
 beforeAll(() => ensureInitialized());
@@ -58,16 +62,18 @@ describe('the contract to register', () => {
       site: {
         type: 'object',
         documentsMutable: true,
-        canBeDeleted: true,
+        canBeDeleted: false,
+        immutable: ['normalizedParentDomainName', 'normalizedLabel'],
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
-        required: ['domainId', 'name', 'content', '$createdAt', '$updatedAt'],
+        required: ['normalizedParentDomainName', 'normalizedLabel', 'v', '$createdAt', '$updatedAt'],
         indices: [
-          { name: 'ownerAndDomain', properties: [{ $ownerId: 'asc' }, { domainId: 'asc' }], unique: true },
-          { name: 'updated', properties: [{ $updatedAt: 'asc' }] },
+          { name: 'nameAndOwner', properties: [{ normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }, { $ownerId: 'asc' }], unique: true },
+          { name: 'ownerAndName', properties: [{ $ownerId: 'asc' }, { normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }], unique: true },
+          { name: 'updated', properties: [{ $updatedAt: 'asc' }], countable: 'countable', rangeCountable: true },
         ],
-        positions: { domainId: 0, name: 1, content: 2 },
+        positions: { normalizedParentDomainName: 0, normalizedLabel: 1, content: 2, v: 3 },
       },
       chunk: {
         type: 'object',
@@ -76,15 +82,39 @@ describe('the contract to register', () => {
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
-        required: ['hash', 'd0'],
-        indices: [{ name: 'ownerAndHash', properties: [{ $ownerId: 'asc' }, { hash: 'asc' }], unique: true }],
-        positions: { hash: 0, d0: 1, d1: 2, d2: 3 },
+        required: ['site', 'hash', 'd0', 'v', '$createdAt'],
+        indices: [{ name: 'siteAndHash', properties: [{ site: 'asc' }, { hash: 'asc' }], unique: true }],
+        positions: { site: 0, hash: 1, d0: 2, d1: 3, d2: 4, v: 5 },
       },
     });
   });
 
   it('is the schema its cost was measured on', () => {
-    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('eb43d5de673e9090e3d78ab9631006e0d1a2e34d2921292ebe1aec44a52f210c');
+    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('ddb7a75a7ad0a4deb900b247f9e006d9af5d348d9b303a49bfcbc257a74f1fe4');
+  });
+
+  it('is the contract registered on testnet', () => {
+    const { bytes } = KNOWN_CONTRACTS.testnet?.[DEPLOYMENTS.testnet?.contractId as string] as { bytes: string };
+    expect((knownContract(bytes).toJSON() as { documentSchemas: unknown }).documentSchemas).toEqual(schemas());
+  });
+
+  it('gives every document type a required format version', () => {
+    for (const type of Object.values(schemas())) {
+      expect(type.properties.v).toMatchObject({ type: 'integer', minimum: 1, maximum: 65535 });
+      expect(type.required).toContain('v');
+    }
+  });
+
+  it('refers to nothing outside itself, so no change to DPNS can stop its writes', () => {
+    const parsed = (registered().toJSON() as { documentSchemas: Schemas }).documentSchemas;
+    const references = Object.values(parsed).flatMap((type) => Object.values(type.properties).flatMap((property) => (property.refersTo ? [property.refersTo] : [])));
+    expect(references).toEqual([{ type: 'permanentDocument', documentType: 'site', where: { $ownerId: '$ownerId' } }]);
+    expect(JSON.stringify(parsed)).not.toContain(DPNS_CONTRACT_ID);
+  });
+
+  it('has Platform take a chunk only from the identity that wrote its site record', () => {
+    const parsed = (registered().toJSON() as { documentSchemas: Schemas }).documentSchemas;
+    expect((parsed.chunk as DocumentTypeSchema).properties.site?.refersTo).toEqual({ type: 'permanentDocument', documentType: 'site', where: { $ownerId: '$ownerId' } });
   });
 
   it('cannot give moderators a say without declaring moderation when it is created', () => {
@@ -95,7 +125,7 @@ describe('the contract to register', () => {
 
   it('holds what the readers and writers expect', () => {
     const { site, chunk } = schemas() as { site: DocumentTypeSchema; chunk: DocumentTypeSchema };
-    const fields = Object.keys(chunk.properties).filter((key) => key !== 'hash');
+    const fields = Object.keys(chunk.properties).filter((key) => /^d\d$/.test(key));
     expect(fields).toHaveLength(CHUNK_FIELDS);
     for (const key of fields) expect(chunk.properties[key]).toMatchObject({ minItems: 1, maxItems: CHUNK_FIELD_SIZE });
 
@@ -105,17 +135,18 @@ describe('the contract to register', () => {
     expect(longest.length).toBeLessThanOrEqual(MAX_CONTENT_URI_LENGTH);
     for (const uri of [longest, `ipfs://${'b'.repeat(128)}`]) expect(uri).toMatch(new RegExp(content.pattern as string));
 
-    const name = site.properties.name as Property;
-    for (const value of [`${'a'.repeat(63)}.dash`, 'b10g.a11ce.dash']) {
-      expect(value).toMatch(new RegExp(name.pattern as string));
-      expect(value.length).toBeLessThanOrEqual(name.maxLength as number);
+    for (const label of ['Alice', 'b0b', `${'L'.repeat(62)}9`]) {
+      expect(isValidLabel(label)).toBe(true);
+      expect(normalizeLabel(label)).toMatch(new RegExp(site.properties.normalizedLabel?.pattern as string));
     }
+    expect(DASH_TLD).toMatch(new RegExp(site.properties.normalizedParentDomainName?.pattern as string));
+    for (const key of ['normalizedLabel', 'normalizedParentDomainName']) expect(site.properties[key]?.maxLength).toBe(63);
   });
 
   it('costs what the publisher is quoted, and a delete refunds most of the storage', () => {
     const contract = registered();
-    const chunk = documentCreateCost(contract, 'chunk', { fields: { d0: { length: CHUNK_FIELD_SIZE }, d1: { length: CHUNK_FIELD_SIZE }, d2: { length: CHUNK_FIELD_SIZE } } }, PROTOCOL_VERSION);
-    const site = documentCreateCost(contract, 'site', { fields: { name: { length: 10 }, content: { length: 81 } } }, PROTOCOL_VERSION);
+    const chunk = documentCreateCost(contract, 'chunk', { fields: { site: { length: 32 }, d0: { length: CHUNK_FIELD_SIZE }, d1: { length: CHUNK_FIELD_SIZE }, d2: { length: CHUNK_FIELD_SIZE } } }, PROTOCOL_VERSION);
+    const site = documentCreateCost(contract, 'site', { fields: { normalizedParentDomainName: { length: 4 }, normalizedLabel: { length: 63 }, content: { length: 81 } } }, PROTOCOL_VERSION);
     const quoted = estimateCredits({ chunks: new Map([['', new Uint8Array(CHUNK_SIZE)]]) } as SiteBundle);
     expect(BigInt(chunk.storage.credits.newValues + site.storage.credits.newValues)).toBeLessThanOrEqual(quoted);
     expect(chunk.refund.afterOneYear.knownValues / chunk.storage.credits.knownValues).toBeGreaterThan(0.9);
@@ -125,7 +156,8 @@ describe('the contract to register', () => {
 describe('bundled contract snapshots', () => {
   it('decode, and each is the contract and version it is filed under', () => {
     for (const [network, contracts] of Object.entries(KNOWN_CONTRACTS)) {
-      expect(Object.keys(contracts ?? {})).toEqual([DPNS_CONTRACT_ID, DEPLOYMENTS[network as 'testnet' | 'mainnet']?.contractId]);
+      const deployed = DEPLOYMENTS[network as 'testnet' | 'mainnet']?.contractId;
+      expect(Object.keys(contracts ?? {})).toEqual([DPNS_CONTRACT_ID, ...(deployed ? [deployed] : [])]);
       for (const [id, { version, bytes }] of Object.entries(contracts ?? {})) {
         const contract = knownContract(bytes);
         expect(contract.id.toBase58()).toBe(id);

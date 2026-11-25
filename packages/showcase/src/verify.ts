@@ -1,4 +1,4 @@
-import { loadManifest, networkConfig, readFile, resolveName, sha256Hex, type Network } from '@dash-sites/core';
+import { loadManifest, readerConfig, readFile, resolveName, sha256Hex, type Network } from '@dash-sites/core';
 import { EvoReader } from '@dash-sites/core/evo';
 
 export type Report = (ok: boolean, text: string) => void;
@@ -9,7 +9,7 @@ export type Report = (ok: boolean, text: string) => void;
  * Platform, and compares each one with what the page is served.
  */
 export async function verify(label: string, network: Network, report: Report): Promise<boolean> {
-  const reader = await EvoReader.connect(networkConfig(network));
+  const reader = await EvoReader.connect(readerConfig(network));
   report(true, `Connected to Dash Platform ${network} from this browser`);
   const resolution = await resolveName(reader, label);
   if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
@@ -18,7 +18,7 @@ export async function verify(label: string, network: Network, report: Report): P
   }
   report(true, `Proved at block ${resolution.meta.height}: ${resolution.canonicalLabel}.dash belongs to ${resolution.ownerId}`);
   report(true, `Proved: that identity's site record, revision ${resolution.site.revision}`);
-  const source = (hashes: string[]) => reader.getChunks(resolution.ownerId, hashes);
+  const source = (hashes: string[]) => reader.getChunks(resolution.site.id, hashes);
   const manifest = await loadManifest(resolution.content, source);
   const paths = Object.keys(manifest.files).sort();
   report(true, `Manifest matches the hash in the record and lists ${paths.length} files`);

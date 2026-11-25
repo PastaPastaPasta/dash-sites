@@ -231,13 +231,13 @@ describe('published page', () => {
     expect(file(renderSite({ v: 1, theme: 'signal', pages: { '/': [newBlock('divider')] } }, 'bob.dash', []), '/index.html')).toContain('<title>bob.dash</title>');
   });
 
-  it('is within 20% of the size the prototype measured for the reference page, and costs at most 0.002 DASH without its photo', () => {
+  it('is within 20% of the size the prototype measured for the reference page, and is estimated at no more than 0.003 DASH without its photo', () => {
     const page = renderHomePage(reference, 'alice.dash');
     expect(utf8.encode(page).length).toBeLessThan(2286 * 1.2);
     expect(gzipSync(page, { level: 9 }).length).toBeLessThan(1254 * 1.2);
     expect(brotliCompressSync(page, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length).toBeLessThan(943 * 1.2);
     const text = renderSite({ ...reference, pages: { '/': reference.pages['/'].slice(1) } }, 'alice.dash', []);
-    expect(costSplit(text)!.total).toBeLessThanOrEqual(200_000_000n);
+    expect(costSplit(text)!.total).toBeLessThanOrEqual(300_000_000n);
     expect(utf8.encode(serializePageModel(reference)).length).toBeLessThan(1700);
   });
 });
@@ -249,9 +249,9 @@ describe('cost', () => {
     expect(split.imageCount).toBe(1);
     expect(split.imageBytes).toBe(60_000);
     expect(split.images).toBe(fileCredits({ path: picture.path, bytes: picture.bytes, type: picture.type }));
-    expect(split.images).toBe(60_000n * 27_500n + 5n * 28_000_000n);
+    expect(split.images).toBe(60_000n * 28_500n + 5n * 50_000_000n);
     expect(split.text + split.images).toBe(split.total);
-    expect(split.text).toBeGreaterThan(60_000_000n);
+    expect(split.text).toBeGreaterThan(110_000_000n);
     expect(costSplit([])).toBeUndefined();
   });
 
