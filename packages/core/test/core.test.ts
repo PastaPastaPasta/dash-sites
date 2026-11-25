@@ -418,7 +418,7 @@ describe('resolve and publish', () => {
     const alice = platform.as('alice-id');
     const photo = new Uint8Array(40000).map((_, i) => (i * 7) % 251);
     const placed = buildSite([...SITE, { path: '/photo.bin', bytes: photo, src: ['https://media.example.com/photo.bin'] }]);
-    expect(placed.manifest.v).toBe(2);
+    expect(placed.manifest.v).toBe(3);
     await publishSite(alice, 'alice2', placed);
     const later = buildSite([{ path: '/index.html', bytes: text('<p>later</p>'.repeat(300)) }, { path: '/photo.bin', bytes: photo, src: ['https://media.example.com/photo.bin'] }]);
     const entry = later.manifest.files['/photo.bin']!;

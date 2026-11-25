@@ -3,7 +3,7 @@ import { formatContentUri } from './content.js';
 import { integrityOf, isExternalAsset, type ExternalAsset } from './external.js';
 import { gzip } from './gzip.js';
 import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_ELSEWHERE_FILE_BYTES, MAX_MANIFEST_BYTES, MAX_MANIFEST_CHUNKS, MAX_PLACES, type Limits } from './limits.js';
-import { encodeManifest, isValidContentType, isValidPath, usesVersion2, type Manifest, type ManifestFile, type Part } from './manifest.js';
+import { encodeManifest, isValidContentType, isValidPath, versionFor, type Manifest, type ManifestFile, type Part } from './manifest.js';
 import { contentTypeFor, isCompressible } from './mime.js';
 import { parsePlace } from './places.js';
 
@@ -172,7 +172,7 @@ export function buildSite(files: SiteFile[], options: BuildOptions = {}): SiteBu
   for (const path of Object.keys(options.external ?? {})) {
     if (!entries[path]?.ext) throw new PackError(`external asset ${path} is not a file of the site`);
   }
-  const manifest: Manifest = { v: usesVersion2(entries) ? 2 : 1, chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
+  const manifest: Manifest = { v: versionFor(entries), chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
   const encoded = encodeManifest(manifest);
   if (encoded.length > MAX_MANIFEST_BYTES) throw new PackError('manifest is too large');
   const manifestPieces = split(gzip(encoded));

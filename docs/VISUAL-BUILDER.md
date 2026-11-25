@@ -202,7 +202,7 @@ is, so that a later builder can change the format without guessing.
 | Page model | `v` in `/dash-site.json` (1 today) | Any change to the model's shape raises `v`. A builder opens every version up to its own and saves in its own. A page from a newer builder is refused with a message to reload, never half-read. A draft from a newer builder is left in the browser as it is, and nothing is saved over it |
 | Draft images and remembered places | None: `dash-sites.page-images` and `dash-sites.outside` in the browser | Both are caches of what the page and the published site already say. An entry a builder cannot read is skipped, and nothing is lost that publishing or reopening does not bring back |
 | Published HTML | None of its own | It is an output of the model. Republishing from a newer builder rewrites it; until then it stays exactly as published |
-| Manifest | `v` (1, or 2 when a file is kept outside Platform) | Version 2 readers ignore what they do not know ([BULK-STORAGE.md](BULK-STORAGE.md)). Only a change older readers must not ignore raises it |
+| Manifest | `v` (1; 2 with brotli or npm files; 3 when a file is kept outside Platform) | A writer uses the lowest version that holds the site. Version 3 readers ignore what they do not know ([BULK-STORAGE.md](BULK-STORAGE.md)). Only a change older readers must not ignore raises it |
 | Widgets (proposed, §5.2) | A `v` attribute on each tag, and the version in the write page's address and messages | A site keeps the widget script it was published with. The write site answers every version it ever shipped |
 | Records on Platform | The data contract | Read through `@dash-sites/core`'s resolver only, so the builder follows a contract change without changes of its own |
 
@@ -430,8 +430,8 @@ they like without writing code.
 3. **Should the social contract have moderators** who can delete any comment,
    or none, as `dash-sites` has? It cannot be added after registration.
    Recommended: none; owners hide.
-4. ~~Add manifest version 2 to the shell~~ Decided and built: a manifest
-   entry may list where a file is kept (§5.4).
+4. ~~Add a manifest version to the shell~~ Decided and built: in manifest
+   version 3 an entry may list where a file is kept (§5.4).
 5. **The widget name, and the identity that owns it.** A name of fewer than
    20 characters with no digit from 2 to 9, such as `widgets`, goes to a
    masternode vote; a longer one, or one with such a digit, registers at

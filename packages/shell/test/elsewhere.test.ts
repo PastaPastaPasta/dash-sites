@@ -133,7 +133,7 @@ describe('files stored outside Platform', () => {
   it('are listed in the manifest the site can read', async () => {
     const { get } = await serve({});
     const manifest = JSON.parse(String((await get('/.well-known/dash/manifest.json')).body));
-    expect(manifest.v).toBe(2);
+    expect(manifest.v).toBe(3);
     expect(manifest.files['/photo.webp']).toMatchObject({ size: photo.length, sha256: sha256Hex(photo), parts: [], src: [HTTPS, MIRROR] });
   });
 });

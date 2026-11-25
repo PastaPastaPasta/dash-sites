@@ -21,29 +21,32 @@ export interface ManifestFile {
   size: number;
   /** sha256 of the decoded file, hex. */
   sha256: string;
-  /** How the stored bytes are compressed: gzip, or brotli (manifest version 2). A reader refuses a file whose encoding it does not know. */
+  /** How the stored bytes are compressed: gzip, or brotli (from manifest version 2). A version 3 reader refuses a file whose encoding it does not know. */
   enc?: string;
   parts: Part[];
-  /** Manifest version 2: a file of a published npm package that the site does not store. `parts` is empty. */
+  /** From manifest version 2: a file of a published npm package that the site does not store. `parts` is empty. */
   ext?: ExternalAsset;
-  /** Manifest version 2: places outside Platform that hold the file, as URIs, tried in order. `parts` is empty. */
+  /** Manifest version 3: places outside Platform that hold the file, as URIs, tried in order. `parts` is empty. */
   src?: string[];
   /** Set by a reader for an entry it cannot serve, with the reason. Never written. */
   unread?: string;
 }
 
 /**
- * Version 1 is every manifest published before files kept outside Platform and brotli. A manifest
- * that uses either is version 2, so readers that only know version 1 refuse it as a whole, and
- * older collectors that cannot read it delete nothing.
+ * A writer uses the lowest version that holds the site. Version 1 is plain and gzip files in
+ * chunks. Version 2 adds brotli and files of npm packages. Version 3 adds files kept at places
+ * outside Platform. A reader refuses a version above its own as a whole, and older collectors that
+ * cannot read a manifest delete nothing.
  *
- * A version 2 reader ignores keys it does not know, skips places whose kind it does not know, and
- * refuses only the files it cannot read: an encoding it does not know, places in a form it does
- * not know, or bytes it has no parts for. Later additions so leave older readers serving
- * everything they still understand. A change they must not ignore raises the version.
+ * Versions 1 and 2 are closed: a key a reader does not know makes the manifest invalid. Version 3
+ * is open (docs/VERSIONING.md): its reader ignores keys it does not know, skips places whose kind
+ * it does not know, and refuses only the files it cannot read: an encoding it does not know,
+ * places in a form it does not know, or bytes it has no parts for. Later additions so leave older
+ * readers serving everything they still understand. A change they must not ignore raises the
+ * version.
  */
 export interface Manifest {
-  v: 1 | 2;
+  v: 1 | 2 | 3;
   chunks: string[];
   files: Record<string, ManifestFile>;
   spa?: boolean;
@@ -111,16 +114,25 @@ function placesProblem(file: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/** Whether any file needs manifest version 2: one kept outside Platform, or brotli. */
+/** Whether any file needs manifest version 2: an external asset or brotli. */
 export function usesVersion2(files: Record<string, ManifestFile>): boolean {
-  return Object.values(files).some((file) => file.ext !== undefined || file.src !== undefined || file.enc === 'br');
+  return Object.values(files).some((file) => file.ext !== undefined || file.enc === 'br');
 }
+
+/** Whether any file needs manifest version 3: one kept at places outside Platform. */
+export function usesVersion3(files: Record<string, ManifestFile>): boolean {
+  return Object.values(files).some((file) => file.src !== undefined);
+}
+
+/** The lowest manifest version that holds these files. */
+export const versionFor = (files: Record<string, ManifestFile>): Manifest['v'] => (usesVersion3(files) ? 3 : usesVersion2(files) ? 2 : 1);
 
 export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS): Manifest {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new ManifestError('not an object');
   const raw = input as Record<string, unknown>;
-  if (raw.v !== 1 && raw.v !== 2) throw new ManifestError('unsupported version');
-  const strict = raw.v === 1;
+  if (raw.v !== 1 && raw.v !== 2 && raw.v !== 3) throw new ManifestError('unsupported version');
+  const strict = raw.v !== 3;
+  const known = ['type', 'size', 'sha256', 'enc', 'parts', ...(raw.v >= 2 ? ['ext'] : []), ...(raw.v === 3 ? ['src'] : [])];
   let later = false;
   for (const key of Object.keys(raw)) {
     if (['v', 'chunks', 'files', 'spa'].includes(key)) continue;
@@ -145,14 +157,14 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ManifestError(`bad entry ${path}`);
     const file = value as Record<string, unknown>;
     for (const key of Object.keys(file)) {
-      if (['type', 'size', 'sha256', 'enc', 'parts', ...(strict ? [] : ['ext', 'src'])].includes(key)) continue;
+      if (known.includes(key)) continue;
       if (strict) throw new ManifestError(`unknown key ${key} in ${path}`);
       later = true;
     }
     if (typeof file.type !== 'string' || !isValidContentType(file.type)) throw new ManifestError(`bad type in ${path}`);
     if (!isUint(file.size)) throw new ManifestError(`bad size in ${path}`);
     if (!isHash(file.sha256)) throw new ManifestError(`bad sha256 in ${path}`);
-    if (file.enc !== undefined && (strict ? file.enc !== 'gzip' : typeof file.enc !== 'string' || !ENCODING.test(file.enc))) throw new ManifestError(`bad enc in ${path}`);
+    if (file.enc !== undefined && (strict ? file.enc !== 'gzip' && !(raw.v === 2 && file.enc === 'br') : typeof file.enc !== 'string' || !ENCODING.test(file.enc))) throw new ManifestError(`bad enc in ${path}`);
     if (file.ext !== undefined) {
       if (!isExternalAsset(file.ext)) throw new ManifestError(`bad ext in ${path}`);
       if (file.enc !== undefined || !Array.isArray(file.parts) || file.parts.length !== 0) throw new ManifestError(`ext with stored parts in ${path}`);
@@ -191,7 +203,8 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
     };
   }
   const partial = later || Object.values(out).some((file) => file.unread);
-  if (!strict && !partial && !usesVersion2(out)) throw new ManifestError('version 2 without a version 2 feature');
+  if (raw.v === 2 && !usesVersion2(out)) throw new ManifestError('version 2 without a version 2 feature');
+  if (raw.v === 3 && !partial && !usesVersion3(out)) throw new ManifestError('version 3 without a version 3 feature');
   return { v: raw.v, chunks: chunks as string[], files: out, ...(raw.spa ? { spa: true } : {}), ...(partial ? { partial: true } : {}) };
 }
 
@@ -214,7 +227,7 @@ export function decodeManifest(bytes: Uint8Array, limits: Limits = DEFAULT_LIMIT
     throw new ManifestError('not UTF-8 JSON');
   }
   const manifest = validateManifest(parsed, limits);
-  const canonical = manifest.v === 1 ? encodeManifest(manifest) : utf8.encode(JSON.stringify(sortKeys(parsed)));
+  const canonical = manifest.v === 3 ? utf8.encode(JSON.stringify(sortKeys(parsed))) : encodeManifest(manifest);
   if (canonical.length !== bytes.length || canonical.some((byte, i) => byte !== bytes[i])) throw new ManifestError('not in canonical form');
   return manifest;
 }

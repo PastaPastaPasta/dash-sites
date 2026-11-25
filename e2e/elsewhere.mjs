@@ -49,7 +49,7 @@ try {
 
   const manifest = await page.evaluate(async () => (await fetch('/.well-known/dash/manifest.json')).json());
   const outside = Object.entries(manifest.files).filter(([, file]) => file.src);
-  check(manifest.v === 2 && outside.length > 0, `the manifest is version ${manifest.v} and keeps ${outside.length} files outside Platform`);
+  check(manifest.v === 3 && outside.length > 0, `the manifest is version ${manifest.v} and keeps ${outside.length} files outside Platform`);
   check(fromPage.size === 0, `the page itself asked no other host for anything ${[...fromPage].join(' ')}`);
 
   for (const [path, file] of outside) {

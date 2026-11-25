@@ -58,7 +58,7 @@ const canonical = (value: unknown): Uint8Array => {
   return utf8.encode(JSON.stringify(sort(value)));
 };
 
-describe('manifest version 2', () => {
+describe('manifest version 3', () => {
   it('keeps a site with every file on Platform at version 1, byte for byte as before', () => {
     expect(buildSite(FILES).contentUri).toBe('dash-manifest:v1:ba353a13f3f8db0bfc814e7a0d37204acd74e13fc2165833c604d21c02765363');
     expect(buildSite(FILES, { spa: true }).contentUri).toBe('dash-manifest:v1:62db2ee52de0c633b7bb90e04e69dabb5f3f4aa8b39c587db23eccf501a2e69f');
@@ -69,7 +69,7 @@ describe('manifest version 2', () => {
   it('lists where a file is instead of storing it', () => {
     const all = buildSite(FILES);
     const bundle = buildSite(elsewhere([IPFS, HTTPS]));
-    expect(bundle.manifest.v).toBe(2);
+    expect(bundle.manifest.v).toBe(3);
     expect(bundle.manifest.files['/b.bin']).toEqual({ type: 'application/octet-stream', size: big.length, sha256: sha256Hex(big), parts: [], src: [IPFS, HTTPS] });
     expect(bundle.stats).toMatchObject({ files: 3, bytes: all.stats.bytes - big.length, elsewhere: { files: 1, bytes: big.length } });
     expect(bundle.stats.storedBytes).toBeLessThan(all.stats.storedBytes);
@@ -133,14 +133,14 @@ describe('forward compatibility', () => {
     },
   };
 
-  it('reads a version 2 manifest that carries things added later', async () => {
+  it('reads a version 3 manifest that carries things added later', async () => {
     const manifest = decodeManifest(canonical(later));
     expect(manifest).not.toHaveProperty('theme');
     expect(manifest.partial).toBe(true);
     expect(bundle.manifest.partial).toBeUndefined();
     expect(decodeManifest(encodeManifest(bundle.manifest)).partial).toBeUndefined();
     expect(() => encodeManifest(manifest)).toThrow(ManifestError);
-    expect(() => encodeManifest({ ...buildSite(FILES).manifest, v: 2, extra: 1 } as Manifest)).toThrow(ManifestError);
+    for (const v of [2, 3]) expect(() => encodeManifest({ ...buildSite(FILES).manifest, v, extra: 1 } as Manifest)).toThrow(ManifestError);
     expect(manifest.files['/a.js']).toEqual(bundle.manifest.files['/a.js']);
     expect(manifest.files['/b.bin']?.src).toEqual(['ar://kZ9', 'blossom:abc', HTTPS]);
     expect((await readFile(manifest, '/a.js', chunksOf(bundle))).bytes).toEqual(FILES[1]?.bytes);
@@ -163,7 +163,7 @@ describe('forward compatibility', () => {
     const wasm = new Uint8Array(30000).map((_, i) => (i * 13) % 241);
     const npm = { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' };
     const both = buildSite([...elsewhere([HTTPS]), { path: '/sdk.wasm', bytes: wasm }], { external: { '/sdk.wasm': npm } });
-    expect(both.manifest.v).toBe(2);
+    expect(both.manifest.v).toBe(3);
     const manifest = decodeManifest(encodeManifest(both.manifest));
     expect(manifest).toEqual(both.manifest);
     expect(manifest.files['/sdk.wasm']).toMatchObject({ parts: [], ext: npm });
@@ -179,7 +179,8 @@ describe('forward compatibility', () => {
     expect(() => buildSite(elsewhere([HTTPS]), { external: { '/b.bin': npm } })).toThrow(/choose one/);
     const named = buildSite(FILES, { external: { '/b.bin': npm } });
     const { manifest } = named;
-    const read = validateManifest({ ...manifest, files: { ...manifest.files, '/b.bin': { ...manifest.files['/b.bin'], src: [HTTPS] } } });
+    expect(manifest.v).toBe(2);
+    const read = validateManifest({ ...manifest, v: 3, files: { ...manifest.files, '/b.bin': { ...manifest.files['/b.bin'], src: [HTTPS] } } });
     expect(read.files['/b.bin']?.unread).toMatch(/more than one way/);
     await expect(readFile(read, '/b.bin', noChunks, { external: async () => big })).rejects.toThrow(ContentError);
     expect((await readFile(read, '/a.js', chunksOf(named))).bytes).toEqual(FILES[1]?.bytes);
@@ -201,9 +202,15 @@ describe('forward compatibility', () => {
     expect(manifest.files).toEqual(bundle.manifest.files);
   });
 
-  it('still holds version 1 and the canonical form strictly', () => {
+  it('still holds versions 1 and 2 and the canonical form strictly', () => {
     expect(() => validateManifest({ ...buildSite(FILES).manifest, theme: {} })).toThrow(/unknown key theme/);
-    expect(() => validateManifest({ ...bundle.manifest, v: 3 })).toThrow(/unsupported version/);
+    const second = buildSite(FILES, { external: { '/b.bin': { npm: 'pkg', version: '1.0.0', path: 'b.bin' } } }).manifest;
+    expect(second.v).toBe(2);
+    expect(() => validateManifest({ ...second, theme: {} })).toThrow(/unknown key theme/);
+    expect(() => validateManifest({ ...second, files: { ...second.files, '/a.js': { ...second.files['/a.js'], pieces: [] } } })).toThrow(/unknown key pieces/);
+    expect(() => validateManifest({ ...bundle.manifest, v: 2 })).toThrow(/unknown key src/);
+    expect(() => validateManifest({ ...second, v: 3 })).toThrow(/version 3 without a version 3 feature/);
+    expect(() => validateManifest({ ...bundle.manifest, v: 4 })).toThrow(/unsupported version/);
     expect(() => decodeManifest(utf8.encode(JSON.stringify(later)))).toThrow(/canonical/);
     expect(() => decodeManifest(utf8.encode(`${utf8.decode(canonical(later))} `))).toThrow(/canonical/);
   });

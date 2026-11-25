@@ -285,7 +285,7 @@ instead of deleting chunks it cannot account for. `dash-sites publish
 --external <map>` checks each named file against the local copy and against the
 CDNs before publishing, and `--brotli` is opt-in.
 
-### Manifest version 2: files kept at places
+### Manifest version 3: files kept at places
 
 A file that is not on npm (a photo, a video, a script of the site's own) can
 also stay off Platform. Its entry says where the file is instead of holding
@@ -299,9 +299,10 @@ it:
 
 - `src` lists places as URIs, tried in order. Two kinds are fetched today: an
   `https://` address and an `ipfs://` CID (with an optional path). The entry
-  has no parts and no `enc`. A manifest with any such file has `"v": 2`. A
-  file of an npm package uses `ext` above instead, so there is one way to
-  keep each kind of file.
+  has no parts and no `enc`. A manifest with any such file has `"v": 3`; one
+  without stays at version 1 or 2, so older readers still open it. A file of
+  an npm package uses `ext` above instead, so there is one way to keep each
+  kind of file, and a version 3 manifest may hold both.
 - The manifest is still proved, so `size` and `sha256` are the owner's. The
   shell serves the file only when a place returns exactly those bytes. A place
   is relied on to answer, never trusted for content, and the site's address
@@ -326,9 +327,11 @@ it:
   capped at 64 MiB, with at most 8 places. It does not count against the 50 MB
   a site may store on Platform.
 
-**Staying compatible.** A version 2 reader ignores keys it does not know (in
-the manifest and in a file entry) and skips places whose kind it does not
-know. It refuses only the files it cannot read, each with a 502 of its own:
+**Staying compatible.** Versions 1 and 2 are closed: a key a reader does not
+know makes the manifest invalid. Version 3 is open. Its reader ignores keys it
+does not know (in the manifest and in a file entry) and skips places whose
+kind it does not know. It refuses only the files it cannot read, each with a
+502 of its own:
 
 - a file whose `enc` it does not know;
 - a file whose `src` is in a form it does not know: not a list of 1 to 8
@@ -340,7 +343,8 @@ know. It refuses only the files it cannot read, each with a 502 of its own:
 So a later shell can add a kind of place, a hash per piece for streaming,
 another encoding, or another way to store a file, and an older shell keeps
 serving everything it still understands. A change that older readers must not
-ignore raises `v`. Version 1 stays strict, and so does `ext`: an entry that
+ignore raises `v`, and a reader refuses a version above its own as a whole.
+`ext` stays strict in every version: an entry that
 names an npm file in a form this version does not accept makes the whole
 manifest invalid, as before. A writer only emits what its own version reads,
 and refuses to write an entry it would refuse to read.

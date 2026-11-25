@@ -2,7 +2,7 @@
 
 Status: built in this PR for the static stack (`dash.site`, the builder, the
 CLI). Date: 2026-11-25. The format is specified in
-[DESIGN.md](DESIGN.md#manifest-version-2-files-kept-at-places); this
+[DESIGN.md](DESIGN.md#manifest-version-3-files-kept-at-places); this
 page records why it has that shape, what was measured, and what is left.
 
 Storing a file on Dash Platform costs about 0.3 DASH per MB. That suits pages
@@ -31,12 +31,14 @@ get exactly what the owner published.
 ```
 
 `src` is the only new field, and its presence is what makes a manifest
-version 2. Pages still say `/img/hero.webp`. A site with every file on
-Platform still produces a version 1 manifest, byte for byte as before.
+version 3. Pages still say `/img/hero.webp`. A site with every file on
+Platform still produces a version 1 manifest, byte for byte as before, and
+one that only uses brotli or npm files still produces version 2.
 
 ## Room for later changes
 
-A version 2 reader:
+Versions 1 and 2 are closed: a reader refuses a manifest with a key it does
+not know. Version 3 is open. A version 3 reader:
 
 - ignores keys it does not know, in the manifest and in a file entry;
 - skips places whose kind it does not know, and uses the ones it does;
@@ -48,7 +50,9 @@ A version 2 reader:
 So a later shell can add a kind of place (`ar://`, a Blossom hash), a hash
 per piece so large media can be served in ranges, or another encoding, and a
 shell someone set up years earlier keeps serving every file it still
-understands. Only a change older readers must not ignore raises the version.
+understands. Only a change older readers must not ignore raises the version,
+and a reader still refuses a version above its own as a whole
+([VERSIONING.md](VERSIONING.md)).
 Places are URIs for the same reason: a new kind is a new scheme, not a new
 field.
 

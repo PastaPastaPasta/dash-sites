@@ -163,7 +163,9 @@ of site paths to the places that hold them, each an `https://` address or an
 `ipfs://` CID. Platform then stores only the file's size and hash, and a
 visitor's browser fetches the file from the first place that serves exactly
 those bytes. `dash-sites check alice` asks every such place of a published
-site. See [the design doc](docs/DESIGN.md#manifest-version-2-files-kept-at-places).
+site. A site with such a file has a version 3 manifest, which needs a shell,
+gateway or CLI from this change on. See
+[the design doc](docs/DESIGN.md#manifest-version-3-files-kept-at-places).
 
 ```json
 { "/img/hero.webp": ["ipfs://bafy…", "https://media.example.com/hero.webp"] }

@@ -23,7 +23,7 @@ describe('files kept outside Platform', () => {
     setOutsidePlaces(photo, [HTTPS, IPFS, HTTPS]);
     expect(outsidePlaces(photo)).toEqual([HTTPS, IPFS]);
     const bundle = buildSite(keepOutside(files()));
-    expect(bundle.manifest.v).toBe(2);
+    expect(bundle.manifest.v).toBe(3);
     expect(bundle.manifest.files['/photo.webp']).toMatchObject({ parts: [], src: [HTTPS, IPFS] });
     expect(bundle.stats.storedBytes).toBeLessThan(before.stats.storedBytes);
 
