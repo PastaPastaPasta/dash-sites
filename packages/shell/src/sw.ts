@@ -1,10 +1,10 @@
 /// <reference lib="webworker" />
-import { readerConfig, toHex, type Network } from '@dash-sites/core';
+import { readerConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
 import { hostedDenylist } from './hosted-denylist.js';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Inflater } from './inflate.js';
-import { fastNodes } from './nodes.js';
+import { fastNodes, unpinOnFailure } from './nodes.js';
 import type { Verifier } from './verifier.js';
 
 declare const self: ServiceWorkerGlobalScope & { dashSitesVerifier?: Verifier };
@@ -146,6 +146,8 @@ function retryable<T>(start: () => Promise<T>): () => Promise<T> {
 }
 
 const QUORUM_URL = __NETWORK__ === 'mainnet' || __NETWORK__ === 'testnet' ? `https://quorums.${__NETWORK__}.networks.dash.org` : '';
+/** How long a worker whose verifier is ready waits for the node pick; a restarted worker gets here fast. */
+const NODE_GRACE_MS = 600;
 let nodes: Promise<string[] | undefined> | undefined;
 /** Started with the verifier download, so that by the time the SDK runs its nodes are warm. */
 function pickNodes(): Promise<string[] | undefined> {
@@ -154,15 +156,33 @@ function pickNodes(): Promise<string[] | undefined> {
 }
 
 const load = retryable(loadVerifier);
-const connect = retryable(async () => {
-  const { verifier, sdk } = await load();
-  try {
-    return await verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk, await pickNodes());
-  } catch (error) {
-    nodes = undefined;
+let pinned = true;
+let reader: Promise<PlatformReader> | undefined;
+
+function connect(): Promise<PlatformReader> {
+  reader ??= open().catch((error: unknown) => {
+    reader = undefined;
     throw error;
+  });
+  return reader;
+}
+
+async function open(): Promise<PlatformReader> {
+  const { verifier, sdk } = await load();
+  const grace = new Promise<undefined>((resolve) => setTimeout(resolve, NODE_GRACE_MS));
+  const addresses = pinned ? await Promise.race([pickNodes(), grace]) : undefined;
+  const opened = await verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk, addresses);
+  return addresses ? unpinOnFailure(opened, unpin) : opened;
+}
+
+/** From the first failure on the picked nodes on, this worker uses the SDK's own node list. */
+function unpin(): Promise<PlatformReader> {
+  if (pinned) {
+    pinned = false;
+    reader = undefined;
   }
-});
+  return connect();
+}
 
 /** Earlier versions' verifier files are dropped once this worker is in charge. */
 async function pruneShellCache(): Promise<void> {

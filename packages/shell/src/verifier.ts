@@ -19,6 +19,6 @@ export interface Verifier {
   inflater: () => brotliInflater(() => Uint8Array.from(atob(__BROTLI_DECODER__), (c) => c.charCodeAt(0))),
   connect(config, sdk, addresses) {
     (globalThis as { dashSitesSdk?: WebAssembly.Module }).dashSitesSdk = sdk;
-    return EvoReader.connect(config, addresses ? { addresses } : undefined);
+    return EvoReader.connect(config, { addresses });
   },
 };

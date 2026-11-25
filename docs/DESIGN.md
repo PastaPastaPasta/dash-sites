@@ -382,12 +382,17 @@ queries for browsers.
 - **Choosing nodes**: while the verifier downloads, the worker reads that
   masternode list (enabled nodes that passed the service's version check),
   sends an empty request to 10 random ones, and gives the SDK the first 4 to
-  answer (`packages/shell/src/nodes.ts`). Each first proved query then finds
-  an open connection and a cached CORS preflight (DAPI allows 20 days;
+  answer healthily (`packages/shell/src/nodes.ts`). Each document query then
+  finds an open connection and a cached CORS preflight (DAPI allows 20 days;
   Chrome keeps 2 hours) instead of paying for both on a random, possibly
-  distant node. With fewer than 2 answers within 2.5 s the SDK chooses nodes
-  itself. Which node answers does not change what is shown: every answer is
-  proof-checked.
+  distant node. With fewer than 2 answers within 2.5 s of the list, or if
+  the verifier is ready and the pick is still 0.6 s away, the SDK chooses
+  nodes itself. After the first failed query on the picked nodes, the worker
+  moves to the SDK's own list for the rest of its life, so a short outage
+  that gets the few picked nodes banned does not stall it. Which node
+  answers cannot change what is shown, only whether and how fast it arrives:
+  every answer is proof-checked. The cost is that 4 operators see one
+  visit's lookups rather than a random spread.
 - **Caching**: a proved answer is reused for 30 s, then served while a fresh
   one is fetched. Verified chunks are kept in the origin's Cache Storage and
   re-hashed on every read. A worker that has just started serves nothing
