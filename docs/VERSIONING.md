@@ -29,6 +29,10 @@ change. It also lists every format version that has been written.
 6. **Any change to a format raises its version**, including adding an
    optional key. Version 1 and 2 manifests reject unknown keys, so this rule
    is what makes rule 5 safe.
+7. **A new chunk format also raises the manifest or content URI version.**
+   Readers meet chunks one file at a time, so a newer chunk alone would be
+   refused file by file, after other files were served. A newer manifest is
+   refused before any file is served.
 
 ## Registry
 
@@ -73,8 +77,11 @@ Writers never rewrite what they cannot read:
 - `gc` and `publish --prune` delete nothing while any of the identity's
   records is in a format they cannot read.
 - They also keep every chunk stored within the grace period (by the chunk's
-  `$createdAt`), so a publish still uploading in another tab keeps the chunks
-  its record does not reference yet.
+  `$createdAt`; a chunk without one is never deleted), so a publish still
+  uploading in another tab keeps the chunks its record does not reference
+  yet. A publish that reuses older chunks checks again, just before it writes
+  the record, that they are still stored, and stores again any a `gc` deleted
+  meanwhile.
 
 ## Changing the contract
 

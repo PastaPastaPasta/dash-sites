@@ -55,7 +55,7 @@ Options
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
   --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
   --prune                       after publishing, delete chunks of releases before the one replaced
-  --grace <hours>               gc and --prune delete nothing until every site record is this old (default 25)
+  --grace <hours>               gc and --prune delete nothing until every site record is this old, and keep chunks younger than this (default 25)
   --brotli                      store a file as brotli when that is smaller than gzip (needs a current shell)
   --external <file>             JSON {"/site/path": {"npm": "pkg", "version": "1.2.3", "path": "dist/file"}}:
                                 files not stored, fetched by readers from npm CDNs and checked by SHA-384

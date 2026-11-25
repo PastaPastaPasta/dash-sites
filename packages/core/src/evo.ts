@@ -472,7 +472,7 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     return (await this.all('chunk', ['site', '==', siteId], 'hash')).value.map(([id, document]) => ({
       id,
       hash: toHex((document.toObject() as Record<string, unknown>).hash as Uint8Array),
-      createdAt: Number(document.createdAt ?? 0),
+      createdAt: document.createdAt === undefined ? Number.MAX_SAFE_INTEGER : Number(document.createdAt),
     }));
   }
 

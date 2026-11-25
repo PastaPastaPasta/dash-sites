@@ -703,6 +703,28 @@ describe('resolve and publish', () => {
     expect((await collectGarbage(alice, { now: now(), recheckMs: 0 })).deleted).toBe(next.chunks.size);
   });
 
+  it('stores again a reused chunk that a gc deleted while the publish was uploading', async () => {
+    const { platform, alice, later } = aged();
+    const v1 = buildSite(SITE);
+    await publishSite(alice, 'alice', v1);
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('v2') }]));
+    later();
+    const v3 = buildSite([...SITE, { path: '/new.txt', bytes: text('new') }]);
+    const reused = [...v1.chunks.keys()].filter((hash) => v3.chunks.has(hash));
+    expect(reused.length).toBeGreaterThan(0);
+    let raced = false;
+    const racing: PlatformWriter = {
+      ...alice,
+      createChunk: async (siteId, hash, data) => {
+        if (!raced) for (const [key, chunk] of platform.chunks) if (reused.includes(chunk.hash)) platform.chunks.delete(key);
+        raced = true;
+        return alice.createChunk(siteId, hash, data);
+      },
+    };
+    await publishSite(racing, 'alice', v3);
+    for (const hash of v3.chunks.keys()) expect(await holds(alice, hash)).toBe(true);
+  });
+
   it('waits for a re-read from a block later than the plan before deleting, so a lagging node cannot hide a publish', async () => {
     const { platform, alice, later } = aged();
     const v1 = buildSite(SITE);

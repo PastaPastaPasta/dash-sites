@@ -66,10 +66,10 @@ export async function publishSite(
   const domain = await requireOwnedName(writer, name);
   const before = await writer.balance();
   const existing = (await writer.listSites()).find((site) => site.normalizedLabel === domain.normalizedLabel);
-  // An older writer must not rewrite a newer record, which would drop what it cannot read; refuse before paying for chunks.
-  if (existing) refuseNewer('site', existing.v);
   if (!existing && before < estimateCredits(bundle)) throw new Error(`the identity holds ${formatDash(before)}, and this site costs about ${formatDash(estimateCredits(bundle))} to store`);
   const record = existing ?? (await writer.ensureSite(domain));
+  // An older writer must not rewrite a newer record, which would drop what it cannot read; refuse before paying for chunks.
+  refuseNewer('site', record.v);
   const all = [...bundle.chunks.keys()];
   const present = await storedHashes(writer, record.id, all);
   const missing = all.filter((hash) => !present.has(hash));
@@ -79,6 +79,9 @@ export async function publishSite(
     done += 1;
     onProgress({ step: 'upload', done, total: missing.length, hash });
   }
+  // A chunk reused from an earlier release may have been deleted by a gc in another tab during the upload.
+  const still = await storedHashes(writer, record.id, [...present]);
+  for (const hash of present) if (!still.has(hash)) await writer.createChunk(record.id, hash, bundle.chunks.get(hash) as Uint8Array);
   let replaced: SiteRecord | undefined;
   let replacedError: string | undefined;
   if (options.prune) {
@@ -159,7 +162,10 @@ export interface PruneOptions {
 }
 
 export interface PrunePlan {
-  /** Chunks of this identity that no site record it shows references, with the record each is stored under and its size. */
+  /**
+   * Chunks of this identity that no site record it shows references and that were stored before the
+   * grace period, with the record each is stored under and its size.
+   */
   remove: Array<StoredChunk & { siteId: string; bytes: number }>;
   bytes: number;
   kept: number;

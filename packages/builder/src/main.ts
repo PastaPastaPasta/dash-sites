@@ -836,7 +836,7 @@ function start(): void {
       if (deferredUntil !== undefined) return `Nothing deleted yet: a site changed recently, and visitors may still load its previous files. Try again after ${new Date(deferredUntil).toLocaleString()}.`;
       if (skipped) return `Nothing deleted: ${skipped}.`;
       if (failed.length > 0) return `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}; ${failed.length} could not be deleted. Try again later.`;
-      return deleted === 0 ? 'Nothing to delete: every stored file is in use.' : `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}.`;
+      return deleted === 0 ? 'Nothing to delete: every stored file is in use or was stored too recently.' : `Deleted ${deleted} unused ${deleted === 1 ? 'part' : 'parts'}.`;
     });
   });
 

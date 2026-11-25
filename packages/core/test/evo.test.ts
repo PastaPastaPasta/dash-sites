@@ -158,7 +158,7 @@ describe('reading a name', () => {
     const { reader: platform, queries } = reader(answer([domain], documents(record), documents(chunk(0), newer)));
     expect(await platform.getName('a11ce', true)).toEqual({ value: read, meta });
     await platform.getChunks(SITE_ID, [hashes[0] as string, hashes[1] as string]);
-    expect(queries).toHaveLength(1);
+    expect(queries.map((query) => query.where)).toEqual([[['site', '==', SITE_ID], ['hash', 'in', [base58.encode(Buffer.from(hashes[1] as string, 'hex'))]]]]);
   });
 
   it('asks for the record alone when no chunks are wanted', async () => {
