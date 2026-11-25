@@ -110,12 +110,41 @@ dash-sites publish ./my-site --name alice --identity-file identity.json
 dash-sites resolve alice
 dash-sites publish ./my-site --name alice --identity-file identity.json \
   --brotli --external external.json             # version 2: see below
+dash-sites publish ./my-site --name alice --identity-file identity.json --prune
+dash-sites gc --identity-file identity.json --dry-run   # what would be deleted, and the refund
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
 ```
 
+`--prune` deletes, after the new record is written, the chunks of releases older than the
+one it replaced. The site being published keeps its current and previous release; other
+sites of the identity keep only their current release. `gc` deletes every
+chunk no site record of the identity references. Both delete nothing while a site record
+of the identity changed less than `--grace` hours ago (default 25, past the gateway's 24-hour
+stale cache): a browser or gateway may still be serving the release a record replaced.
+`gc --dry-run` lists the chunks `gc` would delete and the refund; `publish --dry-run` plans
+no pruning. Only the identity's own chunks are listed and deleted; other identities' chunks
+are never read as references or touched.
+
+Before deleting, the site records are read again from a block at least three minutes newer
+than the one the plan was made from (waiting for one if needed), and nothing is deleted if
+they changed since the plan, or if any record has content this version cannot read. So a
+publish one lagging node did not show is seen before anything goes. The grace period is
+measured in Platform's block time, not this machine's clock. A prune that cannot run is
+reported in the publish output; the new site is live regardless. The builder does not let
+you delete files while it publishes, or publish while it deletes. What is not covered:
+**publishing for the same identity from two places at once** (another tab, the builder and
+the CLI) while one of them deletes, so run one publisher at a time; and `unpublish`, after
+which the removed site's chunks count as unused at once. An identity that updates some site
+more often than the grace period never prunes on publish; run `gc` in a quiet period.
+
 `--identity-file` takes the identity JSON that dash-bridge writes. You can
 also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
-0.3 DASH per megabyte, paid once, and deleting old chunks refunds most of it.
+0.3 DASH per megabyte, paid once. Deleting a chunk refunds its storage fee less
+what Platform has already paid out to masternodes: 0.125% per mainnet epoch (9.125 days)
+in the first year, so about 99.9% after a day and 94.9% after a year. The delete itself
+pays a processing fee that is not refunded: the chunk tree stores documents in its nodes,
+so a delete rewrites the nodes above it, about 58M credits a chunk in a tree of a thousand
+chunks. What comes back net is about three quarters of what the chunks cost.
 Get testnet funds at https://faucet.thepasta.org. Run `dash-sites` with no
 arguments for every command.
 
