@@ -1,5 +1,5 @@
 diff --git a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
-index 9cdace46b4..33010e1e56 100644
+index 9cdace46b4..e0aaefffb1 100644
 --- a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
 +++ b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
 @@ -31,6 +31,7 @@ mod dpns_v3_tests {
@@ -10,7 +10,7 @@ index 9cdace46b4..33010e1e56 100644
      use dpp::data_contract::DataContract;
      use dpp::data_contracts::SystemDataContract;
      use dpp::document::{Document, DocumentV0};
-@@ -2298,4 +2299,444 @@ mod dpns_v3_tests {
+@@ -2298,4 +2299,475 @@ mod dpns_v3_tests {
              StateTransitionExecutionResult::SuccessfulExecution { .. }
          );
      }
@@ -436,6 +436,37 @@ index 9cdace46b4..33010e1e56 100644
 +
 +        let wrong: Vec<_> = log.iter().filter(|(_, ok)| !ok).map(|(what, _)| what).collect();
 +        assert!(wrong.is_empty(), "unexpected outcomes: {wrong:?}");
++    }
++
++    /// A contested name has no `domain` document until its contest is awarded, so nobody,
++    /// its contenders included, can write a site record for it before then.
++    #[tokio::test]
++    async fn dash_sites_contested_name_before_and_after_its_award() {
++        for protocol_version in [14, 15] {
++            let mut fixture = DpnsFixture::new(protocol_version);
++            let sites = fixture.apply_sites();
++            let mut alice = 0;
++            let record = [
++                ("normalizedParentDomainName", text("dash")),
++                ("normalizedLabel", text("quantum")),
++            ];
++            let (_, _, result) = fixture.register(Who::Alice, "quantum", &[], &[]).await;
++            assert!(accepted(&result), "PV{protocol_version} contest opened: {}", outcome(&result));
++            assert!(fixture.name("quantum").is_none());
++            let (_, result) = fixture
++                .sites_create(sites, Who::Alice, &mut alice, "site", &record, REVEAL_HEIGHT + 1)
++                .await;
++            println!("PV{protocol_version} a contender writes a site record during the contest: {}", outcome(&result));
++            assert_eq!(refusal_code(&result), Some(40120));
++
++            fixture.end_contests(CONTEST_OVER_HEIGHT);
++            assert_eq!(fixture.name("quantum").map(|name| name.owner_id()), Some(fixture.id(Who::Alice)));
++            let (_, result) = fixture
++                .sites_create(sites, Who::Alice, &mut alice, "site", &record, CONTEST_OVER_HEIGHT + 1)
++                .await;
++            println!("PV{protocol_version} the winner writes its site record after the award: {}", outcome(&result));
++            assert!(accepted(&result));
++        }
 +    }
 +
 +    /// The schema as a registration under each protocol version would check it.
