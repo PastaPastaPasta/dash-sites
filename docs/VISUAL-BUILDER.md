@@ -3,6 +3,11 @@
 Status: proposal, nothing built. Date: 2026-11-25. Wanted from Pasta: yes, no,
 or change X (the open calls are listed in [§8](#8-decisions-wanted)).
 
+Decided in review (Pasta, 2026-11-25): the shell that loads sites stays
+simple and unchanging, so that others can run it. It serves no widget code.
+Widget code is kept on Dash Platform and committed there. §5.2 and §5.4 are
+written to that rule; the first draft had the shell host serve the widgets.
+
 Today a site is either one page written in a form (title, tagline, Markdown,
 links, three looks) or a folder of code someone wrote elsewhere and uploaded.
 The goal is a builder where people assemble a site by pointing and typing,
@@ -21,16 +26,19 @@ username, polls with one vote per username.
    publishes through it.
 3. **Make widgets independent of the editor.** A widget is one HTML tag
    (`<dash-comments>`, `<dash-poll>`). The builder inserts it from a block;
-   an uploaded or hand-written site adds the same tag by hand. The code
-   behind the tag is served by the shell host, not stored in each site, so a
-   widget adds about 100 bytes to a site.
-4. **One new data contract for widget data**, separate from the `dash-sites`
+   an uploaded or hand-written site adds the same tag by hand.
+4. **Keep all widget code on Dash Platform, and leave the shell alone.** The
+   part that shows comments is a small script stored in the site. The part
+   that signs in and writes is a Dash Site of its own, opened in a tab.
+5. **One new data contract for widget data**, separate from the `dash-sites`
    contract, in which Dash Platform itself checks who may write what.
-5. **Start small.** Milestone 1 is the editor with eight blocks on the
+6. **Start small.** Milestone 1 is the editor with eight blocks on the
    testnet builder: no widgets, no contract, nothing on mainnet.
 
-The SDK-from-npm idea is not needed for any of this (see
-[§5.4](#54-the-sdk-from-npm-idea)); it stays worth landing for other reasons.
+Widgets need the SDK in the page, and it is too large to store in every site.
+That makes the SDK-from-npm idea a prerequisite for widgets, and the one
+addition to the shell this proposal asks for (see
+[§5.4](#54-the-sdk-by-hash-from-npm)).
 
 ## 1. What a builder must satisfy here
 
@@ -172,39 +180,57 @@ bundling its icons, and turning its telemetry off. §5.2 to §5.5 do not change.
 
 ### 5.2 Widgets
 
-A site that wants comments contains this and nothing else:
+The rule: the shell gains nothing for widgets. Every byte of widget code is
+either a file in a site's proved manifest, or an npm file whose hash is in
+that manifest.
+
+A widget has two parts, because showing comments and writing them need
+different things.
+
+**Showing** is a script stored in the site:
 
 ```html
 <dash-comments thread="/"></dash-comments>
-<script src="/.well-known/dash/widgets.js" async></script>
+<script src="/dash-widgets.js" async></script>
 ```
 
-- **The loader** (`widgets.js`) is answered by the shell on every site's own
-  address, like `/.well-known/dash/site.json` today. It is not stored in the
-  site, so it costs nothing and can be improved without anyone republishing.
-- **The widget itself runs in a frame on its own address**,
-  `w.<shell domain>` (`w.dash.site`). A DPNS label has at least three
-  characters, so `w` can never be someone's name and shadows no site. It is
-  static files, as the builder is: on `dash.site`, one more assets-only
-  Cloudflare Worker route.
-- **Why a frame**: a site's own script is untrusted. A visitor's key must
-  not be readable by the site they are commenting on. In the frame the key
-  lives under `w.<domain>`, which no site can read.
-- **Which site a widget belongs to** is taken from the browser's report of
-  the embedding page's address, never from anything the page says. A site can
-  therefore only ever cause comments or votes on itself.
-- **Loading**: the frame is created when the widget scrolls into view. It
-  needs the SDK's WebAssembly (5.7 MB), the same file the shell has just
-  downloaded from the same host to show the site, so it is normally already
-  in the browser's cache.
-- **Reading** needs no sign-in: comments and tallies are read from Dash
-  Platform with proofs, and shown as plain text.
-- **Appearance**: the tag passes colours and a font stack; the frame applies
-  a fixed list of them.
+- `dash-widgets.js` is a file of the site like any other. The builder adds
+  it when a page has a widget; an uploaded site includes the same file.
+- It reads comments and tallies from Dash Platform with proofs and shows
+  them as plain text. It starts when the widget scrolls into view.
+- It holds no key, so it needs no protection from the site around it. A site
+  can show whatever it likes on its own page anyway.
+- This works on today's shell. Its worker leaves requests to other hosts
+  alone, and the showcase site at `p2p.dash` already does proved reads from
+  inside its page.
+- A site keeps the version it was published with until its owner republishes.
 
-Later, the shell's own worker (which already has the SDK running) can answer
-reads directly so that only writing needs the frame. Because the loader comes
-from the shell, that changes no published site.
+**Writing** (signing in, posting, voting, hiding) is a Dash Site of its own:
+
+- It is published under a DPNS name we register (working name
+  `widgets.dash`). Its code is on Platform, committed by that name's record,
+  and loaded and checked by the shell like any other site.
+- Pressing "Comment" or a poll option opens it in its own tab, at
+  `<widget name>.<the domain the site is on>`. The script works that address
+  out from its own, so it holds on `dash.site`, on anyone else's copy of the
+  shell and through the extension.
+- The visitor's key is kept under that name's address, which no other site
+  can read. One sign-in covers every site.
+- The tab says which site and thread it is about to write to, writes, tells
+  the page that opened it, and closes. The page then reads the thread again.
+- The script takes the widget name as a setting, so an owner who would
+  rather trust their own copy can publish one under their own name.
+
+**Why a tab and not a frame.** Today's shell refuses to show a name in a
+frame until that browser has opened it in a tab once
+(`packages/shell/src/host.ts`), so that data a previous owner of the name
+left in the browser can be cleared first. A tab works on the first visit
+with the shell as it is. It also keeps the address in view and leaves a site
+nothing to trick a click into. After that first tab the same browser will
+show the widget name in a frame, so posting inside the page can be added
+later, still without touching the shell. That holds while browsers treat
+every name as part of one site, which ends if the domain goes on the Public
+Suffix List.
 
 ### 5.3 Contract
 
@@ -232,9 +258,7 @@ that can publish or replace a site.
 - **Moderation**: the site's owner hides a comment or mutes an author with a
   `hide` record, and the widget does not show what its site's owner has
   hidden. Authors delete their own comments. Nobody else can remove anything
-  from Platform, the same stance as the `dash-sites` contract. A hosted
-  `w.` frame can decline to display an author, as hosted shells can decline
-  to serve a name.
+  from Platform, the same stance as the `dash-sites` contract.
 - **Fixed at registration**: each type's indexes, whether its documents can
   be edited or deleted, and whether the contract has moderators. New types,
   new optional fields and longer limits can be added later.
@@ -243,38 +267,56 @@ that can publish or replace a site.
   what differs here is that a poll belongs to a site and only that site's
   owner can open it.
 
-### 5.4 The SDK-from-npm idea
+### 5.4 The SDK, by hash from npm
 
-The idea: do not store the SDK in a site; name the npm file and its hash,
-and let the browser fetch it from an npm mirror and check it. The branch
-`feat/external-assets` already implements this (manifest version 2: package,
-exact version, path, SHA-384; fetched from jsDelivr, then unpkg).
+Both parts of a widget run the SDK in a page: the script that shows comments
+needs it to check proofs, and the write site needs it to sign. The shell's
+worker has its own copy, but a page cannot use it. There are three ways to
+give a page the SDK:
 
-- **Widgets do not need it.** In §5.2 the SDK is a static file of the shell
-  host, already downloaded to show the site. No site stores it and no npm
-  mirror is contacted.
-- **It still matters for uploaded sites that are apps**: storing the SDK
-  would cost about 1.7 DASH per site, against nothing when named by hash.
-- **It could give the builder web fonts for free**: fonts are npm packages
-  too. The price is that visitors' browsers contact jsDelivr or unpkg, which
-  today's sites never do (`e2e/shell.mjs` asserts it). That is a product
-  call, so fonts stay on system stacks until it is made.
+| | Committed on Platform | Cost | Shell |
+| --- | --- | --- | --- |
+| **Name the npm file and its hash in the site's manifest**; the browser fetches it from an npm mirror and the shell checks it (`feat/external-assets`, manifest version 2) | The hash is. The bytes come from jsDelivr, then unpkg | Nothing stored | One addition: a manifest entry may name a file by hash |
+| Store the SDK in each site | Fully | About 1.7 DASH per site | Unchanged |
+| Load it from jsDelivr by address, as the showcase site does today | No: the mirror decides what runs | Nothing | Unchanged |
 
-Recommendation: land `feat/external-assets` on its own merits; nothing here
-waits for it.
+Recommended: the first. It is the idea already on the table, it is written
+on the branch, and it is general: it says nothing about widgets. It is still
+a change to how the shell reads a site, the only one here, so it is listed as
+a decision in §8. Storing the SDK per site prices ordinary sites out of
+widgets, and loading by address commits to nothing.
+
+Things to settle on the branch before widgets rely on it:
+
+- The files are `@dashevo/wasm-sdk`'s `dist/raw/wasm_sdk_bg.wasm` (26.7 MB)
+  and its 1.5 MB loader. Measured for 5.0.3: jsDelivr sends the WebAssembly
+  as 7.5 MB; unpkg, the second mirror, sends all 26.7 MB uncompressed.
+- On the branch a named file counts toward a site's size limit. The
+  reader's 50 MB limit has room; the fallback process's 25 MB default does
+  not.
+- Visitors' browsers contact jsDelivr or unpkg, which today's sites never do
+  (`e2e/shell.mjs` asserts the list of hosts). With widgets that becomes
+  normal for any site that has one.
+- A page with a widget runs a second copy of the SDK beside the worker's.
+  The shell keeps the checked file for each site, so a returning visitor
+  does not fetch it again.
+
+Fonts are npm packages too, so the same mechanism could give builder-made
+sites web fonts at no storage cost. That is a separate product call; fonts
+stay on system stacks until it is made.
 
 ### 5.5 Identity
 
 - **Building and publishing**: unchanged. A wallet sign-in gives the builder
   a key that can only write `dash-sites` documents.
-- **Commenting and voting**: the frame shows the same wallet sign-in (QR
+- **Commenting and voting**: the write site shows the same wallet sign-in (QR
   code, or a button on a phone), asking for one key that can only write
   `dash-sites-social` documents, with a proposed limit of 0.05 DASH and 90
-  days. The wallet's owner sees and can change both. The frame then shows
-  "answered as alice.dash, continue?" as the builder does. There is no
-  paste-a-private-key option inside a widget.
-- **One approval covers every site** on that shell host, because the key is
-  kept under `w.<domain>` until it expires or the visitor signs out.
+  days. The wallet's owner sees and can change both. The write site then
+  shows "answered as alice.dash, continue?" as the builder does. It has no
+  paste-a-private-key option.
+- **One approval covers every site**, because the key is kept under the
+  widget name's address until it expires or the visitor signs out.
 - **The owner's side** (opening a poll, hiding a comment) needs a
   `dash-sites-social` key as well. App Connect lets one request carry several
   keys, provided the contracts share an owner, so the builder asks for both in
@@ -291,10 +333,12 @@ waits for it.
 | Its page model, for later editing | owner, once | under 0.0002 DASH |
 | A 60 KB photo | owner, once | 0.018 DASH |
 | A 200 KB photo | owner, once | 0.059 DASH |
-| A widget on a page | owner, once | about 100 bytes: the tag and the loader line |
+| Widgets on a site | owner, once per site | the script that shows them, to be measured; at 10 KB stored, 0.003 DASH |
 | A comment or a vote | the commenter or voter | to be measured; a 100-byte document costs 0.000265 DASH today, and these carry more indexes. Deleting refunds most of the storage part |
 | Registering the social contract | Pasta, once per network | to be measured on testnet; PR #14's two-type contract cost 0.18 DASH there, and this one has four types |
-| The editor, the widget code, the SDK | nobody | static files of the shell host, not on Platform |
+| Publishing the write site | Pasta, per release | to be measured; at 50 KB stored, 0.015 DASH, with the previous release's storage mostly refunded |
+| The SDK | nobody | named by hash, fetched from npm mirrors |
+| The editor | nobody | static files of the builder, not on Platform |
 
 A photo costs roughly ten to thirty times what the rest of a page does, which
 is why the image step and the meter are in milestone 1. That a comment costs
@@ -306,12 +350,15 @@ its author something, however little, is also the first line of spam control.
 | --- | --- |
 | Puck changes or stalls before 1.0 | Exact version pinned; our model and renderer do not depend on it; the fallback is our own section list |
 | A compromised editor dependency steals a publishing key | The editor runs in a sandboxed frame and never sees the key (§5.1). The builder's policy must allow connections to any HTTPS host, because Platform nodes are bare addresses, so isolation is the control, not the policy |
-| A site tricks a signed-in visitor into clicking inside the widget frame | A site can only affect its own threads and polls; a vote asks for confirmation naming the site; the key has a spending limit. Residual: a visitor can be made to vote in that site's own poll |
-| Comment text attacks the frame | Text is rendered as text, never as HTML. The frame is on its own address, apart from the builder and from every site |
-| Spam and abuse in comments | Each comment costs its author and needs a name; owners hide and mute; hosted frames can decline an author. Nothing can be forced off Platform, and a comment is public for as long as its author leaves it |
+| A site imitates the write page, or shows a sign-in code of its own | The real write page is at the widget name's address, in view in its tab, and the wallet shows what it is approving. Residual, as for the builder's sign-in today: a visitor who approves an imitation hands it a key that can comment and vote as them, up to its spending limit, until it expires or they remove it in the wallet |
+| Whoever owns the widget name controls the write page for every site | Keep that identity's keys offline and never transfer the name. Every change is a new record on Platform that anyone can see. A site can point at another copy |
+| Comment text attacks the page showing it | Text is rendered as text, never as HTML, and the script that shows it holds no key |
+| An npm mirror is down or serves other bytes | Two mirrors, and nothing runs unless its hash matches. The widget is then missing; the rest of the site is not affected |
+| Published sites keep an old copy of the script | The address the script opens and the message it gets back are versioned, and the write site keeps answering old versions |
+| Spam and abuse in comments | Each comment costs its author and needs a name; owners hide and mute. Nothing can be forced off Platform, and a comment is public for as long as its author leaves it |
 | Polls are not sybil-proof | One vote per identity with a name, and both cost little. Polls measure sentiment; say so in the widget. A later rule could admit only names older than the poll |
 | The contract's terms are permanent | Rehearse on testnet first, with every refused write, as PR #14 did. Mainnet registration is a separate decision |
-| One sign-in for all sites stops working | It relies on `dash.site` not being on the Public Suffix List. Once listed, browsers give the frame separate storage per site, and a visitor signs in per site unless the frame asks for storage access |
+| A new tab for every comment or vote is clumsy | It is one extra step, and the place where the wallet sign-in happens anyway. Posting inside the page can follow (§5.2) |
 | Wallets and a second app | The flow is the one the builder uses today. How DashPay presents "Dash Sites comments" beside "Dash Sites", and a two-key request, needs a test on both wallets |
 | Depends on PR #14 and its mainnet contract | Milestone 1 does not. Comments wait for the new contract on each network |
 | People expect free-form design | The upload path stays, and widgets work in uploaded sites |
@@ -323,13 +370,13 @@ Each milestone ends on testnet and is usable on its own.
 | | What ships | Done when |
 | --- | --- | --- |
 | **M1: Blocks** | Puck in the testnet builder with the eight blocks and three themes of §5.1, the image step, the cost meter, drafts, and reopening a published site for editing. No widgets, no contract, nothing on mainnet | The reference page is built and published on a phone and on a desktop, costs at most 0.002 DASH, and reopens for editing on another device. The builder's policy is unchanged and it makes no request to another host. The existing end-to-end tests pass |
-| **M2: Comments** | The social contract on testnet (all four types, rehearsed), the loader in the shell, the `w.` frame, reading, signing in, posting, deleting, and hiding by the owner. A Comments block | A comment posted from DashPay on one testnet site appears there, cannot be posted under a name the author does not own, and can be hidden by the owner. Measured cost per comment is in the docs |
+| **M2: Comments** | Manifest version 2 in the shell (`feat/external-assets`). The social contract on testnet (all four types, rehearsed). The script that shows comments, and the write site under a testnet name: signing in, posting, deleting, and hiding by the owner. A Comments block | A comment posted from DashPay on one testnet site appears there, cannot be posted under a name the author does not own, and can be hidden by the owner. The shell has no widget code in it. Measured costs per comment and per site are in the docs |
 | **M3: Polls** | Opening a poll from the builder, voting, proved tallies, closing. A Poll block | A second vote from the same identity is refused by Platform, and a vote after closing is refused |
-| **M4: Mainnet** | The builder at `dash.site/new`, the `w.dash.site` route, the social contract on mainnet | After PR #14's contract is on mainnet and Pasta approves the registration, with its cost quoted from testnet |
-| Later | Several pages and a blog list, a template gallery, web fonts, more widgets (guestbook, reactions, a "pay alice.dash" button), a Publii guide, reads answered by the shell | |
+| **M4: Mainnet** | The builder at `dash.site/new`, the write site under its mainnet name, the social contract on mainnet | After PR #14's contract is on mainnet and Pasta approves the registration, with its cost quoted from testnet |
+| Later | Several pages and a blog list, a template gallery, web fonts, more widgets (guestbook, reactions, a "pay alice.dash" button), a Publii guide, posting inside the page | |
 
 M1 is deliberately the part with no permanent consequences: no contract, no
-visitor keys, no new address. It answers whether people can build a site
+visitor keys, no new name, no change to the shell. It answers whether people can build a site
 they like without writing code.
 
 ## 8. Decisions wanted
@@ -339,12 +386,17 @@ they like without writing code.
 2. **Go for M1 on the testnet builder?**
 3. **Should the social contract have moderators** who can delete any comment,
    or none, as `dash-sites` has? It cannot be added after registration.
-   Recommended: none; owners hide, hosted frames decline.
-4. **May builder-made sites load fonts from npm mirrors**, which lets
-   visitors' browsers contact jsDelivr or unpkg? Recommended: not yet.
-5. **`w.<domain>` as the widget address**, served as static files beside the
-   shell. The alternative is to publish the widget as a Dash Site of its own,
-   which is purer and slower and needs `feat/external-assets`.
+   Recommended: none; owners hide.
+4. **Add manifest version 2 to the shell**, so a site can name the SDK by
+   hash and have it fetched from npm mirrors (§5.4)? It is the one change to
+   the shell here, and widgets cannot be had cheaply without it.
+   Recommended: yes, once, and nothing widget-specific after it.
+5. **The widget name, and the identity that owns it.** A name of fewer than
+   20 characters with no digit from 2 to 9, such as `widgets`, goes to a
+   masternode vote; a longer one, or one with such a digit, registers at
+   once.
+6. **May builder-made sites load fonts from npm mirrors** as well?
+   Recommended: not yet.
 
 ## 9. Not in this proposal
 
