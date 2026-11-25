@@ -96,7 +96,8 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
   `-`: always a valid DNS label.
 - Every name is `<label>.dash`; DPNS has no `blog.alice.dash`.
   - `parentDomainName` must be one label with no dot, and only the contract
-    owner can create a top-level domain. The only top-level domain is `dash`.
+    owner can create a top-level domain. Genesis creates `dash`, the only one
+    today.
   - Platform rejects a second-level name that allows subdomains (the
     `create_domain_data_trigger` in `rs-drive-abci`).
   - Dash Sites accepts only `<label>` or `<label>.dash` (`parseName` in

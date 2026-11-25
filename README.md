@@ -121,8 +121,8 @@ A site can read its own proved record at `/.well-known/dash/site.json` and
 its file list at `/.well-known/dash/manifest.json`, whoever serves it. Sites
 are static: requests other than GET and HEAD are refused, and a site cannot
 register a service worker of its own. A browser fetches a worker script
-from the host, which answers every path with the static page, so the
-registration fails.
+from the host, which answers every path except its own few files with the
+static page, so the registration fails.
 
 ## Install the extension
 
@@ -171,7 +171,7 @@ npx playwright install chromium
 npm run e2e:shell                      # p2p.dash through id.dashhq.org
 npm run e2e:shell -- d4shhq dash.site  # a mainnet name through dash.site
 npm run e2e:extension
-npm run e2e:builder -- identity.json alice   # publishes on testnet (spends testnet credits)
+npm run e2e:builder -- identity.json <label>  # a name the identity owns; publishes on testnet (spends testnet credits)
 ```
 
 **dash.site on your machine.** Build both Workers' files the way
