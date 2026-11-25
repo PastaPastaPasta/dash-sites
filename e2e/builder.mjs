@@ -30,7 +30,9 @@ const server = createServer((req, res) => {
   createReadStream(file).pipe(res);
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-const browser = await chromium.launch();
+// E2E_HOST_MAP=127.0.0.1:8787 sends the gateway domain to a local `wrangler dev --local-protocol https`.
+const hostMap = process.env.E2E_HOST_MAP ? [`--host-resolver-rules=MAP ${gateway} ${process.env.E2E_HOST_MAP}, MAP *.${gateway} ${process.env.E2E_HOST_MAP}`, '--ignore-certificate-errors'] : [];
+const browser = await chromium.launch({ args: hostMap });
 const grantedKeys = [];
 const signedIn = async (page) => {
   await page.waitForSelector('#step-signin .done:not([hidden])', { timeout: 90000 });

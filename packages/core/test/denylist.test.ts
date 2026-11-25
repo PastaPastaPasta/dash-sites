@@ -11,9 +11,9 @@ import {
   readerConfig,
   resolveName,
   utf8,
-  type PlatformReader,
 } from '../src/index.js';
 import { MemoryPlatform } from '../src/memory.js';
+import type { Network } from '../src/config.js';
 
 describe('denylist', () => {
   it('parses names, owners and contents, ignoring comments and blank lines', () => {
@@ -80,40 +80,12 @@ describe('denylist', () => {
 
 describe('networks without a dash-sites contract', () => {
   it('gives readers a config with no contract instead of throwing', () => {
-    const mainnet = DEPLOYMENTS.mainnet;
-    delete DEPLOYMENTS.mainnet;
-    try {
-      expect(() => networkConfig('mainnet')).toThrow(/no contract on mainnet/);
-      expect(readerConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '' });
-      expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
-    } finally {
-      DEPLOYMENTS.mainnet = mainnet;
-    }
+    const devnet = 'devnet' as Network;
+    expect(DEPLOYMENTS[devnet]).toBeUndefined();
+    expect(() => networkConfig(devnet)).toThrow(/no contract on devnet/);
+    expect(readerConfig(devnet)).toEqual({ network: devnet, contractId: '' });
+    expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
+    expect(networkConfig('mainnet').contractId).toBe('GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3');
     expect(readerConfig('testnet').contractId).toBe(networkConfig('testnet').contractId);
-  });
-
-  it('knows the mainnet contract', () => {
-    expect(networkConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s' });
-    expect(readerConfig('mainnet')).toEqual(networkConfig('mainnet'));
-  });
-
-  it('resolves registered names to no-site without asking for a site record', async () => {
-    const platform = new MemoryPlatform();
-    platform.registerName('alice', 'alice-id');
-    await publishSite(platform.as('alice-id'), 'alice', buildSite([{ path: '/index.html', bytes: utf8.encode('x') }]));
-    const inner = platform.as('reader');
-    let siteReads = 0;
-    const reader: PlatformReader = {
-      noSiteContract: true,
-      getDomain: (label) => inner.getDomain(label),
-      getSite: (owner, domain) => {
-        siteReads += 1;
-        return inner.getSite(owner, domain);
-      },
-      getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
-    };
-    expect(await resolveName(reader, 'alice')).toMatchObject({ status: 'no-site', ownerId: 'alice-id' });
-    expect(await resolveName(reader, 'carol')).toMatchObject({ status: 'unregistered' });
-    expect(siteReads).toBe(0);
   });
 });

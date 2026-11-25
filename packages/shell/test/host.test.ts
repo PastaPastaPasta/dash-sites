@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildSite, cdnSource, integrityOf, normalizeLabel, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, cdnSource, FORMATS, integrityOf, normalizeLabel, publishSite, sha256Hex, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
+import { FIXTURES, fixtureExternal, readFixture, storeFixture, storeManifestVersion } from '../../core/test/fixtures/formats/load.js';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
 const text = (s: string) => utf8.encode(s);
@@ -34,6 +35,7 @@ class Harness {
   chunkReads = 0;
   down = false;
   ownerChanges = 0;
+  newerFormats = 0;
   nonces = 0;
   background: Promise<unknown>[] = [];
   denied?: HostOptions['denied'];
@@ -48,12 +50,12 @@ class Harness {
   start(label = 'alice'): SiteHost {
     const inner = this.platform.as('reader');
     const reader: PlatformReader = {
-      getDomain: async (name) => {
+      getDomain: (name) => inner.getDomain(name),
+      getName: async (name) => {
         this.reads += 1;
         if (this.down) throw new Error('platform down');
-        return inner.getDomain(name);
+        return inner.getName(name);
       },
-      getSite: (owner, domain) => inner.getSite(owner, domain),
       getChunks: (owner, hashes) => {
         this.chunkReads += 1;
         return inner.getChunks(owner, hashes);
@@ -67,6 +69,7 @@ class Harness {
       builderUrl: 'https://builder.example/',
       now: () => this.clock,
       onOwnerChange: () => void (this.ownerChanges += 1),
+      onNewerFormat: () => void (this.newerFormats += 1),
       nonce: () => `nonce-${++this.nonces}`,
       denied: this.denied,
       external: this.external,
@@ -252,7 +255,7 @@ describe('site host', () => {
     }
   });
 
-  it('resets open pages when the name changes owner while the worker is running', async () => {
+  it('resets open pages when the name changes hands while the worker is running', async () => {
     const h = new Harness();
     await h.publish('alice-id', 'one');
     await h.open();
@@ -268,6 +271,30 @@ describe('site host', () => {
     expect(h.store.chunks.size).toBe(0);
     await h.reset(await h.get('/blog/?x=1'));
     expect(body(await h.get('/'))).toContain('has no site yet');
+  });
+
+  it('never serves the record an earlier owner left behind, and keeps the owner\'s site and data past it', async () => {
+    const h = new Harness();
+    const mallory = h.platform.as('mallory-id');
+    h.platform.registerName('alice', 'mallory-id');
+    await mallory.putSite(h.platform.domains.get('a11ce')!, 'ipfs://bafymallory');
+    h.platform.transferName('alice', 'alice-id');
+    await h.open();
+    expect(body(await h.get('/'))).toContain('has no site yet');
+
+    await h.publish('alice-id', 'one');
+    h.clock += 60_000;
+    await h.get('/');
+    await h.settle();
+    expect(body(await h.get('/'))).toContain('one');
+    const wipes = h.store.wipes;
+    await expect(mallory.putSite(h.platform.domains.get('a11ce')!, 'ipfs://bafynewer')).rejects.toThrow(/does not own/);
+    h.clock += 60_000;
+    await h.get('/');
+    await h.settle();
+    expect(body(await h.get('/'))).toContain('one');
+    expect(h.ownerChanges).toBe(0);
+    expect(h.store.wipes).toBe(wipes);
   });
 
   it('keeps a reset pending until the reset page itself reports back', async () => {
@@ -476,5 +503,68 @@ describe('external npm assets', () => {
     kept[0] ^= 1;
     expect((await h.get('/sdk.wasm', { navigation: false })).body).toEqual(wasm);
     expect(fetched.length).toBe(2);
+  });
+});
+
+describe('stored formats', () => {
+  for (const name of FIXTURES) {
+    it(`serves ${name}, a site stored by an earlier version, file for file`, async () => {
+      const fixture = readFixture(name);
+      const h = new Harness();
+      h.external = fixtureExternal(fixture);
+      h.start();
+      await storeFixture(h.platform, fixture, 'alice', 'alice-id');
+      await h.open();
+      for (const [path, sha256] of Object.entries(fixture.files)) {
+        const reply = await h.get(path, { navigation: false });
+        expect(reply.status).toBe(200);
+        expect(sha256Hex(typeof reply.body === 'string' ? utf8.encode(reply.body) : (reply.body as Uint8Array))).toBe(sha256);
+      }
+      expect(h.newerFormats).toBe(0);
+    });
+  }
+
+  it('asks for a newer worker and says so when a site is stored in a newer format', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    site.v += 1;
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
+  });
+
+  it('asks for a newer worker when a site\'s content address is of a newer version', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    site.content = site.content!.replace('dash-manifest:v1:', `dash-manifest:v${FORMATS.contentUri + 1}:`);
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
+  });
+
+  it('asks for a newer worker when a stored chunk is of a newer format', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    for (const chunk of h.platform.chunks.values()) if (chunk.siteId === site.id) chunk.v = FORMATS.chunk + 1;
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
+  });
+
+  it('asks for a newer worker when a manifest is of a newer version', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    await storeManifestVersion(h.platform, site, 99);
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
   });
 });

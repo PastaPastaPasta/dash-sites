@@ -1,0 +1,488 @@
+diff --git a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
+index 9cdace46b4..e0aaefffb1 100644
+--- a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
++++ b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
+@@ -31,6 +31,7 @@ mod dpns_v3_tests {
+     use dpp::consensus::basic::BasicError;
+     use dpp::consensus::codes::ErrorWithCode;
+     use dpp::consensus::state::data_trigger::DataTriggerError;
++    use dpp::data_contract::accessors::v0::DataContractV0Setters;
+     use dpp::data_contract::DataContract;
+     use dpp::data_contracts::SystemDataContract;
+     use dpp::document::{Document, DocumentV0};
+@@ -2298,4 +2299,475 @@ mod dpns_v3_tests {
+             StateTransitionExecutionResult::SuccessfulExecution { .. }
+         );
+     }
++
++    // The dash-sites contract (https://github.com/PastaPastaPasta/dash-sites), registered under
++    // protocol version 14 and written to on both sides of the upgrade to protocol version 15.
++    // Run with DASH_SITES_SCHEMA=<path to contract/dash-sites.v2.json> and RUST_MIN_STACK=268435456.
++
++    /// The contract a registration of the schema file would store, fully validated.
++    fn sites_contract(
++        platform_version: &PlatformVersion,
++    ) -> Result<DataContract, dpp::ProtocolError> {
++        let schema_path = std::env::var("DASH_SITES_SCHEMA")
++            .expect("set DASH_SITES_SCHEMA to the path of contract/dash-sites.v2.json");
++        let schemas: serde_json::Value = serde_json::from_str(
++            &std::fs::read_to_string(schema_path).expect("expected to read the schema file"),
++        )
++        .expect("expected the schema file to be JSON");
++        let contract = serde_json::json!({
++            "$formatVersion": "1",
++            "id": "CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT",
++            "ownerId": "AkhihKhRLGjKB1WTdUG7BWrGnTaTTHcMzdSBsKSJ5GNm",
++            "version": 1,
++            "documentSchemas": schemas,
++        });
++        let path = std::env::temp_dir().join(format!(
++            "dash-sites-contract-{}-{}.json",
++            std::process::id(),
++            platform_version.protocol_version
++        ));
++        std::fs::write(&path, contract.to_string()).expect("expected to write the contract");
++        let result = json_document_to_contract(&path, true, platform_version);
++        let _ = std::fs::remove_file(&path);
++        result
++    }
++
++    fn text(value: &str) -> Value {
++        Value::Text(value.to_string())
++    }
++
++    fn accepted(result: &StateTransitionExecutionResult) -> bool {
++        matches!(
++            result,
++            StateTransitionExecutionResult::SuccessfulExecution { .. }
++        )
++    }
++
++    fn refusal_code(result: &StateTransitionExecutionResult) -> Option<u32> {
++        match result {
++            StateTransitionExecutionResult::PaidConsensusError { error, .. } => Some(error.code()),
++            _ => None,
++        }
++    }
++
++    fn outcome(result: &StateTransitionExecutionResult) -> String {
++        match result {
++            StateTransitionExecutionResult::SuccessfulExecution { .. } => "ACCEPTED".to_string(),
++            StateTransitionExecutionResult::PaidConsensusError { error, .. } => {
++                format!("REFUSED ({}) {}", error.code(), error)
++            }
++            other => format!("OTHER {:?}", other),
++        }
++    }
++
++    impl DpnsFixture {
++        fn apply_sites(&self) -> Identifier {
++            let mut contract = sites_contract(self.platform_version)
++                .expect("expected the dash-sites contract to pass full validation");
++            contract.set_owner_id(self.id(Who::Alice));
++            self.platform
++                .drive
++                .apply_contract(
++                    &contract,
++                    block(REVEAL_HEIGHT + 1),
++                    true,
++                    StorageFlags::optional_default_as_cow(),
++                    None,
++                    self.platform_version,
++                )
++                .expect("expected to apply the dash-sites contract");
++            contract.id()
++        }
++
++        /// The contract as stored, read at the fixture's current protocol version.
++        fn stored(&self, id: Identifier) -> DataContract {
++            self.platform
++                .drive
++                .get_contract_with_fetch_info(id.to_buffer(), false, None, self.platform_version)
++                .expect("expected to fetch the contract")
++                .expect("expected the contract in state")
++                .contract
++                .clone()
++        }
++
++        async fn sites_create(
++            &mut self,
++            contract_id: Identifier,
++            who: Who,
++            nonce: &mut IdentityNonce,
++            type_name: &str,
++            values: &[(&str, Value)],
++            height: u64,
++        ) -> (Document, StateTransitionExecutionResult) {
++            let platform_version = self.platform_version;
++            let owner_id = self.id(who);
++            let contract = self.stored(contract_id);
++            let document_type = contract
++                .document_type_for_name(type_name)
++                .expect("expected the document type");
++            let entropy = Bytes32::random_with_rng(&mut self.rng);
++            let mut document = document_type
++                .random_document_with_identifier_and_entropy(
++                    &mut self.rng,
++                    owner_id,
++                    entropy,
++                    DocumentFieldFillType::DoNotFillIfNotRequired,
++                    DocumentFieldFillSize::AnyDocumentFillSize,
++                    platform_version,
++                )
++                .expect("expected a random document");
++            for (property, value) in values {
++                document.set(property, value.clone());
++            }
++            *nonce += 1;
++            document
++                .set_id_for_creation(document_type, &entropy.0, *nonce, platform_version)
++                .expect("expected to set the document id");
++            let writer = self.writer(who);
++            let mut transition = BatchTransition::new_document_creation_transition_from_document(
++                document.clone(),
++                document_type,
++                entropy.0,
++                &writer.key,
++                *nonce,
++                0,
++                None,
++                &writer.signer,
++                platform_version,
++                None,
++            )
++            .await
++            .expect("expected the create transition");
++            {
++                let StateTransition::Batch(batch) = &mut transition else {
++                    panic!("expected a batch transition");
++                };
++                let Some(BatchedTransitionMutRef::Document(document_transition)) =
++                    batch.first_transition_mut()
++                else {
++                    panic!("expected a document transition");
++                };
++                *document_transition
++                    .data_mut()
++                    .expect("the document transition carries data") = document.properties().clone();
++            }
++            transition
++                .sign_external(
++                    &writer.key,
++                    &writer.signer,
++                    Some(|_, _| Ok(SecurityLevel::HIGH)),
++                )
++                .await
++                .expect("expected to sign the transition again");
++            let result = self.process(&transition, height);
++            (document, result)
++        }
++
++        /// Replaces `document`, as it now stands, at the next revision. A refused replace
++        /// leaves the revision where it was.
++        async fn sites_replace(
++            &mut self,
++            contract_id: Identifier,
++            who: Who,
++            nonce: &mut IdentityNonce,
++            type_name: &str,
++            document: &mut Document,
++            height: u64,
++        ) -> StateTransitionExecutionResult {
++            let platform_version = self.platform_version;
++            let contract = self.stored(contract_id);
++            let document_type = contract
++                .document_type_for_name(type_name)
++                .expect("expected the document type");
++            let revision = document.revision().unwrap_or(1);
++            document.set_revision(Some(revision + 1));
++            *nonce += 1;
++            let writer = self.writer(who);
++            let transition = BatchTransition::new_document_replacement_transition_from_document(
++                document.clone(),
++                document_type,
++                &writer.key,
++                *nonce,
++                0,
++                None,
++                &writer.signer,
++                platform_version,
++                None,
++            )
++            .await
++            .expect("expected the replace transition");
++            let result = self.process(&transition, height);
++            if !accepted(&result) {
++                document.set_revision(Some(revision));
++            }
++            result
++        }
++
++        async fn sites_delete(
++            &mut self,
++            contract_id: Identifier,
++            who: Who,
++            nonce: &mut IdentityNonce,
++            type_name: &str,
++            document: &Document,
++            height: u64,
++        ) -> StateTransitionExecutionResult {
++            let platform_version = self.platform_version;
++            let contract = self.stored(contract_id);
++            let document_type = contract
++                .document_type_for_name(type_name)
++                .expect("expected the document type");
++            *nonce += 1;
++            let writer = self.writer(who);
++            match BatchTransition::new_document_deletion_transition_from_document(
++                document.clone(),
++                document_type,
++                &writer.key,
++                *nonce,
++                0,
++                None,
++                &writer.signer,
++                platform_version,
++                None,
++            )
++            .await
++            {
++                Ok(transition) => self.process(&transition, height),
++                Err(error) => panic!("DELETE NOT BUILT: {error}"),
++            }
++        }
++    }
++
++    /// Every kind of write the contract takes or refuses, on both sides of the upgrade.
++    #[tokio::test]
++    async fn dash_sites_contract_across_the_upgrade() {
++        let mut fixture = DpnsFixture::new(14);
++        let sites = fixture.apply_sites();
++        let (mut alice, mut bob) = (0, 0);
++        let name = |label: &str| {
++            [
++                ("normalizedParentDomainName", text("dash")),
++                ("normalizedLabel", text(label)),
++            ]
++        };
++        let record = name("quantum7");
++        let mut log = Vec::new();
++        // `None` expects the write to be accepted, `Some(code)` refused with that consensus error
++        let mut step = |what: &str, result: &StateTransitionExecutionResult, expected: Option<u32>| {
++            println!("{what}: {}", outcome(result));
++            log.push((what.to_string(), refusal_code(result) == expected && accepted(result) == expected.is_none()));
++        };
++
++        for (who, label, height) in [
++            (Who::Alice, "quantum7", 13),
++            (Who::Alice, "quantum8", 15),
++            (Who::Bob, "quantum9", 17),
++        ] {
++            let (_, result) = fixture.register_at(who, label, height).await;
++            step(&format!("PV14 register {label}.dash"), &result, None);
++        }
++
++        let (mut site, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 20)
++            .await;
++        step("PV14 create a site record", &result, None);
++        let chunk_of = |site: &Document| [("site", Value::Identifier(site.id().to_buffer()))];
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "chunk", &chunk_of(&site), 21)
++            .await;
++        step("PV14 store a chunk under the own record", &result, None);
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&site), 22)
++            .await;
++        step("PV14 store a chunk under another identity's record", &result, Some(40127));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 23)
++            .await;
++        step("PV14 create a second record for the same name", &result, Some(40105));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 24)
++            .await;
++        step("PV14 create a record for a name another identity owns", &result, Some(40127));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &name("quantum6"), 25)
++            .await;
++        step("PV14 create a record for a name nobody registered", &result, Some(40120));
++        let (bob_site, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "site", &name("quantum9"), 26)
++            .await;
++        step("PV14 another identity creates a record for its own name", &result, None);
++        let mut moved = site.clone();
++        moved.set("normalizedLabel", text("quantum9"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 27)
++            .await;
++        step("PV14 move a record to a name another identity owns", &result, Some(40127));
++
++        let (_, result) = fixture.register_at(Who::Alice, "quantum5", 30).await;
++        step("PV14 register quantum5.dash", &result, None);
++        let (mut sold, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &name("quantum5"), 32)
++            .await;
++        step("PV14 create a record for quantum5", &result, None);
++        let bob_id = fixture.id(Who::Bob);
++        let quantum5 = fixture.name("quantum5").expect("expected quantum5.dash");
++        let revision = quantum5.revision().unwrap_or(1);
++        let result = fixture
++            .transfer(Who::Alice, &quantum5, revision, bob_id, 33)
++            .await;
++        step("PV14 transfer quantum5.dash to the other identity", &result, None);
++        sold.set("content", text("ipfs://bafysold"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut sold, 34)
++            .await;
++        step("PV14 the previous owner replaces its record after the name changed hands", &result, Some(40127));
++        let (_, result) = fixture.register_at(Who::Alice, "quantum4", 35).await;
++        step("PV14 register quantum4.dash", &result, None);
++        sold.set("normalizedLabel", text("quantum4"));
++        sold.remove("content");
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut sold, 37)
++            .await;
++        step("PV14 move a record onto another name its writer owns", &result, None);
++
++        fixture.activate_protocol_version_15(60);
++
++        site.set("content", text("dash-manifest:v1:00"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 61)
++            .await;
++        step("PV15 replace the record with content", &result, None);
++        site.remove("content");
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 62)
++            .await;
++        step("PV15 replace the record without content", &result, None);
++        let (chunk, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "chunk", &chunk_of(&site), 63)
++            .await;
++        step("PV15 store a chunk under the own record", &result, None);
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&site), 64)
++            .await;
++        step("PV15 store a chunk under another identity's record", &result, Some(40127));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&bob_site), 65)
++            .await;
++        step("PV15 the other identity stores a chunk under its own record", &result, None);
++        let mut other = name("quantum8").to_vec();
++        other.push(("content", text("ipfs://bafy")));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &other, 66)
++            .await;
++        step("PV15 create a record for another own name", &result, None);
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 67)
++            .await;
++        step("PV15 create a second record for the same name", &result, Some(40105));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 68)
++            .await;
++        step("PV15 create a record for a name another identity owns", &result, Some(40127));
++        let result = fixture
++            .sites_delete(sites, Who::Alice, &mut alice, "chunk", &chunk, 69)
++            .await;
++        step("PV15 delete a chunk", &result, None);
++        let result = fixture
++            .sites_delete(sites, Who::Alice, &mut alice, "site", &site, 70)
++            .await;
++        step("PV15 delete a site record", &result, Some(10404));
++        let mut moved = site.clone();
++        moved.set("normalizedLabel", text("quantum6"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 71)
++            .await;
++        step("PV15 move a record to a name nobody registered", &result, Some(40120));
++        let mut moved = site.clone();
++        moved.set("normalizedParentDomainName", text("d4sh"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 71)
++            .await;
++        step("PV15 move a record to another parent domain", &result, Some(40128));
++
++        let quantum7 = fixture.name("quantum7").expect("expected quantum7.dash");
++        let revision = quantum7.revision().unwrap_or(1);
++        let result = fixture
++            .transfer(Who::Alice, &quantum7, revision, bob_id, 72)
++            .await;
++        step("PV15 transfer quantum7.dash to the other identity", &result, None);
++        site.set("content", text("ipfs://bafysold"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 73)
++            .await;
++        step("PV15 the previous owner replaces its record after the name changed hands", &result, Some(40127));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 74)
++            .await;
++        step("PV15 the new owner creates its record for the name", &result, None);
++
++        let quantum9 = fixture.name("quantum9").expect("expected quantum9.dash");
++        let result = fixture.delete(Who::Bob, "domain", &quantum9, 75).await;
++        step("PV15 delete quantum9.dash", &result, None);
++        let mut bob_site = bob_site;
++        bob_site.set("content", text("ipfs://bafygone"));
++        let result = fixture
++            .sites_replace(sites, Who::Bob, &mut bob, "site", &mut bob_site, 76)
++            .await;
++        step("PV15 replace a record whose name was deleted", &result, Some(40120));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &name("quantum9"), 77)
++            .await;
++        step("PV15 create a record for a deleted name", &result, Some(40120));
++
++        let wrong: Vec<_> = log.iter().filter(|(_, ok)| !ok).map(|(what, _)| what).collect();
++        assert!(wrong.is_empty(), "unexpected outcomes: {wrong:?}");
++    }
++
++    /// A contested name has no `domain` document until its contest is awarded, so nobody,
++    /// its contenders included, can write a site record for it before then.
++    #[tokio::test]
++    async fn dash_sites_contested_name_before_and_after_its_award() {
++        for protocol_version in [14, 15] {
++            let mut fixture = DpnsFixture::new(protocol_version);
++            let sites = fixture.apply_sites();
++            let mut alice = 0;
++            let record = [
++                ("normalizedParentDomainName", text("dash")),
++                ("normalizedLabel", text("quantum")),
++            ];
++            let (_, _, result) = fixture.register(Who::Alice, "quantum", &[], &[]).await;
++            assert!(accepted(&result), "PV{protocol_version} contest opened: {}", outcome(&result));
++            assert!(fixture.name("quantum").is_none());
++            let (_, result) = fixture
++                .sites_create(sites, Who::Alice, &mut alice, "site", &record, REVEAL_HEIGHT + 1)
++                .await;
++            println!("PV{protocol_version} a contender writes a site record during the contest: {}", outcome(&result));
++            assert_eq!(refusal_code(&result), Some(40120));
++
++            fixture.end_contests(CONTEST_OVER_HEIGHT);
++            assert_eq!(fixture.name("quantum").map(|name| name.owner_id()), Some(fixture.id(Who::Alice)));
++            let (_, result) = fixture
++                .sites_create(sites, Who::Alice, &mut alice, "site", &record, CONTEST_OVER_HEIGHT + 1)
++                .await;
++            println!("PV{protocol_version} the winner writes its site record after the award: {}", outcome(&result));
++            assert!(accepted(&result));
++        }
++    }
++
++    /// The schema as a registration under each protocol version would check it.
++    #[test]
++    fn dash_sites_contract_under_full_validation() {
++        for protocol_version in [14, 15] {
++            let platform_version = PlatformVersion::get(protocol_version).unwrap();
++            let result = sites_contract(platform_version);
++            println!(
++                "PV{protocol_version} full validation: {}",
++                match &result {
++                    Ok(_) => "VALID".to_string(),
++                    Err(error) => format!("INVALID {error}"),
++                }
++            );
++            assert!(result.is_ok());
++        }
++    }
+ }

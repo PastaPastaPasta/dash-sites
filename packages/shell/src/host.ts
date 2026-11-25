@@ -6,6 +6,7 @@ import {
   type ExternalSource,
   HOST_API,
   ManifestError,
+  NewerFormatError,
   DENIED_TITLE,
   dashHeaders,
   deniedDetail,
@@ -17,6 +18,7 @@ import {
   messagePage,
   nameFromPath,
   readFile,
+  ownerEpoch,
   resolveName,
   sha256Hex,
   type ChunkSource,
@@ -87,6 +89,8 @@ export interface HostOptions {
   log?: (entry: Record<string, unknown>) => void;
   /** Where external npm assets are fetched from; defaults to the npm CDNs. Bytes are checked either way. */
   external?: ExternalSource;
+  /** The site is stored in a format newer than this worker reads: look for a newer worker. */
+  onNewerFormat?: () => void;
 }
 
 type Ok = Extract<Resolution, { status: 'ok' }>;
@@ -95,8 +99,6 @@ const FRESH_MS = 30_000;
 export const RESET_PATH = `${HOST_API}reset`;
 /** Where a page goes to have its storage cleared before returning to `url`. */
 export const resetLocation = (url: URL): string => `${RESET_PATH}#${encodeURIComponent(url.pathname + url.search)}`;
-
-const epochOf = (resolution: Resolution): string => ('ownerId' in resolution ? `${resolution.ownerId}.${resolution.domain.transferredAt}` : '');
 
 const resetPage = (nonce: string): string =>
   hostPage(
@@ -159,12 +161,13 @@ export class SiteHost {
   }
 
   private async check(): Promise<Resolution> {
-    const resolution = await resolveName(await this.options.reader(), this.options.label);
     const before = this.answer?.resolution;
-    if (before && 'meta' in resolution && 'meta' in before && resolution.meta.height < before.meta.height) return before;
     if (!before) this.saved = parseSaved(await this.options.store.loadState().catch(() => undefined));
-    const epoch = epochOf(resolution);
-    const ownerChanged = (before ? epochOf(before) : this.saved?.epoch) !== epoch;
+    const firstVisit = !before && !this.saved;
+    const resolution = await resolveName(await this.options.reader(), this.options.label, { preload: firstVisit });
+    if (before && 'meta' in resolution && 'meta' in before && resolution.meta.height < before.meta.height) return before;
+    const epoch = ownerEpoch(resolution);
+    const ownerChanged = (before ? ownerEpoch(before) : this.saved?.epoch) !== epoch;
     if (ownerChanged) {
       await this.options.store.wipe().catch((error: unknown) => this.options.log?.({ event: 'wipe-failed', error: String(error) }));
       this.manifests.clear();
@@ -205,7 +208,7 @@ export class SiteHost {
     };
   }
 
-  private chunks(ownerId: string): ChunkSource {
+  private chunks(siteId: string): ChunkSource {
     return async (hashes) => {
       const out = new Map<string, Uint8Array>();
       const missing: string[] = [];
@@ -215,7 +218,7 @@ export class SiteHost {
         else missing.push(hash);
       }
       if (missing.length === 0) return out;
-      for (const [hash, data] of await (await this.options.reader()).getChunks(ownerId, missing)) {
+      for (const [hash, data] of await (await this.options.reader()).getChunks(siteId, missing)) {
         if (sha256Hex(data) !== hash) continue;
         out.set(hash, data);
         void this.options.store.putChunk(hash, data).catch(() => undefined);
@@ -243,11 +246,22 @@ export class SiteHost {
     const key = `${resolution.ownerId}/${resolution.site.content}`;
     let manifest = this.manifests.get(key);
     if (!manifest) {
-      manifest = loadManifest(ref, this.chunks(resolution.ownerId));
+      manifest = loadManifest(ref, this.chunks(resolution.site.id));
       this.manifests.set(key, manifest);
       manifest.catch(() => this.manifests.delete(key));
     }
     return manifest;
+  }
+
+  /** A site stored in a format this worker does not read yet. A newer worker may, so one is looked for. */
+  private newer(dashName: string): Reply {
+    this.options.onNewerFormat?.();
+    return this.page(
+      502,
+      'Update needed',
+      `${dashName} needs a newer version of this page`,
+      'Its owner published it in a newer format than this copy of the page reads. Reload to get the latest version. If this keeps showing, the format is not supported here yet.',
+    );
   }
 
   private page(status: number, label: string, title: string, detail: string): Reply {
@@ -304,6 +318,7 @@ export class SiteHost {
     if (resolution.status === 'no-site') {
       return this.page(404, 'No site', `${dashName} has no site yet`, `The name is registered, and its owner has not published a site. If it is yours, <a href="${escapeHtml(this.options.builderUrl)}">publish one</a>.`);
     }
+    if (resolution.status === 'unsupported' && resolution.reason === 'newer') return this.newer(dashName);
     if (resolution.status === 'unsupported' || resolution.content.scheme !== 'dash-manifest') {
       return this.page(502, 'Unsupported', `${dashName} cannot be shown here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this page does not load.`);
     }
@@ -312,6 +327,7 @@ export class SiteHost {
     try {
       manifest = await this.manifestFor(resolution);
     } catch (error) {
+      if (error instanceof NewerFormatError) return this.newer(dashName);
       if (!(error instanceof ContentError) && !(error instanceof ManifestError)) throw error;
       return this.page(502, 'Unavailable', `${dashName} cannot be shown`, 'Its published content is incomplete or does not match the hashes its owner published.');
     }
@@ -322,7 +338,7 @@ export class SiteHost {
     if (decision.kind === 'not-found') return this.page(404, '404', 'Page not found', `<code>${dashName}</code> has no page at this address.`);
     let file: Awaited<ReturnType<typeof readFile>>;
     try {
-      file = await readFile(manifest, decision.path, this.chunks(resolution.ownerId), this.external());
+      file = await readFile(manifest, decision.path, this.chunks(resolution.site.id), this.external());
     } catch (error) {
       if (error instanceof ExternalAssetError) {
         this.options.log?.({ event: 'external-refused', asset: `${error.asset.npm}@${error.asset.version}/${error.asset.path}`, attempts: error.attempts });
@@ -343,6 +359,7 @@ export class SiteHost {
               ];
         return this.page(502, 'Not loaded', title, detail);
       }
+      if (error instanceof NewerFormatError) return this.newer(dashName);
       if (!(error instanceof ContentError)) throw error;
       return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');
     }

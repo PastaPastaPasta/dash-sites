@@ -58,12 +58,12 @@ class Harness {
     this.platform.now = () => this.clock;
     const inner = this.platform.as('reader');
     const reader: PlatformReader = {
-      getDomain: async (label) => {
+      getDomain: (label) => inner.getDomain(label),
+      getName: async (label) => {
         this.reads += 1;
         if (this.failReads) throw new Error('platform down');
-        return inner.getDomain(label);
+        return inner.getName(label);
       },
-      getSite: (owner, domain) => inner.getSite(owner, domain),
       getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
     };
     this.config = config(overrides);
@@ -429,9 +429,11 @@ describe('gateway: version 2 sites', () => {
     const piece = gzip(encodeManifest(doctored));
     const hash = sha256Hex(piece);
     const mallory = h.platform.as('trent-id');
-    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await mallory.createChunk(chunkHash, data);
-    await mallory.createChunk(hash, piece);
-    await mallory.putSite((await mallory.getDomain('trent')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    const domain = (await mallory.getDomain('trent')).value!;
+    const record = await mallory.ensureSite(domain);
+    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await mallory.createChunk(record.id, chunkHash, data);
+    await mallory.createChunk(record.id, hash, piece);
+    await mallory.putSite(domain, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
     await h.stop();
     h.external = cdnSource(async (url) => new Response(String(url).includes('o.wasm') ? other : sdk));
     await h.start();
@@ -454,9 +456,11 @@ describe('gateway: version 2 sites', () => {
     const piece = gzip(encodeManifest(wrong));
     const hash = sha256Hex(piece);
     const dave = h.platform.as('dave-id');
-    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await dave.createChunk(chunkHash, data);
-    await dave.createChunk(hash, piece);
-    await dave.putSite((await dave.getDomain('dave')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    const domain = (await dave.getDomain('dave')).value!;
+    const record = await dave.ensureSite(domain);
+    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await dave.createChunk(record.id, chunkHash, data);
+    await dave.createChunk(record.id, hash, piece);
+    await dave.putSite(domain, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
     served = sdk;
     const before = fetches;
     for (let i = 0; i < 4; i++) expect((await h.get('dave.id.example.org', '/y.wasm')).status).toBe(502);

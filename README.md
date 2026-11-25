@@ -14,9 +14,13 @@ Platform; there is no web host.
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
-The data contract is `5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s` on
-mainnet and `3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx` on testnet
-(`DEPLOYMENTS` in `packages/core/src/config.ts`).
+The data contract is `GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3` on
+mainnet and `CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT` on testnet
+(`DEPLOYMENTS` in `packages/core/src/config.ts`). The earlier contracts (mainnet
+`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, testnet
+`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`) are no longer read. How
+formats and the contract change later is in
+[docs/VERSIONING.md](docs/VERSIONING.md).
 
 ## How a name opens on dash.site
 
@@ -264,13 +268,30 @@ build) and then `npm run serve -w @dash-sites/shell`. Open
   shell, the fallback process and the Caddy configuration. DNS and moving
   domains are covered in [DESIGN §8](docs/DESIGN.md#8-hosting).
 
+## Versions and upgrades
+
+Every stored object says which version of its format it is: the site record
+and each chunk (`v`), the content URI (`dash-manifest:v1:`) and the manifest
+(`v`).
+
+- **Readers:** they read every version up to their own, forever, and frozen
+  fixtures in the tests hold them to it. A site published in a newer format
+  than a reader knows gets a "needs a newer version" page instead of a broken
+  site, and the dash.site worker then looks for an update.
+- **Writers:** they use the lowest version that holds a site, so readers that
+  are behind still open it.
+- **The page:** `/sw.js` is never cached, so a deploy reaches every browser on
+  its next visit, and the kill switch keeps working.
+- **The contract:** an update can only add or loosen. A change that needs a new
+  contract has both contracts read side by side.
+
+[docs/VERSIONING.md](docs/VERSIONING.md) has the rules, the version registry
+and the upgrade steps.
+
 ## Planned
 
 These are open PRs and are not live:
 
-- [#14](https://github.com/PastaPastaPasta/dash-sites/pull/14): a new
-  contract that fetches a site in one proved query, including the name's
-  owner.
 - [#16](https://github.com/PastaPastaPasta/dash-sites/pull/16): a block editor
   in the builder, and large files kept outside Platform.
 

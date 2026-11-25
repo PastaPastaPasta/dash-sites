@@ -16,10 +16,12 @@ import {
   isDenied,
   loadManifest,
   ManifestError,
+  NewerFormatError,
   matchHost,
   messagePage,
   nameFromPath,
   readFile,
+  ownerEpoch,
   resolveName,
   sha256Hex,
   type ChunkSource,
@@ -112,7 +114,14 @@ export function createGateway(options: GatewayOptions): RequestListener {
   const limiter = new RateLimiter(config.rateLimitPerMinute, now);
   const limits = { maxSiteBytes: config.maxSiteBytes, maxFiles: config.maxFiles };
 
-  const resolutions = new RefreshingCache<Resolution>((name) => resolveName(reader, name), {
+  const resolved = new Set<string>();
+  const resolve = (name: string): Promise<Resolution> => {
+    const preload = !resolved.has(name);
+    if (resolved.size >= 20000) resolved.clear();
+    resolved.add(name);
+    return resolveName(reader, name, { preload });
+  };
+  const resolutions = new RefreshingCache<Resolution>(resolve, {
     freshMs: 30 * SECOND,
     staleMs: 5 * 60 * SECOND,
     errorMs: 24 * 60 * 60 * SECOND,
@@ -160,7 +169,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
   // for a while without reading it again. Keyed by the whole entry, so it never refuses another site's file.
   const badExternalFiles = new LruCache<number>(10_000);
 
-  const chunkSource = (ownerId: string): ChunkSource => async (hashes) => {
+  const chunkSource = (siteId: string): ChunkSource => async (hashes) => {
     const out = new Map<string, Uint8Array>();
     const missing: string[] = [];
     for (const hash of hashes) {
@@ -169,7 +178,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
       else missing.push(hash);
     }
     if (missing.length > 0) {
-      for (const [hash, data] of await reader.getChunks(ownerId, missing)) {
+      for (const [hash, data] of await reader.getChunks(siteId, missing)) {
         if (data.length > CHUNK_SIZE || sha256Hex(data) !== hash) continue;
         chunks.set(hash, data);
         out.set(hash, data);
@@ -182,7 +191,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
     const key = `${resolution.ownerId}:${resolution.site.content}`;
     let manifest = manifests.get(key);
     if (!manifest) {
-      manifest = await loadManifest(ref, chunkSource(resolution.ownerId), limits);
+      manifest = await loadManifest(ref, chunkSource(resolution.site.id), limits);
       manifests.set(key, manifest);
     }
     return manifest;
@@ -252,7 +261,9 @@ export function createGateway(options: GatewayOptions): RequestListener {
     if (resolution.status === 'no-site') {
       return html(404, messagePage('No site', `${dashName} has no site yet`, `The name is registered, and its owner has not published a site. If it is yours, <a href="${escapeHtml(config.builderUrl)}">publish one</a>.`, config), domain);
     }
+    const newer = () => html(502, messagePage('Update needed', `${dashName} needs a newer gateway`, 'Its owner published it in a newer format than this gateway reads. It will load here once the gateway is updated.', config), domain);
     const unsupported = () => html(502, messagePage('Unsupported', `${dashName} cannot be served here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this gateway does not serve.`, config), domain);
+    if (resolution.status === 'unsupported' && resolution.reason === 'newer') return newer();
     if (resolution.status === 'unsupported' || resolution.content.scheme !== 'dash-manifest') return unsupported();
 
     const headers: Record<string, string> = {
@@ -264,7 +275,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
       ...(cached.stale ? { 'X-Dash-Stale': '1' } : {}),
     };
 
-    const epoch = `${resolution.ownerId}.${resolution.domain.transferredAt}`;
+    const epoch = ownerEpoch(resolution);
     const isDocument = req.headers['sec-fetch-dest'] === 'document';
     const isWorkerScript = req.headers['service-worker'] === 'script' || req.headers['sec-fetch-dest'] === 'serviceworker';
     const epochChanged = (isDocument || isWorkerScript) && readCookie(req.headers.cookie, EPOCH_COOKIE) !== epoch;
@@ -278,6 +289,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
     try {
       manifest = await manifestFor(resolution, resolution.content);
     } catch (error) {
+      if (error instanceof NewerFormatError) return newer();
       if (!(error instanceof ContentError) && !(error instanceof ManifestError)) throw error;
       log({ event: 'bad-manifest', name: normalized, error: error.message });
       return html(502, messagePage('Unavailable', `${dashName} cannot be served`, 'Its published content is incomplete or does not match the hashes its owner published.', config), domain);
@@ -307,13 +319,14 @@ export function createGateway(options: GatewayOptions): RequestListener {
     }
     if (!content) {
       try {
-        const read = await readFile(manifest, decision.path, chunkSource(resolution.ownerId), external);
+        const read = await readFile(manifest, decision.path, chunkSource(resolution.site.id), external);
         content = { bytes: read.bytes, stored: read.stored };
       } catch (error) {
         if (error instanceof ExternalAssetError) {
           log({ event: 'external-refused', name: normalized, path: decision.path, error: error.message });
           return html(502, messagePage('Unavailable', 'This file cannot be served', `It is a file of the npm package ${escapeHtml(`${error.asset.npm}@${error.asset.version}`)}, and no npm mirror served it with the hash its owner published.`, config), domain);
         }
+        if (error instanceof NewerFormatError) return newer();
         if (!(error instanceof ContentError)) throw error;
         if (entry.ext) badExternalFiles.set(badKey, now() + 5 * 60 * SECOND);
         log({ event: 'bad-file', name: normalized, path: decision.path, error: error.message });

@@ -72,9 +72,8 @@ describe('typed input and searches', () => {
 
 describe('verdicts', () => {
   const meta = { height: 1, timeMs: 1, coreChainLockedHeight: 1, protocolVersion: 14 };
-  const domain = { id: 'd', ownerId: 'alice-id', label: 'alice', normalizedLabel: 'a11ce', transferredAt: 1 };
-  const owned = { normalized: 'a11ce', domain, canonicalLabel: 'alice', ownerId: 'alice-id', meta };
-  const site = { id: 's', ownerId: 'alice-id', domainId: 'd', content: 'dash-manifest:v1:aa', revision: 3, updatedAt: 2 };
+  const owned = { normalized: 'a11ce', canonicalLabel: 'alice', ownerId: 'alice-id', meta };
+  const site = { id: 's', ownerId: 'alice-id', label: 'alice', normalizedLabel: 'a11ce', content: 'dash-manifest:v1:aa', revision: 3, updatedAt: 2 };
   const ok: Resolution = { status: 'ok', ...owned, site, content: { scheme: 'dash-manifest', chunks: ['aa'] } };
   const headers = (h: Record<string, string>) => claimsFromHeaders({ get: (name) => h[name] ?? null });
 

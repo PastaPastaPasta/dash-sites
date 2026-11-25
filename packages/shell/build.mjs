@@ -105,7 +105,7 @@ const boot = await build({
   write: false,
   define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER_FILES__: JSON.stringify([verifierUrl, sdkUrl]) },
 });
-const { DENIED_TITLE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, readerConfig } = await import('@dash-sites/core');
+const { DENIED_TITLE, FORMATS, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, readerConfig } = await import('@dash-sites/core');
 const abuseContact = process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`;
 const abuseHref = /^(https?|mailto):/i.test(abuseContact) ? abuseContact : /^[^\s@/]+@[^\s@/]+$/.test(abuseContact) ? `mailto:${abuseContact}` : '';
 const reportAbuse = abuseHref ? `<a href="${escapeHtml(abuseHref)}">Report abuse</a>` : `Report abuse: ${escapeHtml(abuseContact)}`;
@@ -171,5 +171,5 @@ if (gatewayDomain) {
 }
 
 const hashes = Object.fromEntries(['index.html', 'sw.js', verifierName, sdkName].map((file) => [file, sha256(readFileSync(join(out, file)))]));
-writeFileSync(join(out, 'shell.json'), `${JSON.stringify({ network, hosted, gatewayDomain, files: hashes }, null, 2)}\n`);
+writeFileSync(join(out, 'shell.json'), `${JSON.stringify({ network, hosted, gatewayDomain, formats: FORMATS, files: hashes }, null, 2)}\n`);
 console.log(out, hashes);
