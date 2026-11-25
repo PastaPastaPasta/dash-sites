@@ -13,6 +13,7 @@
   "dependencies": {
     "@dash-sites/core": "0.1.0",
     "@dash-sites/gateway": "0.1.0",
-    "brotli": "2.1.0"
+    "brotli": "2.1.0",
+    "qr": "^0.7.2"
   }
 }
