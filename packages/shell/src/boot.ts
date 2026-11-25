@@ -7,13 +7,18 @@ const bar = document.querySelector('.bar') as HTMLElement;
 const say = (text: string): void => {
   step.textContent = text;
 };
-const fail = (text: string, title?: string): void => {
+const advance = (share: number, creep = false): void => {
+  bar.classList.add('known');
+  bar.classList.toggle('creep', creep);
+  bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
+};
+const fail = (text: string, title = `${location.hostname} could not be loaded`): void => {
   document.body.classList.add('failed');
-  if (title) {
-    (document.getElementById('title') as HTMLElement).textContent = title;
-    document.title = title;
-  }
-  say(text);
+  (document.getElementById('title') as HTMLElement).textContent = title;
+  document.title = title;
+  const error = document.getElementById('error') as HTMLElement;
+  error.textContent = text;
+  error.hidden = false;
 };
 
 /** The gateway domain itself is not a name: the same static files show the landing page there. */
@@ -21,6 +26,7 @@ function landing(): boolean {
   const host = location.hostname;
   if (!__GATEWAY_DOMAIN__ || (host !== __GATEWAY_DOMAIN__ && host !== `www.${__GATEWAY_DOMAIN__}`)) return false;
   document.title = 'Dash Sites';
+  document.body.classList.remove('loader');
   (document.getElementById('shell') as HTMLElement).hidden = true;
   (document.getElementById('landing') as HTMLElement).hidden = false;
   const form = document.getElementById('go') as HTMLFormElement;
@@ -57,7 +63,7 @@ function controlled(registration: ServiceWorkerRegistration): Promise<void> {
 }
 
 async function start(): Promise<void> {
-  (document.getElementById('name') as HTMLElement).textContent = `${label}.dash`;
+  (document.getElementById('name') as HTMLElement).textContent = location.hostname;
   if (!('serviceWorker' in navigator)) {
     return fail(
       'Sites here are read from Dash Platform and checked by your browser, which needs service workers. They are unavailable in this browser or window (for example a Firefox private window). Open the site in a regular window of Chrome, Edge, Firefox or Safari.',
@@ -67,8 +73,7 @@ async function start(): Promise<void> {
   navigator.serviceWorker.addEventListener('message', (event: MessageEvent<{ dashSitesProgress?: number }>) => {
     const share = event.data?.dashSitesProgress;
     if (typeof share !== 'number' || document.body.classList.contains('failed')) return;
-    bar.classList.add('known');
-    bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
+    advance(share * 0.8);
     say(`Downloading the verifier, about 6 MB: ${Math.round(share * 100)}%. This happens once.`);
   });
   if (!navigator.serviceWorker.controller) {
@@ -76,7 +81,7 @@ async function start(): Promise<void> {
     const registration = await navigator.serviceWorker.register('/sw.js');
     if (registration.active) return reload();
     await controlled(registration);
-    bar.classList.remove('known');
+    advance(0.95, true);
   }
   say(`Asking Dash Platform who owns ${label}.dash and checking the proof.`);
   const response = await fetch('/.well-known/dash/site.json');
@@ -85,6 +90,7 @@ async function start(): Promise<void> {
   }
   const record = (await response.json()) as { proof?: { height: number } };
   if (record.proof) say(`Proved at block ${record.proof.height}. Loading the site.`);
+  if (bar.classList.contains('known')) advance(1);
   reload();
 }
 

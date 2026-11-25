@@ -7,28 +7,38 @@
 <meta name="robots" content="noindex">
 <title>Loading from Dash Platform</title>
 <style>/*STYLE*/
-.bar{height:3px;background:var(--line);overflow:hidden;margin:22px 0}
-.bar::after{content:"";display:block;height:100%;width:35%;background:var(--accent);animation:slide 1.4s ease-in-out infinite}
+.loader{background:Canvas;color:CanvasText}
+#shell{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;padding:24px 16px}
+#shell h1{font-size:17px;font-weight:500;margin:0 0 14px;overflow-wrap:anywhere}
+.bar{height:3px;border-radius:3px;background:#8883;background:color-mix(in srgb,CanvasText 12%,transparent);overflow:hidden}
+.bar::after{content:"";display:block;height:100%;width:35%;border-radius:3px;background:#888;background:color-mix(in srgb,CanvasText 55%,transparent);animation:slide 1.4s ease-in-out infinite}
 @keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
-@media (prefers-reduced-motion:reduce){.bar::after{animation:none;width:100%}}
-.bar.known::after{animation:none;transform:none;width:var(--done,0%);transition:width .2s}
+@media (prefers-reduced-motion:reduce){.bar::after{animation:none;width:100%;opacity:.5}}
+.bar.known::after{animation:none;transform:none;width:var(--done,0%);transition:width .3s}
+.bar.creep::after{transition:width 8s cubic-bezier(.1,.7,.3,1)}
+#shell details{margin-top:28px;font-size:13px;color:GrayText;color:color-mix(in srgb,CanvasText 60%,transparent)}
+#shell summary{cursor:pointer;width:max-content}
+#shell details p,#shell details footer{color:inherit;margin:8px 0 0;font-size:13px}
+#error{margin:0;color:inherit}
 .failed .bar{display:none}
 form{display:flex;gap:8px;margin:22px 0}
 input{flex:1;min-width:0;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
 button{font:inherit;font-weight:600;padding:10px 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer}
 </style>
 </head>
-<body>
+<body class="loader">
 <main id="landing" hidden>
 <!--LANDING-->
 </main>
 <main id="shell">
-<div class="status">Dash Sites · __NETWORK__</div>
-<h1 id="title">Opening <span id="name">this site</span></h1>
-<p id="step">Your browser reads this site from Dash Platform and checks it itself. Starting the verifier.</p>
-<div class="bar"></div>
+<h1 id="title">Loading <span id="name">this site</span>…</h1>
+<div class="bar" role="progressbar" aria-label="Loading"></div>
+<p id="error" hidden></p>
 <noscript><p>This site is checked in your browser, which needs JavaScript.</p></noscript>
+<details id="details"><summary>Details</summary>
+<p id="step">Your browser reads this site from Dash Platform (__NETWORK__) and checks it itself. Starting the verifier.</p>
 <footer>This page is the same for every name. It holds no site content: <a href="__SOURCE_URL__">how it works</a>.</footer>
+</details>
 </main>
 <script>/*BOOT*/</script>
 </body>
