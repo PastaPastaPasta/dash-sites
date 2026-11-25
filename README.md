@@ -234,6 +234,8 @@ npm run e2e:extension
 npm run e2e:builder -- identity.json <label>  # a name the identity owns; publishes on testnet (spends testnet credits)
 ```
 
+`E2E_COLOR_SCHEME=dark` runs `e2e:builder` in the dark theme, for its screenshots.
+
 **dash.site on your machine.** Build both Workers' files the way
 `deploy/cloudflare/deploy.sh` does. The subshell keeps these settings out of
 later testnet builds:
