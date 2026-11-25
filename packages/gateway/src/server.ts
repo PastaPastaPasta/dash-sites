@@ -126,20 +126,23 @@ export function createGateway(options: GatewayOptions): RequestListener {
   // External npm assets: one fetch at a time per file, and a failed one is not retried for a few
   // minutes, so a manifest naming a file no CDN serves cannot make the gateway download it per request.
   const fetchExternal = options.external ?? cdnSource();
+  // Keyed by the whole entry (package, version, path, hash, size): another site naming the same
+  // hash with a wrong path or size can only make its own entry fail, never someone else's.
   const externalInFlight = new Map<string, Promise<Uint8Array>>();
-  const externalFailedUntil = new Map<string, { until: number; error: unknown }>();
+  const externalFailed = new LruCache<{ until: number; error: unknown }>(10_000);
   const external: ExternalSource = (asset, size) => {
-    const failed = externalFailedUntil.get(asset.integrity);
+    const key = `${asset.npm}@${asset.version}/${asset.path}#${asset.integrity}:${size}`;
+    const failed = externalFailed.get(key);
     if (failed && failed.until > now()) return Promise.reject(failed.error);
-    let pending = externalInFlight.get(asset.integrity);
+    let pending = externalInFlight.get(key);
     if (!pending) {
       pending = fetchExternal(asset, size)
         .catch((error: unknown) => {
-          externalFailedUntil.set(asset.integrity, { until: now() + 5 * 60 * SECOND, error });
+          externalFailed.set(key, { until: now() + 5 * 60 * SECOND, error });
           throw error;
         })
-        .finally(() => externalInFlight.delete(asset.integrity));
-      externalInFlight.set(asset.integrity, pending);
+        .finally(() => externalInFlight.delete(key));
+      externalInFlight.set(key, pending);
     }
     return pending;
   };

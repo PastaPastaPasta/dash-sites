@@ -371,11 +371,13 @@ describe('gateway: version 2 sites', () => {
   let fetches = 0;
   const h = new Harness();
 
+  const counting = cdnSource(async () => {
+    fetches += 1;
+    return new Response(served);
+  });
+
   beforeAll(async () => {
-    h.external = cdnSource(async () => {
-      fetches += 1;
-      return new Response(served);
-    });
+    h.external = counting;
     h.platform.registerName('alice', 'alice-id');
     h.platform.registerName('bob', 'bob-id');
     const ext = { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' } };
@@ -398,6 +400,22 @@ describe('gateway: version 2 sites', () => {
     const wb = await h.get('bob.id.example.org', '/sdk.wasm', { 'accept-encoding': 'gzip' });
     const bobBytes = wb.headers['content-encoding'] === 'gzip' ? gunzipSync(wb.body) : wb.body;
     expect(new Uint8Array(bobBytes)).toEqual(sdk);
+  });
+
+  it("cannot be made to refuse another site's external file", async () => {
+    h.platform.registerName('mallory', 'mallory-id');
+    const bad = buildSite([{ path: '/index.html', bytes: text('m') }, { path: '/sdk.wasm', bytes: sdk }], { external: { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/missing.wasm' } } });
+    await publishSite(h.platform.as('mallory-id'), 'mallory', bad);
+    await h.stop();
+    h.external = cdnSource(async (url) => (String(url).includes('missing') ? new Response(null, { status: 404 }) : new Response(sdk)));
+    await h.start();
+    expect((await h.get('mallory.id.example.org', '/sdk.wasm')).status).toBe(502);
+    const alice = await h.get('alice.id.example.org', '/sdk.wasm');
+    expect(alice.status).toBe(200);
+    expect(new Uint8Array(alice.body)).toEqual(sdk);
+    await h.stop();
+    h.external = counting;
+    await h.start();
   });
 
   it('refuses an external file no CDN serves with its hash, and does not refetch it on every request', async () => {
