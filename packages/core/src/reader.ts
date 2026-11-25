@@ -1,4 +1,3 @@
-import { decompress as brotliDecompress } from 'brotli/decompress';
 import { concat, sha256Hex } from './bytes.js';
 import { cdnSource, integrityOfAsync, type ExternalSource } from './external.js';
 import type { ContentRef } from './content.js';
@@ -114,7 +113,7 @@ export async function readFile(manifest: Manifest, path: string, source: ChunkSo
   let bytes = stored;
   if (file.enc) {
     try {
-      bytes = file.enc === 'gzip' ? gunzip(stored, file.size) : brotliDecompress(stored, file.size);
+      bytes = file.enc === 'gzip' ? gunzip(stored, file.size) : (await import('brotli/decompress')).decompress(stored, file.size);
     } catch (error) {
       throw new ContentError(`${path} cannot be decompressed: ${(error as Error).message}`);
     }
