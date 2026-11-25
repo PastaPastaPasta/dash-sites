@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fromHex, isHash, toHex, type DomainRecord, type Network, type NetworkConfig } from '@dash-sites/core';
@@ -82,23 +82,32 @@ export function connectionId(dir: string, network: Network): Uint8Array {
   const existing = readSaved();
   if (existing) return existing;
   const fresh = new Uint8Array(randomBytes(16));
+  const content = `${toHex(fresh)}\n`;
   ensurePrivateDir(dir);
+  const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+  writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
   try {
-    writeFileSync(path, `${toHex(fresh)}\n`, { mode: 0o600, flag: 'wx' });
     try {
-      chmodSync(path, 0o600);
+      chmodSync(tmp, 0o600);
     } catch {
       // Non-POSIX filesystems may ignore chmod.
     }
+    linkSync(tmp, path);
     return fresh;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
       const raced = readSaved();
       if (raced) return raced;
-      writePrivateFile(path, `${toHex(fresh)}\n`);
+      writePrivateFile(path, content);
       return fresh;
     }
     throw error;
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Best-effort cleanup of temp file.
+    }
   }
 }
 
