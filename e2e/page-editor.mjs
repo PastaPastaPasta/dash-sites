@@ -380,7 +380,7 @@ try {
     visit(start);
     return seen;
   };
-  const sign = reach('app.js', false);
+  const sign = reach(readdirSync(assets).find((name) => /^app-\w+\.js$/.test(name)), false);
   const entry = `c/${readdirSync(join(assets, 'c')).find((name) => name.startsWith('editor-'))}`;
   const editorFiles = [...reach(entry, true)].filter((file) => !sign.has(file) && !/\/(evo|connect)-/.test(file));
   const sum = (files, fn) => files.reduce((total, file) => total + fn(readFileSync(join(assets, file))), 0);
