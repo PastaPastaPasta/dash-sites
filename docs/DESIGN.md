@@ -94,6 +94,13 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
   vote, and the domain document exists only once the contest is won.
 - A label is 3 to 63 characters of `[a-zA-Z0-9-]`, not starting or ending with
   `-`: always a valid DNS label.
+- Every name is `<label>.dash`; DPNS has no `blog.alice.dash`.
+  - `parentDomainName` must be one label with no dot, and only the contract
+    owner can create a top-level domain. The only top-level domain is `dash`.
+  - Platform rejects a second-level name that allows subdomains (the
+    `create_domain_data_trigger` in `rs-drive-abci`).
+  - Dash Sites accepts only `<label>` or `<label>.dash` (`parseName` in
+    `packages/core/src/names.ts`).
 
 ## 3. Storage and addressing
 
@@ -140,10 +147,8 @@ chunk     immutable, deletable, not transferable
 ```
 
 A site is keyed by the domain document's id, not by the label. A label key
-could not be changed later (indexes are fixed once documents exist), is capped
-at 63 characters, and could not tell `blog.alice.dash` from `blog.dash`. The
-document id works for a name at any depth, so subdomain names can be added
-without a new contract.
+could not be changed later (indexes are fixed once documents exist) and is
+capped at 63 characters.
 
 The key is not globally unique on purpose. A global unique index would let
 anyone squat Alice's slot in this contract before she publishes. With
@@ -758,7 +763,7 @@ the host, a build setting of the builder, and a user setting of the extension.
 
 ## 9. Out of scope for v1
 
-Subdomain names (`blog.alice.dash`), custom DNS domains pointing at a name
+Custom DNS domains pointing at a name
 (DNSLink in reverse), serving `ipfs://` content from the gateway, Arweave,
 private sites, a site directory, a site's own service worker, form posts,
 serving sites from inside the extension, starting contested-name votes from
