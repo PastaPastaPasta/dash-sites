@@ -13,7 +13,7 @@
 .bar{height:3px;border-radius:3px;background:#8883;background:color-mix(in srgb,CanvasText 12%,transparent);overflow:hidden}
 .bar::after{content:"";display:block;height:100%;width:35%;border-radius:3px;background:#888;background:color-mix(in srgb,CanvasText 55%,transparent);animation:slide 1.4s ease-in-out infinite}
 @keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
-@media (prefers-reduced-motion:reduce){.bar::after{animation:none;width:100%;opacity:.5}}
+@media (prefers-reduced-motion:reduce){.bar:not(.known)::after{animation:none;width:100%;opacity:.5}}
 .bar.known::after{animation:none;transform:none;width:var(--done,0%);transition:width .3s}
 .bar.creep::after{transition:width 8s cubic-bezier(.1,.7,.3,1)}
 #shell details{margin-top:28px;font-size:13px;color:GrayText;color:color-mix(in srgb,CanvasText 60%,transparent)}
@@ -32,8 +32,8 @@ button{font:inherit;font-weight:600;padding:10px 16px;border:0;border-radius:8px
 </main>
 <main id="shell">
 <h1 id="title">Loading <span id="name">this site</span>…</h1>
-<div class="bar" role="progressbar" aria-label="Loading"></div>
-<p id="error" hidden></p>
+<div class="bar" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100"></div>
+<p id="error" role="alert" hidden></p>
 <noscript><p>This site is checked in your browser, which needs JavaScript.</p></noscript>
 <details id="details"><summary>Details</summary>
 <p id="step">Your browser reads this site from Dash Platform (__NETWORK__) and checks it itself. Starting the verifier.</p>

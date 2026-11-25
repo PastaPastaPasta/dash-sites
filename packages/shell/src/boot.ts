@@ -7,15 +7,20 @@ const bar = document.querySelector('.bar') as HTMLElement;
 const say = (text: string): void => {
   step.textContent = text;
 };
+let shown = 0;
 const advance = (share: number, creep = false): void => {
+  if (share < shown) return;
+  shown = share;
+  const percent = Math.round(share * 100);
   bar.classList.add('known');
   bar.classList.toggle('creep', creep);
-  bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
+  bar.style.setProperty('--done', `${percent}%`);
+  bar.setAttribute('aria-valuenow', String(percent));
 };
-const fail = (text: string, title = `${location.hostname} could not be loaded`): void => {
+const fail = (text: string, title?: string): void => {
   document.body.classList.add('failed');
-  (document.getElementById('title') as HTMLElement).textContent = title;
-  document.title = title;
+  (document.getElementById('title') as HTMLElement).textContent = title ?? `${location.hostname} could not be loaded`;
+  if (title) document.title = title;
   const error = document.getElementById('error') as HTMLElement;
   error.textContent = text;
   error.hidden = false;
