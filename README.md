@@ -187,7 +187,7 @@ listings yet. The steps are in [packages/extension](packages/extension/README.md
 | `packages/gateway` | The landing page, fallback process and resolve API on `id.dashhq.org` |
 | `packages/cli` | `dash-sites` command |
 | `packages/extension` | Browser extension (Chromium and Firefox, MV3) |
-| `packages/showcase` | The site published at `p2p.dash` |
+| `packages/showcase` | The showcase site: `p2p.dash` on testnet, `built4.dash` on mainnet |
 | `contract/` | The `dash-sites` data contract |
 | `deploy/` | dash.site Workers (`deploy/cloudflare`) and the testnet droplet |
 | `e2e/` | Browser tests against live names |

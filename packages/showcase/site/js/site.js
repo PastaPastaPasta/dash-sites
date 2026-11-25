@@ -6,7 +6,7 @@ export const stored = (file) => file.parts.reduce((sum, part) => sum + part[2], 
 export const documents = (file) => new Set(file.parts.map((part) => part[0])).size;
 
 const cache = new Map();
-/** Asks whatever is serving this site, the visitor's own browser or a gateway, about Dash Platform. */
+/** Asks whatever is serving this site, the visitor's own browser or the server, about Dash Platform. */
 export function host(path) {
   const request = cache.get(path) ?? fetch(HOST + path).then((response) => response.json());
   if (!path.startsWith('resolve/')) cache.set(path, request);
@@ -25,7 +25,7 @@ function set(id, text, title) {
 }
 
 const SERVED = {
-  gateway: 'A gateway read this from Dash Platform and checked the proof',
+  gateway: 'The server read this from Dash Platform and checked the proof',
   browser: 'Your browser read this from Dash Platform and checked the proof',
 };
 
@@ -51,7 +51,7 @@ async function fill() {
     if (stamp) stamp.dataset.state = 'proved';
     document.documentElement.dataset.served = r.servedBy;
   } catch {
-    set('r-by', 'The record shows when this site is opened through a Dash Sites gateway');
+    set('r-by', 'The record shows when this site is opened on dash.site');
     set('r-block', 'not read');
     if (stamp) stamp.dataset.state = 'failed';
   }
