@@ -13,8 +13,10 @@ function network(list: unknown[], answers: Record<string, Answer>, listDelay = 0
   const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === `${QUORUMS}/masternodes`) {
-      await new Promise((resolve) => setTimeout(resolve, listDelay));
-      init?.signal?.throwIfAborted();
+      await new Promise((resolve, reject) => {
+        setTimeout(resolve, listDelay);
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
       return new Response(JSON.stringify({ success: true, data: list }));
     }
     const host = new URL(url).hostname;
@@ -112,7 +114,7 @@ describe('unpinOnFailure', () => {
     const full = fakeReader();
     const spy = vi.spyOn(full, 'getChunks');
     const unpin = vi.fn(async () => full);
-    const banned = new Error('no available addresses to retry, last error: timeout');
+    const banned = { message: 'no available addresses to retry, last error: timeout' } as unknown as Error;
     expect(await unpinOnFailure(fakeReader(banned), unpin).getChunks('o', ['h'])).toEqual(new Map());
     expect(spy).toHaveBeenCalledWith('o', ['h']);
   });

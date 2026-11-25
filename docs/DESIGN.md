@@ -386,7 +386,7 @@ queries for browsers.
   finds an open connection and a cached CORS preflight (DAPI allows 20 days;
   Chrome keeps 2 hours) instead of paying for both on a random, possibly
   distant node. With fewer than 2 answers within 2.5 s of the list, or if
-  the verifier is ready and the pick is still 0.6 s away, the SDK chooses
+  the pick is not done 0.6 s after the verifier is ready, the SDK chooses
   nodes itself. After the first failed query on the picked nodes, the worker
   moves to the SDK's own list for the rest of its life, so a short outage
   that gets the few picked nodes banned does not stall it. Which node

@@ -20,6 +20,7 @@ export interface NodeOptions {
 }
 
 const PROBE_PATH = '/org.dash.platform.dapi.v0.Platform/getDocuments';
+/** Today every entry is `<ipv4>:443`, which is also all `e2e/shell.mjs` accepts. */
 const HOST = /^([a-z\d.-]+|\[[\da-f:.]+\]):\d{1,5}$/i;
 const LIST_LIMIT_MS = 1500;
 const MIN_NODES = 2;
@@ -88,7 +89,8 @@ export function unpinOnFailure(inner: PlatformReader, unpin: () => Promise<Platf
       return await query(inner);
     } catch (error) {
       const next = unpin();
-      if (/no available addresses/i.test(error instanceof Error ? error.message : String(error))) return query(await next);
+      const message = (error as { message?: unknown } | undefined)?.message;
+      if (typeof message === 'string' && /no available addresses/i.test(message)) return query(await next);
       next.catch(() => undefined);
       throw error;
     }
