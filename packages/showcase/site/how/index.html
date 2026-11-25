@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How p2p.dash works</title>
+<meta name="color-scheme" content="light dark">
+<title>How built4.dash works</title>
 <meta name="description" content="From a name to a page: how a .dash site is looked up, proved and shown.">
 <link rel="icon" href="/img/mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/css/site.css">
@@ -12,7 +13,7 @@
 <body>
 <div class="sheet">
 <header class="top">
-  <a class="name" href="/">p2p<b>.dash</b></a>
+  <a class="name" href="/">built4<b>.dash</b></a>
   <nav aria-label="Pages">
     <a href="/how/" aria-current="page">How it works</a>
     <a href="/inside/">Check it yourself</a>
@@ -25,8 +26,8 @@
 
 <ol class="flow">
   <li>
-    <div class="what">You ask for <span class="live" data-name>p2p.dash</span></div>
-    <p>Open it through a gateway host such as <code>p2p.id.dashhq.org</code>, or type the name itself with the extension installed.</p>
+    <div class="what">You ask for <span class="live" data-name>built4.dash</span></div>
+    <p>Open it on dash.site as <code>built4.dash.site</code>, or type the name itself with the extension pointed at <code>dash.site</code> and set to mainnet.</p>
   </li>
   <li>
     <div class="what">Name document <span class="live" id="r-domain">…</span><br>owned by <span class="live" id="r-owner">…</span></div>
@@ -50,17 +51,17 @@
 <div class="cols two">
   <div>
     <h3>Your browser, in any browser</h3>
-    <p>Open <code>p2p.id.dashhq.org</code>. The gateway sends one small page, the same for every name, and a verifier. From then on your browser talks to Dash Platform nodes itself: it proves the name and the site record, fetches the files, checks each hash, and shows the site.</p>
-    <p class="via-browser">That is how you are reading this page. The server that sent the verifier has not seen or sent a byte of it.</p>
-    <p class="via-gateway">You are reading a copy rendered by the gateway instead, which it does for crawlers, link previews and command-line tools.</p>
-    <p>After the first visit the site keeps working even if the gateway disappears.</p>
+    <p>Open <code>https://built4.dash.site/</code>. dash.site is a static site: it sends one small page, the same for every name, a service worker and a verifier pinned by its hash. From then on your browser talks to Dash Platform nodes itself: it proves the name and the site record, fetches the files, checks each hash, and shows the site.</p>
+    <p class="via-browser">That is how you are reading this page. The host that sent the verifier has not seen or sent a byte of it.</p>
+    <p class="via-server">You are reading a copy the server rendered instead, as it does for crawlers, link previews and command-line tools.</p>
+    <p>After the first visit the installed worker keeps the site working even if dash.site disappears.</p>
   </div>
   <div>
     <h3>The extension, by its real name</h3>
-    <p>With the extension you type <code>p2p.dash</code> and land on the same verifier. Its button asks Dash Platform a second time, with its own copy of the SDK, and compares the answer with the page in front of you.</p>
+    <p>With the extension pointed at <code>dash.site</code> and set to mainnet, you type <code>built4.dash</code> and land on the same verifier. Its button asks Dash Platform a second time, with its own copy of the SDK, and compares the answer with the page in front of you.</p>
     <figure>
-      <img class="shot" src="/img/extension.png" alt="The Dash Sites extension reporting p2p.dash as verified against Dash Platform" width="340" height="420" loading="lazy">
-      <figcaption>The extension reporting what it proved</figcaption>
+      <img class="shot" src="/img/extension.png" alt="The Dash Sites extension reporting p2p.dash as verified against Dash Platform testnet" width="340" height="420" loading="lazy">
+      <figcaption>The extension reporting what it proved, here for p2p.dash on testnet</figcaption>
     </figure>
     <p style="margin-top:14px"><a href="https://github.com/PastaPastaPasta/dash-sites/releases/latest" target="_blank" rel="noopener">Get the extension</a></p>
   </div>
@@ -78,7 +79,7 @@
   </div>
   <div>
     <h3>The verifier you were sent</h3>
-    <p>The checking code comes from the gateway's host. It is open source, the same file for every name, and its hash is published, but a dishonest host could send a different one. Running it from your own machine removes that.</p>
+    <p>The checking code comes from dash.site. It is open source and the same for every name, and the service worker refuses a verifier whose SHA-256 does not match the one it carries. A dishonest host could still send a different service worker. Serving the static page from your own machine removes that.</p>
   </div>
   <div>
     <h3>The owner of the name</h3>

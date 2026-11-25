@@ -5,9 +5,8 @@ Status: implemented on testnet. Date: 2026-11-21. Testnet contract: `5BS87xCmGqF
 Dash Sites lets the owner of a DPNS name (`alice.dash`) publish a static website
 under that name, and lets anyone open it:
 
-- in any browser, at `https://alice.<gateway-domain>/` (interim
-  `alice.id.dashhq.org`, later `alice.dash.dev`). The gateway host sends a
-  static shell; the visitor's browser reads the site from Dash Platform and
+- in any browser, at `https://alice.<domain>/` (mainnet `alice.dash.site`,
+  testnet `alice.id.dashhq.org`). The host sends a static shell; the visitor's browser reads the site from Dash Platform and
   verifies it. The server does not serve site content on that path;
 - in a browser with the extension, by typing `alice.dash` or following a
   `http://alice.dash/` link;
@@ -17,7 +16,9 @@ under that name, and lets anyone open it:
 It has three parts that share one protocol library: a **builder** (web app and
 CLI) that publishes, a **gateway** (a static shell with a service worker, plus
 a small server-rendered fallback) that opens sites in any browser, and an
-**extension** that resolves `.dash` names.
+**extension** that resolves `.dash` names. On mainnet the shell is served as
+the static site dash.site, with no fallback process (§8); of the hosted
+deployments, only the testnet host `id.dashhq.org` runs the gateway process.
 
 ## 1. Prior art
 
@@ -452,8 +453,9 @@ and the extension all call the same functions.
 
 ### Builder
 
-- **Web app** (static, hosted on GitHub Pages, on a different registrable
-  domain from user sites): sign in with a mobile wallet (below), or with an
+- **Web app** (static: the testnet builder on GitHub Pages, on a different
+  registrable domain from user sites; the mainnet builder at `dash.site/new`,
+  on the same domain, with the cookie and PSL caveats in §6): sign in with a mobile wallet (below), or with an
   identity id or name plus an AUTHENTICATION key (HIGH or CRITICAL) that never
   leaves the page; choose a DPNS name (or register one, with a key sign-in);
   build a site from a template with a Markdown editor, or drop in a
@@ -545,10 +547,12 @@ queries for browsers.
   DAPI, loads the manifest, fetches the chunks a request needs, and checks
   every chunk and file against its SHA-256 before answering. Anything that
   does not verify is refused.
-- **What the browser contacts**: the gateway host for the shell; Dash Platform
+- **What the browser contacts**: the host for the shell; Dash Platform
   evonodes (`<ip>:443`, from the masternode list of the quorum key service);
-  and the quorum key service `quorums.<network>.networks.dash.org` (see §6).
-  Nothing else. `e2e/shell.mjs` asserts this list in Chromium.
+  the quorum key service `quorums.<network>.networks.dash.org` (see §6); and,
+  only for a site whose manifest names external npm files (§3),
+  `cdn.jsdelivr.net`, and `unpkg.com` if jsDelivr fails. Nothing else. `e2e/shell.mjs` asserts
+  this list in Chromium for a site without external files.
 - **Choosing nodes**: while the verifier downloads, the worker reads that
   masternode list (enabled nodes that passed the service's version check),
   sends an empty request to 10 random ones, and gives the SDK the first 4 to
@@ -676,7 +680,7 @@ queries for browsers.
      dishonest or compromised host could send a different worker, to new
      visitors or as an update. What narrows this: the shell is the same for
      every name and built reproducibly from the repository; `sw.js` (about
-     40 KB) contains the SHA-256 of the verifier's files and refuses to run one that
+     150 KB) contains the SHA-256 of the verifier's files and refuses to run one that
      does not match, so `sw.js` is the only file whose honesty matters, and
      browsers replace an installed worker only when `sw.js` itself changes;
      `shell.json` beside it lists the SHA-256 of each file for anyone
@@ -745,10 +749,10 @@ queries for browsers.
   content, on the PSL (see §8). The PSL has a cost here: browsers partition
   the HTTP cache by site, so once each name is its own site, each name's
   first visit downloads the verifier again.
-- **Phishing and reputation**: user content under `dash.dev` shares its
-  reputation with it (Safe Browsing flags by registrable domain unless the
-  suffix is on the PSL). Recommendation for the final domain: PSL entry before
-  launch, or a dedicated domain.
+- **Phishing and reputation**: user content under `dash.site` shares its
+  reputation with `dash.site/new` (Safe Browsing flags by registrable domain
+  unless the suffix is on the PSL). `dash.site` is not on the PSL yet; an
+  entry, or a dedicated domain on the PSL, is the recommended fix.
 - **Homographs**: DPNS normalization collapses `o/0`, `i/l/1`. Labels are
   ASCII, but DPNS allows `xn--…` labels, which browsers display as Unicode;
   the shell, gateway, CLI, builder and extension refuse them.
@@ -819,7 +823,7 @@ landing page says publishing has not opened.
 
 ## 8. Hosting
 
-| Network | Gateway | Runs on |
+| Network | Host | Runs on |
 | --- | --- | --- |
 | Mainnet | `dash.site`, `*.dash.site` | Cloudflare Worker `dash-site`, static assets only |
 | Mainnet publishing | `dash.site/new*`, `dash.site/publish*` | Cloudflare Worker `dash-site-app`, static assets only: the builder (`/publish` redirects to `/new`), on the bare host only so no site origin serves a page that takes keys; CSP with `frame-ancestors 'none'` |
@@ -829,7 +833,7 @@ landing page says publishing has not opened.
 | --- | --- | --- |
 | `dash.site` | An assets-only Cloudflare Worker (`deploy/cloudflare`): no Worker script, so no request runs code and static asset requests are free and unmetered. Routes `dash.site/*` and `*.dash.site/*`; `not_found_handling: single-page-application` answers every path with the shell | No server to run. Cloudflare's free certificate covers `dash.site` and `*.dash.site` |
 | `id.dashhq.org` | A 1 GB droplet: Caddy serving the static shell on every name's host, the fallback process as a systemd service, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org` |
-| DNS | Zone `dash.site`: apex and `*` proxied A `192.0.2.1` and AAAA `100::` (placeholders; the Worker routes answer, over IPv4 and IPv6). Zone `dashhq.org`: `id` and `*.id` to the testnet droplet (DNS-only), `_acme-challenge.id` delegated to the droplet, CAA for Let's Encrypt DNS-01 | Existing access |
+| DNS | Zone `dash.site`: apex and `*` proxied A `192.0.2.1` and AAAA `100::` (placeholders; the Worker routes answer, over IPv4 and IPv6). Zone `dashhq.org`: `id` and `*.id`, A and AAAA, to the testnet droplet (DNS-only), `_acme-challenge.id` delegated to the droplet (its NS host `ns-dash-sites` has an A record only; the DNS-01 responder listens on IPv4), CAA for Let's Encrypt DNS-01 | Existing access |
 | Builder | GitHub Pages from the repo, `dash-sites.thepasta.org` | Static, free, deploys from CI, different registrable domain from user sites |
 | Extension | Zip on GitHub Releases; store listing later | Store accounts are the user's |
 
@@ -878,9 +882,11 @@ files and runs no script:
   browser already has the site's worker gets this on its next update check:
   a browser keeps an installed worker when an update fails, so the blocked
   host must answer `/sw.js` with this file rather than an error.
-- everything else: a plain "unavailable on this gateway" page
+- everything else: a plain "unavailable" page
   (`not_found_handling: single-page-application` with that page as
   `index.html`).
+
+That Worker and its page are not in the repository yet; no name is blocked.
 
 Adding a name is a PR that adds its route to that Worker's `wrangler.jsonc`,
 then a deploy. Use the registered label in lowercase: the worker serves a
@@ -932,7 +938,7 @@ before it swaps anything. A denial removes a site from this gateway only; the si
 Platform and other gateways may serve it. The check in the worker is built
 only for hosted gateways (`DENYLIST=1`); a self-hosted shell has none.
 
-**Moving to `dash.dev`.** The shell reads the name from whatever host it is
+**Moving a droplet gateway to a new domain (such as `dash.dev`).** The shell reads the name from whatever host it is
 served on, so it needs no change. The gateway domain is `GATEWAY_DOMAINS` on
 the host, a build setting of the builder, and a user setting of the extension.
 

@@ -41,7 +41,7 @@ export async function drawPlan(svg, readout) {
   svg.replaceChildren();
   const defs = el('defs');
   const hatch = el('pattern', { id: 'hatch', width: 9, height: 9, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' });
-  hatch.append(el('line', { x1: 0, y1: 0, x2: 0, y2: 9, stroke: 'rgb(143 176 234 / .3)', 'stroke-width': 1.5 }));
+  hatch.append(el('line', { x1: 0, y1: 0, x2: 0, y2: 9, 'stroke-width': 1.5 }));
   defs.append(hatch);
   svg.append(defs);
 
