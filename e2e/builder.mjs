@@ -130,6 +130,8 @@ try {
   await fresh.waitForFunction(() => /^(Opened|.*(not|no|cannot))/.test(document.getElementById('reopen-status')?.textContent ?? '') && !/^Reading/.test(document.getElementById('reopen-status').textContent), undefined, { timeout: 180000 });
   check(/^Opened the page published at/.test(await fresh.textContent('#reopen-status')), `another browser, not signed in, opens the published page for editing: ${await fresh.textContent('#reopen-status')}`);
   check((await fresh.textContent('#page-summary')) === (await page.textContent('#page-summary')) && (await fresh.textContent('#themes button[aria-checked=true]')) === 'Night', `with its blocks and its look: ${await fresh.textContent('#page-summary')}`);
+  const shown = fresh.frameLocator('#frame').locator('p', { hasText: stamp });
+  check(await shown.waitFor({ timeout: 5000 }).then(() => true, () => false), 'and shows it in the preview');
   if (shots) await fresh.screenshot({ path: join(shots, 'builder-reopened.png'), fullPage: true });
   await fresh.context().close();
   if (withWallet) {
