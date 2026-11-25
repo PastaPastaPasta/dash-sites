@@ -197,11 +197,12 @@ describe('reading a name', () => {
       { dataContractId: CONFIG.contractId, documentTypeName: 'site', where: [...name, ['$ownerId', '==', IDENTITY]], limit: 1 },
     ]);
   });
-  it('takes no record written after the block that proved the owner when it reads in two steps', async () => {
+  it('takes no record written after the block that proved the owner when it reads in two steps, and does not call it absent', async () => {
     const failing = () => Promise.reject(new Error('unsupported'));
     const before = { ...meta, height: 7, timeMs: 4 };
-    const sold = reader(failing, { domain: before });
-    expect(await sold.reader.getName('a11ce')).toEqual({ value: { domain: read.domain }, meta: before });
+    const straddled = reader(failing, { domain: before });
+    await expect(straddled.reader.getName('a11ce')).rejects.toThrow(/different blocks/);
+    expect(straddled.queries.filter((query) => (query as { documentTypeName?: string }).documentTypeName === 'domain')).toHaveLength(2);
 
     const behind = { ...meta, height: 8 };
     expect(await reader(failing, { site: behind }).reader.getName('a11ce')).toEqual({ value: read, meta: behind });

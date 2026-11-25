@@ -427,8 +427,10 @@ Input: a name, e.g. `Alice.dash` (or a gateway host label).
    ([`composite_document.rs:84`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/wasm-sdk/src/queries/composite_document.rs#L84)).
    A node that cannot answer the composite query is asked for the domain
    document and then for the record by name and owner, two proved reads. The
-   record then counts only if it was last written no later than the block
-   that proved the owner, so the answer is still what one block held.
+   record must have been last written no later than the block that proved
+   the owner, so the answer is still what one block held. A record written
+   later means the reads straddled a write: they are tried once more, and
+   then the read fails rather than show a live site as missing.
 3. **Content**: by scheme. For `dash-manifest`, take the manifest chunks from
    what step 2 brought, or fetch them (`site == <record $id>`, `hash in […]`,
    100 per query), verify, parse; then the chunks of the requested file the
