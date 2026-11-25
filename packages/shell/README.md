@@ -1,8 +1,12 @@
 # Dash Sites shell
 
-The three static files every name's host serves: `index.html` (bootstrap),
-`sw.js` (service worker) and `dash-sites-verifier-<hash>.js` (the Dash SDK
-and the Platform reader). `shell.json` lists their SHA-256.
+The static files every name's host serves: `index.html` (bootstrap),
+`sw.js` (service worker) and the verifier: `dash-sites-verifier-<hash>.js`
+(the Platform reader and the Dash SDK's JavaScript) and
+`dash-sites-verifier-<hash>.wasm.br` (the SDK's WebAssembly, brotli at quality
+11, which the worker decompresses itself). `shell.json` lists their SHA-256.
+The build keeps the compressed WebAssembly in `node_modules/.cache`, since
+compressing it takes a minute or two.
 
 ```sh
 npm ci && npx tsc -b                   # the shell bundles packages/core
@@ -10,7 +14,7 @@ npm run build -w @dash-sites/shell     # NETWORK=testnet|mainnet, BUILDER_URL, C
 npm run serve -w @dash-sites/shell     # http://<name>.localhost:8080/
 ```
 
-To host it, serve `sw.js` and the verifier at the root of every
+To host it, serve `sw.js` and the verifier's files at the root of every
 `<name>.<domain>` host and `index.html` for every other path. The verifier
 can be cached forever; `sw.js` and `index.html` should be revalidated.
 `deploy/Caddyfile` is a working configuration.

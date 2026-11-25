@@ -3,82 +3,160 @@ import { readerConfig, toHex, type Network, type PlatformReader } from '@dash-si
 import { hostedDenylist } from './hosted-denylist.js';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
-import type { Connect } from './verifier.js';
+import type { Inflater } from './inflate.js';
+import type { Verifier } from './verifier.js';
 
-declare const self: ServiceWorkerGlobalScope & { dashSitesConnect?: Connect };
-declare const __VERIFIER__: string;
-declare const __VERIFIER_SHA256__: string;
+declare const self: ServiceWorkerGlobalScope & { dashSitesVerifier?: Verifier };
+declare const __VERIFIER__: Pinned;
+declare const __SDK__: Pinned & { packedSize: number };
 declare const __NETWORK__: string;
 declare const __CONTRACT_ID__: string;
 declare const __BUILDER_URL__: string;
 declare const __DENYLIST__: boolean;
-declare const __VERIFIER_SIZE__: number;
 declare const __BOOT_PAGE__: string;
 
-const matches = async (bytes: ArrayBuffer): Promise<boolean> => toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))) === __VERIFIER_SHA256__;
+/** A file this worker was built with: where it is served, and the SHA-256 and size of its bytes. */
+interface Pinned {
+  url: string;
+  sha256: string;
+  size: number;
+}
+
+const matches = async (bytes: Uint8Array, file: Pinned): Promise<boolean> =>
+  toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))) === file.sha256;
 
 /**
- * The verifier's source, checked against the hash this worker was built with. It is fetched by the
- * worker and kept in Cache Storage rather than imported as a worker script, because browsers refuse
- * to store a script this large for a private window. Site code can write to that cache, hence the check.
+ * The verifier is two files: its script, and the Dash SDK's WebAssembly served compressed with brotli.
+ * The worker fetches both and keeps them in Cache Storage rather than importing them, because browsers
+ * refuse to store a script this large for a private window. Site code can write to that cache, so
+ * every read is checked against the hash this worker was built with, and nothing runs before that.
  */
-async function verifierSource(): Promise<string> {
+async function loadVerifier(): Promise<{ verifier: Verifier; sdk: WebAssembly.Module }> {
   const cache = await caches.open(SHELL_CACHE).catch(() => undefined);
-  const kept = await (await cache?.match(__VERIFIER__))?.arrayBuffer();
-  if (kept && (await matches(kept))) return new TextDecoder().decode(kept);
-  // Retried past the HTTP cache: one bad response cached as immutable would otherwise break every name.
-  let bytes = await fetchVerifier('default').catch(() => undefined);
-  if (!bytes || !(await matches(bytes))) bytes = await fetchVerifier('reload');
-  if (!(await matches(bytes))) throw new Error('the verifier does not match the hash this worker was built with');
-  await cache?.put(__VERIFIER__, new Response(bytes, { headers: { 'Content-Type': 'text/javascript' } })).catch(() => undefined);
-  return new TextDecoder().decode(bytes);
+  const keptSdk = kept(cache, __SDK__);
+  // The SDK is most of the bytes, so its download starts while the script is still coming.
+  const sdkResponse = keptSdk.then((bytes) => (bytes ? undefined : fetch(__SDK__.url)));
+  sdkResponse.catch(() => undefined);
+  const source = (await kept(cache, __VERIFIER__)) ?? (await downloadChecked(cache, __VERIFIER__, 'text/javascript', (body) => collect(body, __VERIFIER__.size)));
+  (0, eval)(new TextDecoder().decode(source));
+  const verifier = self.dashSitesVerifier as Verifier;
+  const wasm =
+    (await keptSdk) ??
+    (await downloadChecked(cache, __SDK__, 'application/wasm', (body) => inflate(body, verifier.inflater()), await sdkResponse.catch(() => undefined)));
+  return { verifier, sdk: await WebAssembly.compile(wasm as BufferSource) };
 }
 
-async function fetchVerifier(mode: RequestCache): Promise<ArrayBuffer> {
-  const response = await fetch(__VERIFIER__, { cache: mode });
-  if (!response.ok || !response.body) throw new Error(`the verifier could not be downloaded (${response.status})`);
-  return download(response.body);
+async function kept(cache: Cache | undefined, file: Pinned): Promise<Uint8Array | undefined> {
+  const response = await cache?.match(file.url).catch(() => undefined);
+  const bytes = response && new Uint8Array(await response.arrayBuffer());
+  return bytes && (await matches(bytes, file)) ? bytes : undefined;
 }
 
-/** Reads the verifier and tells open pages how far the download has got. */
-async function download(body: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
-  const bytes = new Uint8Array(__VERIFIER_SIZE__);
+/** Retried past the HTTP cache: one bad response cached as immutable would otherwise break every name. */
+async function downloadChecked(
+  cache: Cache | undefined,
+  file: Pinned,
+  type: string,
+  read: (body: ReadableStream<Uint8Array>) => Promise<Uint8Array>,
+  first?: Response,
+): Promise<Uint8Array> {
+  const attempt = async (response: Response | Promise<Response>): Promise<Uint8Array | undefined> => {
+    const { ok, status, body } = await response;
+    if (!ok || !body) throw new Error(`the verifier could not be downloaded (${status})`);
+    const bytes = await read(body);
+    return (await matches(bytes, file)) ? bytes : undefined;
+  };
+  const bytes = (await attempt(first ?? fetch(file.url)).catch(() => undefined)) ?? (await attempt(fetch(file.url, { cache: 'reload' })));
+  if (!bytes) throw new Error('the verifier does not match the hash this worker was built with');
+  await cache?.put(file.url, new Response(bytes as BodyInit, { headers: { 'Content-Type': type } })).catch(() => undefined);
+  return bytes;
+}
+
+/** Reads a download into a buffer of the size the worker was built with, reporting progress. */
+async function collect(body: ReadableStream<Uint8Array>, size: number): Promise<Uint8Array> {
+  const bytes = new Uint8Array(size);
   let loaded = 0;
-  let told = 0;
-  const reader = body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (loaded + value.length > bytes.length) {
-      await reader.cancel();
-      throw new Error('the verifier is larger than the one this worker was built with');
-    }
-    bytes.set(value, loaded);
-    loaded += value.length;
-    if (Date.now() - told > 100) {
-      told = Date.now();
-      void progress(loaded / bytes.length);
-    }
+  await read(body, (chunk) => {
+    if (loaded + chunk.length > size) throw new Error('the verifier is larger than the one this worker was built with');
+    bytes.set(chunk, loaded);
+    loaded += chunk.length;
+  });
+  return bytes.subarray(0, loaded);
+}
+
+/** Decompresses the SDK as it arrives, into a buffer of the size the worker was built with. */
+async function inflate(body: ReadableStream<Uint8Array>, inflater: Inflater): Promise<Uint8Array> {
+  const bytes = new Uint8Array(__SDK__.size);
+  let loaded = 0;
+  try {
+    await read(body, (chunk) => {
+      for (const out of inflater.push(chunk)) {
+        if (loaded + out.length > bytes.length) throw new Error('the verifier is larger than the one this worker was built with');
+        bytes.set(out, loaded);
+        loaded += out.length;
+      }
+    });
+    if (!inflater.done) throw new Error('the verifier download was cut short');
+  } finally {
+    inflater.free();
   }
-  return loaded === bytes.length ? bytes.buffer : bytes.buffer.slice(0, loaded);
+  return bytes.subarray(0, loaded);
+}
+
+const PROGRESS_TOTAL = __VERIFIER__.size + __SDK__.packedSize;
+let received = 0;
+let told = 0;
+
+async function read(body: ReadableStream<Uint8Array>, each: (chunk: Uint8Array) => void): Promise<void> {
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      each(value);
+      received += value.length;
+      if (Date.now() - told > 100) {
+        told = Date.now();
+        void progress(Math.min(1, received / PROGRESS_TOTAL));
+      }
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
 }
 
 async function progress(share: number): Promise<void> {
   for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) client.postMessage({ dashSitesProgress: share });
 }
 
+let loading: ReturnType<typeof loadVerifier> | undefined;
+function load(): ReturnType<typeof loadVerifier> {
+  loading ??= loadVerifier().catch((error: unknown) => {
+    loading = undefined;
+    throw error;
+  });
+  return loading;
+}
+
 let reader: Promise<PlatformReader> | undefined;
 function connect(): Promise<PlatformReader> {
-  reader ??= Promise.resolve()
-    .then(async () => {
-      if (!self.dashSitesConnect) (0, eval)(await verifierSource());
-      return (self.dashSitesConnect as Connect)(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__));
-    })
+  reader ??= load()
+    .then(({ verifier, sdk }) => verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk))
     .catch((error: unknown) => {
       reader = undefined;
       throw error;
     });
   return reader;
+}
+
+/** Earlier versions' verifier files are dropped once this worker is in charge. */
+async function pruneShellCache(): Promise<void> {
+  const cache = await caches.open(SHELL_CACHE);
+  const current = new Set([__VERIFIER__.url, __SDK__.url].map((url) => new URL(url, self.location.href).href));
+  for (const request of await cache.keys()) {
+    if (new URL(request.url).pathname.startsWith('/dash-sites-verifier-') && !current.has(request.url)) await cache.delete(request);
+  }
 }
 
 async function resetClients(): Promise<void> {
@@ -105,7 +183,7 @@ const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,
   network: __NETWORK__,
   reader: connect,
-  store: new BrowserStore(__VERIFIER__),
+  store: new BrowserStore([__VERIFIER__.url, __SDK__.url]),
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
   denied: hostedDenied,
@@ -124,8 +202,8 @@ function toResponse(reply: Reply, request: Request): Response {
   return new Response(request.method === 'HEAD' || reply.body === undefined ? null : (reply.body as BodyInit), { status: reply.status, headers });
 }
 
-self.addEventListener('install', (event) => event.waitUntil(verifierSource().then(() => self.skipWaiting())));
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener('install', (event) => event.waitUntil(load().then(() => self.skipWaiting())));
+self.addEventListener('activate', (event) => event.waitUntil(Promise.all([self.clients.claim(), pruneShellCache().catch(() => undefined)])));
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);

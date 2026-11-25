@@ -341,13 +341,23 @@ so when it next publishes.
 ### Gateway
 
 The gateway is a static shell. Every host `<label>.<domain>` serves the same
-three files, whatever the name: a bootstrap page, a small service worker, and
-the verifier (the Dash SDK, about 9 MB compressed, cached as immutable). The
-worker fetches the verifier itself, checks it against a SHA-256 built into
-the worker, and keeps it in Cache Storage; browsers will not store a worker
-script that large for a private window. On a static deployment (`GATEWAY_DOMAIN`)
+files, whatever the name: a bootstrap page, a small service worker, and
+the verifier, cached as immutable. The verifier is two files: a script (the
+Platform reader, the SDK's JavaScript and a brotli decompressor, about 0.2 MB
+compressed) and the SDK's WebAssembly, compressed with brotli at quality 11
+(about 5.7 MB; the SDK's own bundle inlines it as base64 of gzip, which cost
+9 MB on the wire). It is compressed ahead of time because Cloudflare
+recompresses static assets at a low level and ignores a file's own
+`Content-Encoding`; the worker decompresses it while it downloads. The
+worker fetches both files itself, checks each against a SHA-256 built into
+the worker (for the WebAssembly, of the decompressed bytes) before running
+or instantiating anything, and keeps them in Cache Storage; browsers will not
+store a worker script that large for a private window. The verifier build
+patches the SDK bundle to drop the inline copy and to instantiate the module
+the worker compiled; the build stops if the bundle no longer has the shape
+the patch expects. On a static deployment (`GATEWAY_DOMAIN`)
 every name's worker fetches the verifier from the bare domain
-(`https://dash.site/dash-sites-verifier-<hash>.js`, CORS-enabled), so the
+(`https://dash.site/dash-sites-verifier-<hash>.js` and `….wasm.br`, CORS-enabled), so the
 browser downloads it once for every name: until the domain is on the PSL all
 names are one site, which is how browsers partition their HTTP cache. The
 landing page starts that download when someone focuses its name box, and the
@@ -479,7 +489,7 @@ queries for browsers.
      dishonest or compromised host could send a different worker, to new
      visitors or as an update. What narrows this: the shell is the same for
      every name and built reproducibly from the repository; `sw.js` (about
-     30 KB) contains the SHA-256 of the verifier and refuses to run one that
+     40 KB) contains the SHA-256 of the verifier's files and refuses to run one that
      does not match, so `sw.js` is the only file whose honesty matters, and
      browsers replace an installed worker only when `sw.js` itself changes;
      `shell.json` beside it lists the SHA-256 of each file for anyone

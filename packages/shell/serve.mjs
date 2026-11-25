@@ -13,7 +13,7 @@ createServer((req, res) => {
   const file = scripts.has(name) ? name : 'index.html';
   const path = join(dist, file);
   res.writeHead(200, {
-    'Content-Type': file === 'index.html' ? 'text/html; charset=utf-8' : 'text/javascript; charset=utf-8',
+    'Content-Type': file === 'index.html' ? 'text/html; charset=utf-8' : file.endsWith('.br') ? 'application/octet-stream' : 'text/javascript; charset=utf-8',
     'Content-Length': statSync(path).size,
     'Cache-Control': file.startsWith('dash-sites-verifier-') ? 'public, max-age=31536000, immutable' : 'no-cache',
     'X-Content-Type-Options': 'nosniff',
