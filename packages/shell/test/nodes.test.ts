@@ -94,7 +94,7 @@ function fakeReader(fail?: Error): PlatformReader {
     if (fail) throw fail;
     return { value: undefined, meta: { height: 1 } } as never;
   };
-  return { getDomain: answer, getSite: answer, getChunks: async () => (fail ? Promise.reject(fail) : new Map()) };
+  return { getDomain: answer, getName: answer, getChunks: async () => (fail ? Promise.reject(fail) : new Map()) };
 }
 
 describe('unpinOnFailure', () => {
@@ -106,7 +106,7 @@ describe('unpinOnFailure', () => {
 
   it('unpins on a failure and passes the failure on', async () => {
     const unpin = vi.fn(async () => fakeReader());
-    await expect(unpinOnFailure(fakeReader(new Error('proof did not verify')), unpin).getSite('o', 'd')).rejects.toThrow(/proof/);
+    await expect(unpinOnFailure(fakeReader(new Error('proof did not verify')), unpin).getName('alice')).rejects.toThrow(/proof/);
     expect(unpin).toHaveBeenCalledOnce();
   });
 
