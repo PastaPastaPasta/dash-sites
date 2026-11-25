@@ -1,4 +1,4 @@
-import { contentTypeFor, loadManifest, parseContentUri, readFile, utf8, type ChunkSource, type DomainRecord, type Proved, type SiteRecord } from '@dash-sites/core';
+import { contentTypeFor, ElsewhereError, loadManifest, parseContentUri, readElsewhere, readFile, utf8, type ChunkSource, type DomainRecord, type PlaceFetchers, type Proved, type SiteRecord } from '@dash-sites/core';
 import type { SiteAsset } from '../assets.js';
 import { imagePaths, PAGE_MODEL_PATH, readPageModel, type PageModel } from './model.js';
 
@@ -14,8 +14,17 @@ export class ReopenError extends Error {
   }
 }
 
+export interface PublishedPage {
+  model: PageModel;
+  assets: SiteAsset[];
+  /** Images the site keeps outside Platform: the hash of each and the places it lists. */
+  outside: Array<{ sha256: string; places: string[] }>;
+  /** Images kept outside Platform that none of their places served. */
+  lost: string[];
+}
+
 /** Reads the page model and images of the site published under `domain`, as the editor saved them. */
-export async function readPublishedPage(source: PublishedSource, domain: DomainRecord): Promise<{ model: PageModel; assets: SiteAsset[] }> {
+export async function readPublishedPage(source: PublishedSource, domain: DomainRecord, places: PlaceFetchers = {}): Promise<PublishedPage> {
   const name = `${domain.label.toLowerCase()}.dash`;
   const site = (await source.getSite(domain.ownerId, domain.id)).value;
   if (!site || site.updatedAt < domain.transferredAt) throw new ReopenError(`${name} has no site.`);
@@ -32,10 +41,19 @@ export async function readPublishedPage(source: PublishedSource, domain: DomainR
   }
   const model = readPageModel(parsed);
   const assets: SiteAsset[] = [];
+  const outside: PublishedPage['outside'] = [];
+  const lost: string[] = [];
   for (const path of imagePaths(model)) {
-    if (!manifest.files[path]) continue;
-    const { bytes } = await readFile(manifest, path, chunks);
-    assets.push({ path, type: contentTypeFor(path), bytes });
+    const entry = manifest.files[path];
+    if (!entry) continue;
+    try {
+      const { bytes } = await readFile(manifest, path, chunks, (at, file) => readElsewhere(at, file, places));
+      assets.push({ path, type: contentTypeFor(path), bytes });
+      if (entry.src) outside.push({ sha256: entry.sha256, places: entry.src });
+    } catch (error) {
+      if (!(error instanceof ElsewhereError)) throw error;
+      lost.push(path);
+    }
   }
-  return { model, assets };
+  return { model, assets, outside, lost };
 }

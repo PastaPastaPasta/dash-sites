@@ -9,6 +9,7 @@ import { BLOCK_TYPES, newBlock, tidyPageModel, type Block, type BlockType, type 
 import { pageStylesheet, renderSite, viewBlock } from '../page/render.js';
 import { costSplit } from '../page/cost.js';
 import { siteAssets } from '../assets.js';
+import { keepOutside } from '../outside.js';
 import { toReact } from './react-view.js';
 import { ImageField, imageUrl, useAssets } from './image-field.js';
 import { EDITOR_CSS, scopeCss } from './style.js';
@@ -128,7 +129,7 @@ const fromPuck = (data: Data, theme: Theme): PageModel => tidyPageModel({ theme,
 
 function Meter({ model, siteName }: { model: PageModel; siteName: string }) {
   useAssets();
-  const split = costSplit(renderSite(model, siteName, siteAssets()));
+  const split = costSplit(keepOutside(renderSite(model, siteName, siteAssets())));
   if (!split) return <span className="ed-cost">Empty page</span>;
   return (
     <span className="ed-cost" aria-live="polite" title="Upper estimate for publishing this page from scratch">

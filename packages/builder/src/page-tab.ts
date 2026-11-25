@@ -1,6 +1,7 @@
-import { formatDash, networkConfig, parseName, type Network, type SiteFile } from '@dash-sites/core';
+import { formatDash, networkConfig, parseName, type Network, type PlaceFetchers, type SiteFile } from '@dash-sites/core';
 import type { EvoReader } from '@dash-sites/core/evo';
 import { onSiteAssetsChange, setSiteAssets, siteAssets } from './assets.js';
+import { keepOutside, onOutsideChange, outsidePlaces, rememberOutside } from './outside.js';
 import { BLOCKS } from './page/blocks.js';
 import { costSplit, fileCredits, sizeText, type CostSplit } from './page/cost.js';
 import { loadPageDraft, savePageDraft } from './page/draft.js';
@@ -14,6 +15,8 @@ export interface PageTabOptions {
   network: Network;
   storage: KeyValue | undefined;
   siteName(): string;
+  /** How files kept outside Platform are fetched when a published page is opened again. */
+  places: PlaceFetchers;
   /** Called whenever the page or its images change. */
   onChange(): void;
 }
@@ -34,10 +37,11 @@ export function pageFiles(siteName: string): SiteFile[] {
 function costText(split: CostSplit | undefined): string {
   if (!split) return '';
   const images = split.imageCount === 0 ? 'no images' : `${split.imageCount === 1 ? 'one image' : `${split.imageCount} images`} (${sizeText(split.imageBytes)}) about ${formatDash(split.images)}`;
-  return `At most about ${formatDash(split.total)}: text about ${formatDash(split.text)}, ${images}.`;
+  const outside = split.outsideCount === 0 ? '' : ` ${split.outsideCount === 1 ? 'One image is kept outside Platform and costs' : `${split.outsideCount} images are kept outside Platform and cost`} nothing to store on it.`;
+  return `At most about ${formatDash(split.total)}: text about ${formatDash(split.text)}, ${images}.${outside}`;
 }
 
-const pageCost = (): CostSplit | undefined => costSplit(pageFiles(options.siteName()));
+const pageCost = (): CostSplit | undefined => costSplit(keepOutside(pageFiles(options.siteName())));
 
 function save(): void {
   const saved = savePageDraft(options.storage, model, siteAssets());
@@ -87,7 +91,7 @@ function render(): void {
       const name = document.createElement('span');
       name.textContent = path;
       const size = document.createElement('span');
-      size.textContent = `${sizeText(asset.bytes.length)}, ${formatDash(fileCredits(asset))}`;
+      size.textContent = `${sizeText(asset.bytes.length)}, ${outsidePlaces(asset.bytes).length > 0 ? 'outside Platform' : formatDash(fileCredits(asset))}`;
       item.append(name, size);
       return [item];
     }),
@@ -138,10 +142,12 @@ async function reopen(input: string): Promise<void> {
     });
     const domain = (await connected.getDomain(name.normalized)).value;
     if (!domain) throw new Error(`${name.label}.dash is not registered on ${options.network}.`);
-    const opened = await readPublishedPage(connected, domain);
+    const opened = await readPublishedPage(connected, domain, options.places);
+    for (const file of opened.outside) rememberOutside(file.sha256, file.places);
     setSiteAssets(opened.assets);
     setPageModel(opened.model);
-    status.textContent = `Opened the page published at ${domain.label.toLowerCase()}.dash. Publishing again stores only what changed.`;
+    const lost = opened.lost.length === 0 ? '' : ` ${opened.lost.length === 1 ? 'One image is' : `${opened.lost.length} images are`} kept outside Platform and could not be fetched (${opened.lost.join(', ')}); add ${opened.lost.length === 1 ? 'it' : 'them'} again in the editor.`;
+    status.textContent = `Opened the page published at ${domain.label.toLowerCase()}.dash. Publishing again stores only what changed.${lost}`;
   } catch (error) {
     status.textContent = message(error);
   } finally {
@@ -159,6 +165,7 @@ export function mountPageTab(given: PageTabOptions): void {
     render();
     options.onChange();
   });
+  onOutsideChange(render);
   render();
   $('edit-page').addEventListener('click', () => void openEditor());
   $('clear-page').addEventListener('click', () => {

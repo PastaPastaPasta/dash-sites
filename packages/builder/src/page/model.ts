@@ -186,7 +186,7 @@ export function serializePageModel(model: PageModel): string {
   });
 }
 
-export function emptyPageModel(theme: Theme = 'paper'): PageModel {
+export function emptyPageModel(theme: Theme = 'auto'): PageModel {
   return { v: PAGE_MODEL_VERSION, theme, pages: { '/': [] } };
 }
 

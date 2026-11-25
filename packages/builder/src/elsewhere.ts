@@ -1,4 +1,5 @@
 import {
+  concat,
   fetchPinned,
   httpsFetcher,
   IPFS_GLOBAL,
@@ -6,6 +7,7 @@ import {
   IPFS_WAIT_MS,
   parsePlace,
   PLACE_IDLE_MS,
+  sha256,
   sha256Hex,
   toHex,
   tryPlace,
@@ -42,9 +44,12 @@ export const BUCKET_CORS = (origin: string): string =>
 const encodeSegment = (segment: string): string => encodeURIComponent(segment).replace(/[!*'()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 const encodeKey = (key: string): string => key.split('/').map(encodeSegment).join('/');
 
-async function hmac(key: Uint8Array, message: string): Promise<Uint8Array> {
-  const imported = await crypto.subtle.importKey('raw', key as BufferSource, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return new Uint8Array(await crypto.subtle.sign('HMAC', imported, utf8.encode(message) as BufferSource));
+/** HMAC-SHA256, without `crypto.subtle`, which a page not served over HTTPS does not have. */
+function hmac(key: Uint8Array, message: string): Uint8Array {
+  const block = new Uint8Array(64);
+  block.set(key.length > 64 ? sha256(key) : key);
+  const inner = sha256(concat([block.map((byte) => byte ^ 0x36), utf8.encode(message)]));
+  return sha256(concat([block.map((byte) => byte ^ 0x5c), inner]));
 }
 
 export interface SignedRequest {
@@ -73,8 +78,8 @@ export async function signS3(request: SignedRequest): Promise<string> {
   const scope = `${day}/${request.region}/s3/aws4_request`;
   const toSign = ['AWS4-HMAC-SHA256', stamp, scope, sha256Hex(utf8.encode(canonical))].join('\n');
   let key = utf8.encode(`AWS4${request.secretAccessKey}`);
-  for (const part of [day, request.region, 's3', 'aws4_request']) key = await hmac(key, part);
-  return `AWS4-HMAC-SHA256 Credential=${request.accessKeyId}/${scope},SignedHeaders=${names.join(';')},Signature=${toHex(await hmac(key, toSign))}`;
+  for (const part of [day, request.region, 's3', 'aws4_request']) key = hmac(key, part);
+  return `AWS4-HMAC-SHA256 Credential=${request.accessKeyId}/${scope},SignedHeaders=${names.join(';')},Signature=${toHex(hmac(key, toSign))}`;
 }
 
 function httpsBase(value: string, what: string): string {
@@ -132,7 +137,9 @@ export async function uploadToPinata(jwt: string, file: OutsideFile, options: { 
   return place.uri;
 }
 
+/** The IPFS client rejects promises nobody awaits when it abandons a lookup; they are not failures of a fetch. */
 const IPFS_WORKER = `
+self.addEventListener('unhandledrejection', (event) => event.preventDefault());
 const ready = self.${IPFS_GLOBAL}.createVerifiedFetch({ gateways: [] });
 self.postMessage({ started: true });
 self.onmessage = async ({ data: { id, uri, size, waitMs, idleMs } }) => {

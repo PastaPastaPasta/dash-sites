@@ -4,6 +4,7 @@ const known = new WeakMap<Uint8Array, bigint>();
 
 /** What storing one file costs on its own: its chunks, without the site record or the manifest. */
 export function fileCredits(file: SiteFile): bigint {
+  if (file.src) return 0n;
   const cached = known.get(file.bytes);
   if (cached !== undefined) return cached;
   const bundle = buildSite([{ path: '/f', bytes: file.bytes, type: file.type ?? 'application/octet-stream' }]);
@@ -20,6 +21,8 @@ export interface CostSplit {
   images: bigint;
   imageCount: number;
   imageBytes: number;
+  /** Images kept outside Platform, which cost nothing to store on it. */
+  outsideCount: number;
 }
 
 const isImage = (file: SiteFile): boolean => (file.type ?? '').startsWith('image/');
@@ -34,7 +37,8 @@ export function costSplit(files: SiteFile[]): CostSplit | undefined {
     if (error instanceof PackError) return undefined;
     throw error;
   }
-  const pictures = files.filter(isImage);
+  const all = files.filter(isImage);
+  const pictures = all.filter((file) => !file.src);
   const images = pictures.reduce((sum, file) => sum + fileCredits(file), 0n);
   return {
     total,
@@ -42,6 +46,7 @@ export function costSplit(files: SiteFile[]): CostSplit | undefined {
     text: total > images ? total - images : 0n,
     imageCount: pictures.length,
     imageBytes: pictures.reduce((sum, file) => sum + file.bytes.length, 0),
+    outsideCount: all.length - pictures.length,
   };
 }
 

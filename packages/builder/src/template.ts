@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 import { utf8, type SiteFile } from '@dash-sites/core';
 
-export type Theme = 'paper' | 'night' | 'signal';
+export type Theme = 'auto' | 'paper' | 'night' | 'signal';
 
 export interface PageLink {
   label: string;
@@ -27,6 +27,11 @@ export interface PageDraft {
 export const EMPTY_DRAFT: PageDraft = { title: '', tagline: '', body: '', links: [], theme: 'paper' };
 
 export const THEMES: Record<Theme, { label: string; css: string }> = {
+  /** Follows each visitor's light or dark setting. One flat rule, because the page's stylesheet is filtered rule by rule. */
+  auto: {
+    label: 'Auto',
+    css: ':root{color-scheme:light dark;--bg:light-dark(#f6f7f9,#0d1420);--fg:light-dark(#141a22,#e9eef6);--muted:light-dark(#5b6577,#93a1b5);--line:light-dark(#dde2ea,#243247);--accent:light-dark(#0b5cad,#6cc2ff)}body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}h1{font-weight:700;letter-spacing:-.03em}',
+  },
   paper: {
     label: 'Paper',
     css: ':root{--bg:#f6f4ef;--fg:#1c1b19;--muted:#6b675e;--line:#dcd7cb;--accent:#0b5cad}body{font-family:Georgia,"Iowan Old Style","Times New Roman",serif}h1{font-weight:400;letter-spacing:-.02em}',

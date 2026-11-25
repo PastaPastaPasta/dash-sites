@@ -90,7 +90,7 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
       field('Region', bucket.region, 'auto on R2'),
       field('Access key ID', bucket.accessKeyId),
       field('Secret access key', bucket.secretAccessKey),
-      field('Public address of the bucket', bucket.publicUrl, 'a custom domain you connected to it'),
+      field('Public address', bucket.publicUrl, 'the bucket’s custom domain'),
       field('Folder', bucket.prefix, 'optional'),
       el('p', { class: 'hint' }, 'Use a key that may only write to this bucket. It stays in this tab and is not stored or sent anywhere but the bucket.'),
       el('details', {}, el('summary', {}, 'The bucket must allow this page to upload and every site to read'), el('p', { class: 'hint' }, 'Set this as the bucket’s CORS policy:'), el('pre', { class: 'outside-code' }, BUCKET_CORS(options.origin))),

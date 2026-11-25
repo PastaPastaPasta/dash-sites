@@ -74,6 +74,20 @@ summary:where(:not(.ed *)){cursor:pointer;font-size:14px;color:var(--muted)}
 .files li{display:flex;justify-content:space-between;gap:12px;padding:5px 10px;border-bottom:1px solid var(--line)}
 .files li:last-child{border-bottom:0}
 .files span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#outside-panel .chips{margin-top:14px}
+#outside-panel .chips button{font-size:14px;padding:5px 12px}
+.outside-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:0 14px}
+.outside-fields>p,.outside-fields>details{grid-column:1/-1}
+.outside-code{font:12px/1.5 var(--mono);background:var(--field);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:8px 0 0;overflow:auto;white-space:pre}
+.outside-files{max-height:420px;font:inherit;font-size:14px}
+.outside-files li{display:block;padding:10px 12px}
+.outside-head{display:flex;justify-content:space-between;gap:12px;font:13px var(--mono)}
+.outside-head span:last-child{flex:none;color:var(--muted)}
+.outside-places{font-size:13px;color:var(--ok);margin-top:4px;overflow-wrap:anywhere}
+.outside-actions{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-top:8px}
+.outside-actions .inline{flex:1 1 16rem;margin-top:0}
+.outside-actions button.second{padding:6px 11px;font-size:13.5px}
+.outside-files .error{margin:6px 0 0;font-size:13px}
 progress{width:100%;height:8px;margin-top:14px;accent-color:var(--blue)}
 .result{margin-top:16px;padding:14px 16px;border-radius:10px;background:color-mix(in srgb,var(--ok) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--ok) 45%,transparent)}
 .result p{margin:0}
@@ -82,6 +96,6 @@ progress{width:100%;height:8px;margin-top:14px;accent-color:var(--blue)}
 .browser{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:0 18px 50px -24px rgb(12 30 51 / .45)}
 .bar{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);font:13px var(--mono);color:var(--muted);overflow:hidden;white-space:nowrap}
 .lock{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:none}
-iframe{display:block;width:100%;height:min(70vh,640px);border:0;background:#fff}
+iframe{display:block;width:100%;height:min(70vh,640px);border:0;background:Canvas}
 @media (max-width:999px){iframe{height:420px}}
 @media (prefers-reduced-motion:no-preference){.address span{transition:color .2s}}

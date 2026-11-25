@@ -18,6 +18,10 @@ import type { EvoWriter } from '@dash-sites/core/evo';
 import { AutoSignOut, type SignOutReason } from './sign-out.js';
 import { allowanceText, clearSession, connectionId, countdown, loadSession, qrShape, quietly, saveSession, type KeyValue } from './wallet.js';
 import { normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
+import { browserFetchers } from './elsewhere.js';
+import { keepOutside, loadOutside, onOutsideChange } from './outside.js';
+import { mountOutsidePanel } from './outside-panel.js';
+import { fileCredits, sizeText } from './page/cost.js';
 import { mountPageTab, pageFiles, suggestReopen } from './page-tab.js';
 
 declare const __GATEWAY_DOMAIN__: string;
@@ -64,10 +68,11 @@ const autoSignOut = new AutoSignOut({ idleMs: IDLE_SIGN_OUT_MS, signOut: (reason
 
 const label = (): string => chosen?.label.toLowerCase() ?? 'yourname';
 
-function files(): SiteFile[] {
-  if (mode === 'upload') return upload;
-  return pageFiles(`${label()}.dash`);
-}
+let outsidePanel: { show(files: SiteFile[]): void } | undefined;
+
+/** The site as made, before any of its files are marked as kept outside Platform. */
+const madeFiles = (): SiteFile[] => (mode === 'upload' ? upload : pageFiles(`${label()}.dash`));
+const files = (): SiteFile[] => keepOutside(madeFiles());
 
 function setLocked(id: string, locked: boolean): void {
   $(id).toggleAttribute('inert', locked);
@@ -84,7 +89,9 @@ function refresh(): void {
   setLocked('step-publish', !writer || !chosen);
   $<HTMLButtonElement>('signout').disabled = publishing || working > 0;
 
-  const current = files();
+  const made = madeFiles();
+  outsidePanel?.show(made);
+  const current = keepOutside(made);
   bundle = undefined;
   $('content-error').textContent = '';
   if (current.length > 0) {
@@ -102,7 +109,9 @@ function refresh(): void {
   } else {
     const kb = Math.max(1, Math.round(bundle.stats.storedBytes / 1024));
     const noIndex = bundle.manifest.files['/index.html'] ? '' : ' There is no index.html at the top, so the home page will be empty.';
-    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs at most about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${noIndex}`;
+    const { elsewhere } = bundle.stats;
+    const outside = elsewhere.files === 0 ? '' : ` ${elsewhere.files === 1 ? 'One file' : `${elsewhere.files} files`} (${sizeText(elsewhere.bytes)}) ${elsewhere.files === 1 ? 'is' : 'are'} kept outside Platform.`;
+    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs at most about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${outside}${noIndex}`;
   }
   const button = $<HTMLButtonElement>('publish');
   button.disabled = !bundle || !chosen || publishing;
@@ -115,7 +124,7 @@ function refresh(): void {
 function renderPreview(): void {
   const frame = $<HTMLIFrameElement>('frame');
   const html = previewHtml(files());
-  frame.srcdoc = html ?? '<body style="font:15px system-ui;color:#667;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body>';
+  frame.srcdoc = html ?? '<html style="color-scheme:light dark"><body style="font:15px system-ui;color:GrayText;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body></html>';
 }
 
 async function refreshBalance(): Promise<void> {
@@ -612,7 +621,11 @@ function takeHandoff(): void {
 function start(): void {
   $('net').textContent = NETWORK;
   $('net-note').textContent = `This builder publishes on ${NETWORK}.`;
-  mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, onChange: refresh });
+  const places = browserFetchers();
+  loadOutside(storage('localStorage'));
+  mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, places, onChange: refresh });
+  outsidePanel = mountOutsidePanel($('outside-panel'), { origin: location.origin, price: (file) => `about ${formatDash(fileCredits(file))}`, size: sizeText, fetchers: places });
+  onOutsideChange(refresh);
 
   $<HTMLFormElement>('signin').addEventListener('submit', (event) => {
     event.preventDefault();

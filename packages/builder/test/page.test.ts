@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
-import { buildSite, utf8, type DomainRecord, type SiteRecord } from '@dash-sites/core';
+import { buildSite, sha256Hex, utf8, type DomainRecord, type SiteRecord } from '@dash-sites/core';
 import { cleanRichText, plainText, toHtml, h } from '../src/page/markup.js';
 import { BLOCKS } from '../src/page/blocks.js';
 import { emptyPageModel, newBlock, PAGE_MODEL_PATH, readPageModel, serializePageModel, tidyPageModel, type PageModel } from '../src/page/model.js';
@@ -233,6 +233,33 @@ describe('cost', () => {
     expect(split.text).toBeGreaterThan(60_000_000n);
     expect(costSplit([])).toBeUndefined();
   });
+
+  it('counts nothing for an image kept outside Platform', () => {
+    const files = renderSite(reference, 'alice.dash', [picture]);
+    const outside = costSplit(files.map((file) => (file.path === picture.path ? { ...file, src: ['https://media.example.com/photo.webp'] } : file)))!;
+    expect(outside.imageCount).toBe(0);
+    expect(outside.outsideCount).toBe(1);
+    expect(outside.images).toBe(0n);
+    expect(outside.total).toBeLessThan(costSplit(files)!.total - 60_000n * 27_000n);
+  });
+});
+
+describe('looks', () => {
+  it('starts a new page on the look that follows each visitor’s light or dark setting', () => {
+    expect(emptyPageModel().theme).toBe('auto');
+    const html = renderHomePage({ ...reference, theme: 'auto' }, 'alice.dash');
+    expect(html).toContain('color-scheme:light dark');
+    expect(html).toMatch(/--bg:light-dark\(#[0-9a-f]{6},#[0-9a-f]{6}\)/);
+    expect(html).not.toContain('@media');
+  });
+
+  it('keeps a look the author picked as it is for every visitor', () => {
+    for (const theme of ['paper', 'night', 'signal'] as const) {
+      const html = renderHomePage({ ...reference, theme }, 'alice.dash');
+      expect(html).not.toContain('light-dark(');
+      expect(html).not.toContain('color-scheme');
+    }
+  });
 });
 
 describe('drafts', () => {
@@ -291,6 +318,20 @@ describe('reopening a published page', () => {
     const opened = await readPublishedPage(source(renderSite(reference, 'alice.dash', [picture])), domain);
     expect(opened.model).toEqual(tidyPageModel(reference));
     expect(opened.assets).toEqual([picture]);
+  });
+
+  it('reads images kept outside Platform from their places, and says which ones are gone', async () => {
+    const place = 'https://media.example.com/photo.webp';
+    const files = renderSite(reference, 'alice.dash', [picture]).map((file) => (file.path === picture.path ? { ...file, src: [place] } : file));
+    const opened = await readPublishedPage(source(files), domain, { https: async () => picture.bytes });
+    expect(opened.assets).toEqual([picture]);
+    expect(opened.outside).toEqual([{ sha256: sha256Hex(picture.bytes), places: [place] }]);
+    expect(opened.lost).toEqual([]);
+
+    const gone = await readPublishedPage(source(files), domain, { https: async () => new Uint8Array(picture.bytes.length) });
+    expect(gone.model).toEqual(tidyPageModel(reference));
+    expect(gone.assets).toEqual([]);
+    expect(gone.lost).toEqual([picture.path]);
   });
 
   it('says why a site cannot be opened', async () => {
