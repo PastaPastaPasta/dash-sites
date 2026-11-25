@@ -273,12 +273,21 @@ file is instead of holding it:
   a site may store on Platform.
 
 **Staying compatible.** A version 2 reader ignores keys it does not know (in
-the manifest and in a file entry), skips places whose kind it does not know,
-and refuses only the files whose `enc` it does not know. So a later shell can
-add a kind of place, a hash per piece for streaming, or another encoding, and
-an older shell keeps serving everything it still understands. A change that
-older readers must not ignore raises `v`. Version 1 stays strict. A writer
-only emits what its own version reads.
+the manifest and in a file entry) and skips places whose kind it does not
+know. It refuses only the files it cannot read, each with a 502 of its own:
+
+- a file whose `enc` it does not know;
+- a file whose `src` is in a form it does not know: not a list of 1 to 8
+  different URIs, given together with parts or an `enc`, or for a file that is
+  empty or larger than 64 MB;
+- a file whose parts do not add up to its size, which is how a file stored
+  under a key added later looks to it.
+
+So a later shell can add a kind of place, a hash per piece for streaming,
+another encoding, or another way to store a file, and an older shell keeps
+serving everything it still understands. A change that older readers must not
+ignore raises `v`. Version 1 stays strict. A writer only emits what its own
+version reads, and refuses to write an entry it would refuse to read.
 
 ## 4. Resolution
 
@@ -615,6 +624,20 @@ queries for browsers.
   it is run only when its SHA-256 matches the constant the worker was built
   with; an npm mirror can refuse to serve it, which costs IPFS places and
   nothing else.
+- **The IPFS client runs inside the worker**: it is about 1.2 MB of
+  third-party code (Helia and libp2p), far more than the rest of the worker,
+  and it runs with the worker's own authority, in the same place that decides
+  which bytes are served. Its output is still checked against the proved
+  SHA-256, so a wrong answer from it is refused. A flaw in it that lets a
+  hostile provider or routing service run code, though, would run as the
+  worker of that one name: it could serve that name's visitors bytes the
+  owner never published until the worker is replaced. Three things bound
+  this. The worker loads the client only for a site that lists an IPFS place,
+  so a site without one never runs it. Each name is its own origin with its
+  own worker, so other names are out of reach. And the client is pinned by
+  hash, so it changes only when the shell does. The alternative is a shell
+  that fetches HTTPS places only and leaves `ipfs://` places to a later
+  version; a site would then need an HTTPS place for every file.
 - **Origin isolation**: one site per subdomain, so `localStorage`, IndexedDB,
   and permissions are per name. The canonical-host redirect keeps a name from
   having several origins.

@@ -40,17 +40,19 @@ function costText(split: CostSplit | undefined): string {
   if (!split) return '';
   const images = split.imageCount === 0 ? 'no images' : `${split.imageCount === 1 ? 'one image' : `${split.imageCount} images`} (${sizeText(split.imageBytes)}) about ${formatDash(split.images)}`;
   const outside = split.outsideCount === 0 ? '' : ` ${split.outsideCount === 1 ? 'One image is kept outside Platform and costs' : `${split.outsideCount} images are kept outside Platform and cost`} nothing to store on it.`;
-  return `At most about ${formatDash(split.total)}: text about ${formatDash(split.text)}, ${images}.${outside}`;
+  return `About ${formatDash(split.total)}: text about ${formatDash(split.text)}, ${images}.${outside}`;
 }
+
+const DRAFT_NOTES = {
+  saved: 'Your draft is kept in this browser.',
+  'without-images': 'Your draft is kept in this browser, but its images are too large to keep: if you reload, add them again.',
+  failed: 'This browser does not keep drafts, so the page lasts only while this tab is open.',
+  newer: 'This browser holds a draft made with a newer builder, and it is left as it is. Reload to get the latest builder. A page built here lasts only while this tab is open.',
+};
 
 function save(): void {
   const saved = savePageDraft(options.storage, model, siteAssets());
-  draftNote =
-    saved === 'saved'
-      ? 'Your draft is kept in this browser.'
-      : saved === 'without-images'
-        ? 'Your draft is kept in this browser, but its images are too large to keep: if you reload, add them again.'
-        : 'This browser does not keep drafts, so the page lasts only while this tab is open.';
+  draftNote = DRAFT_NOTES[saved];
 }
 
 function changed(): void {
@@ -151,8 +153,9 @@ async function reopen(input: string): Promise<void> {
     setPageModel(opened.model);
     const outside = opened.outside.length - trusted.length;
     const unkept = outside === 0 ? '' : ` ${outside === 1 ? 'One image is' : `${outside} images are`} kept outside Platform. Publishing would store ${outside === 1 ? 'it' : 'them'} on Platform: to keep ${outside === 1 ? 'it' : 'them'} outside, sign in as the owner and open the site again.`;
+    const dropped = trusted.length === 0 || opened.unknownPlaces === 0 ? '' : ` Its images also list ${opened.unknownPlaces === 1 ? 'a place' : `${opened.unknownPlaces} places`} of a kind this builder does not know, and publishing from here leaves ${opened.unknownPlaces === 1 ? 'it' : 'them'} out: reload to get the latest builder first.`;
     const lost = opened.lost.length === 0 ? '' : ` ${opened.lost.length === 1 ? 'One image is' : `${opened.lost.length} images are`} kept outside Platform and could not be fetched (${opened.lost.join(', ')}); add ${opened.lost.length === 1 ? 'it' : 'them'} again in the editor.`;
-    status.textContent = `Opened the page published at ${opened.name}. Publishing again stores only what changed.${unkept}${lost}`;
+    status.textContent = `Opened the page published at ${opened.name}. Publishing again stores only what changed.${unkept}${dropped}${lost}`;
   } catch (error) {
     status.textContent = message(error);
   } finally {
@@ -164,6 +167,7 @@ export function mountPageTab(given: PageTabOptions): void {
   options = given;
   const draft = loadPageDraft(options.storage);
   model = draft.model;
+  if (draft.newer) draftNote = DRAFT_NOTES.newer;
   setSiteAssets(draft.assets);
   onSiteAssetsChange(changed);
   onOutsideChange(render);

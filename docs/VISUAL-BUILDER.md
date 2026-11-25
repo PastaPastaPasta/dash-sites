@@ -199,7 +199,8 @@ is, so that a later builder can change the format without guessing.
 
 | What | Where its version is | Rule |
 | --- | --- | --- |
-| Page model | `v` in `/dash-site.json` (1 today) | Any change to the model's shape raises `v`. A builder opens every version up to its own and saves in its own. A page from a newer builder is refused with a message to reload, never half-read |
+| Page model | `v` in `/dash-site.json` (1 today) | Any change to the model's shape raises `v`. A builder opens every version up to its own and saves in its own. A page from a newer builder is refused with a message to reload, never half-read. A draft from a newer builder is left in the browser as it is, and nothing is saved over it |
+| Draft images and remembered places | None: `dash-sites.page-images` and `dash-sites.outside` in the browser | Both are caches of what the page and the published site already say. An entry a builder cannot read is skipped, and nothing is lost that publishing or reopening does not bring back |
 | Published HTML | None of its own | It is an output of the model. Republishing from a newer builder rewrites it; until then it stays exactly as published |
 | Manifest | `v` (1, or 2 when a file is kept outside Platform) | Version 2 readers ignore what they do not know ([BULK-STORAGE.md](BULK-STORAGE.md)). Only a change older readers must not ignore raises it |
 | Widgets (proposed, §5.2) | A `v` attribute on each tag, and the version in the write page's address and messages | A site keeps the widget script it was published with. The write site answers every version it ever shipped |

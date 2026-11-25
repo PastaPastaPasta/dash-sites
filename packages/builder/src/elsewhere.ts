@@ -9,6 +9,7 @@ import {
   PLACE_IDLE_MS,
   sha256,
   sha256Hex,
+  SLOWEST_BYTES_PER_SECOND,
   toHex,
   tryPlace,
   utf8,
@@ -204,10 +205,18 @@ export function ipfsInWorker(options: { waitMs?: number; idleMs?: number; fetch?
       throw error;
     });
     const running = await worker;
+    const waitMs = options.waitMs ?? IPFS_WAIT_MS;
+    const idleMs = options.idleMs ?? PLACE_IDLE_MS;
     return new Promise((resolve, reject) => {
       const id = next++;
-      waiting.set(id, { resolve, reject });
-      running.postMessage({ id, uri, size, waitMs: options.waitMs ?? IPFS_WAIT_MS, idleMs: options.idleMs ?? PLACE_IDLE_MS });
+      const timer = setTimeout(() => waiting.get(id)?.reject(new Error('the IPFS client did not answer')), waitMs + idleMs + (size / SLOWEST_BYTES_PER_SECOND) * 1000 + 5000);
+      const settle = <T>(done: (value: T) => void) => (value: T) => {
+        clearTimeout(timer);
+        waiting.delete(id);
+        done(value);
+      };
+      waiting.set(id, { resolve: settle(resolve), reject: settle(reject) });
+      running.postMessage({ id, uri, size, waitMs, idleMs });
     });
   };
 }

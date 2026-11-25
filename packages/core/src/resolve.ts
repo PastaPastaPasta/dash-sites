@@ -1,6 +1,7 @@
 import { parseContentUri, type ContentRef } from './content.js';
 import { parseName } from './names.js';
 import type { DomainRecord, PlatformReader, ProofMeta, SiteRecord } from './platform.js';
+import type { ChunkSource } from './reader.js';
 
 interface Named {
   normalized: string;
@@ -47,6 +48,9 @@ export async function resolveName(reader: PlatformReader, input: string): Promis
   if (!content) return { status: 'unsupported', ...base, site: site.value };
   return { status: 'ok', ...base, site: site.value, content };
 }
+
+/** Where the chunks of a resolved site are stored. Every reader of a site's files asks through this. */
+export const siteChunks = (reader: PlatformReader, resolution: Extract<Resolution, { status: 'ok' }>): ChunkSource => (hashes) => reader.getChunks(resolution.ownerId, hashes);
 
 /**
  * What a host tells a site about a name: the answer of `site.json` and `resolve/<name>` under

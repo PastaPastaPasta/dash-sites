@@ -123,6 +123,16 @@ export function readPageModel(value: unknown, options: { repair?: boolean } = {}
   return { v: PAGE_MODEL_VERSION, theme: value.theme as Theme, pages: { '/': blocks } };
 }
 
+/** Rich text cut so that its cleaned form, which closes what the cut left open, still fits. */
+function fitRichText(value: string): string {
+  let keep = Math.min(value.length, MAX_RICH);
+  for (;;) {
+    const clean = cleanRichText(value.slice(0, keep)).trim();
+    if (clean.length <= MAX_RICH) return clean;
+    keep = Math.min(keep - 1, Math.floor((keep * MAX_RICH) / clean.length));
+  }
+}
+
 function tidyValue(field: Field, value: unknown): unknown {
   if (field.kind === 'list') return Array.isArray(value) ? value.slice(0, field.max).map((item) => tidyProps(field.item, item)) : [];
   if (typeof value !== 'string') return '';
@@ -130,7 +140,7 @@ function tidyValue(field: Field, value: unknown): unknown {
     case 'text':
       return value.trim().slice(0, field.max);
     case 'rich':
-      return cleanRichText(value.slice(0, MAX_RICH)).trim();
+      return fitRichText(value);
     case 'url':
       return value.length <= MAX_URL && safeUrl(value) ? value.trim() : '';
     case 'image':

@@ -1,4 +1,4 @@
-import { contentTypeFor, ElsewhereError, loadManifest, parsePlace, readElsewhere, readFile, resolveName, utf8, type ChunkSource, type PlaceFetchers, type PlatformReader } from '@dash-sites/core';
+import { contentTypeFor, ElsewhereError, loadManifest, parsePlace, readElsewhere, readFile, resolveName, siteChunks, utf8, type PlaceFetchers, type PlatformReader } from '@dash-sites/core';
 import type { SiteAsset } from '../assets.js';
 import { imagePaths, PAGE_MODEL_PATH, readPageModel, type PageModel } from './model.js';
 
@@ -20,6 +20,8 @@ export interface PublishedPage {
   outside: Array<{ sha256: string; places: string[] }>;
   /** Images kept outside Platform that none of their places served. */
   lost: string[];
+  /** How many places the images list that are of a kind this version does not know, and so would not publish again. */
+  unknownPlaces: number;
 }
 
 /**
@@ -40,7 +42,7 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
   const name = `${resolution.canonicalLabel}.dash`;
   if (resolution.status === 'no-site') throw new ReopenError(`${name} has no site.`);
   if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') throw new ReopenError(`The site at ${name} is not stored in a way this builder can read.`);
-  const chunks: ChunkSource = (hashes) => reader.getChunks(resolution.ownerId, hashes);
+  const chunks = siteChunks(reader, resolution);
   const manifest = await loadManifest(resolution.content, chunks);
   if (!manifest.files[PAGE_MODEL_PATH]) throw new ReopenError(`The site at ${name} was not made with the page editor, so there is nothing to open. Upload its files instead.`);
   let parsed: unknown;
@@ -53,6 +55,7 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
   const assets: SiteAsset[] = [];
   const outside: PublishedPage['outside'] = [];
   const lost: string[] = [];
+  let unknownPlaces = 0;
   for (const path of imagePaths(model)) {
     const entry = manifest.files[path];
     if (!entry) continue;
@@ -60,11 +63,12 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
       const { bytes } = await readFile(manifest, path, chunks, (at, file) => readElsewhere(at, file, places));
       assets.push({ path, type: contentTypeFor(path), bytes });
       const known = (entry.src ?? []).flatMap((place) => parsePlace(place)?.uri ?? []);
+      unknownPlaces += (entry.src ?? []).length - known.length;
       if (known.length > 0) outside.push({ sha256: entry.sha256, places: known });
     } catch (error) {
       if (!(error instanceof ElsewhereError)) throw error;
       lost.push(path);
     }
   }
-  return { name, ownerId: resolution.ownerId, model, assets, outside, lost };
+  return { name, ownerId: resolution.ownerId, model, assets, outside, lost, unknownPlaces };
 }

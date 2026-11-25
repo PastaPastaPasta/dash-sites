@@ -78,4 +78,14 @@ describe('files kept outside Platform', () => {
     rememberOutside(manifest.files['/photo.webp']!.sha256, manifest.files['/photo.webp']!.src!);
     expect(outsidePlaces(photo)).toEqual([HTTPS, IPFS]);
   });
+
+  it('never hold more places for a file than a site may list', () => {
+    const many = Array.from({ length: 12 }, (_, i) => `${HTTPS}?${i}`);
+    setOutsidePlaces(photo, many);
+    expect(outsidePlaces(photo)).toEqual(many.slice(0, 8));
+    rememberOutside(buildSite(files()).manifest.files['/photo.webp']!.sha256, [IPFS]);
+    expect(outsidePlaces(photo)).toEqual(many.slice(0, 8));
+    expect(() => buildSite(keepOutside(files()))).not.toThrow();
+    expect(readOutside({ ['a'.repeat(64)]: many }).get('a'.repeat(64))).toEqual(many.slice(0, 8));
+  });
 });

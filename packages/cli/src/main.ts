@@ -16,6 +16,7 @@ import {
   decide,
   requireOwnedName,
   resolveName,
+  siteChunks,
   type Network,
   type NetworkConfig,
   type PlatformReader,
@@ -208,7 +209,7 @@ const commands: Record<string, () => Promise<void>> = {
     const reader = await EvoReader.connect(network());
     const resolution = await resolveName(reader, name);
     if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
-    const source = (hashes: string[]) => reader.getChunks(resolution.ownerId, hashes);
+    const source = siteChunks(reader, resolution);
     const manifest = await loadManifest(resolution.content, source);
     const decision = decide(manifest, positionals[2] ?? '/');
     if (decision.kind !== 'file') fail(`no file at ${positionals[2] ?? '/'}`);
@@ -223,7 +224,7 @@ const commands: Record<string, () => Promise<void>> = {
     const reader = await EvoReader.connect(network());
     const resolution = await resolveName(reader, name);
     if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
-    const manifest = await loadManifest(resolution.content, (hashes) => reader.getChunks(resolution.ownerId, hashes));
+    const manifest = await loadManifest(resolution.content, siteChunks(reader, resolution));
     const count = Object.values(manifest.files).filter((file) => file.src).length;
     if (count === 0) return console.log(`${resolution.canonicalLabel}.dash keeps every file on Platform`);
     const good = await checkPlaces(manifest.files, outside(resolution.canonicalLabel).fetchers, (line) => console.log(line));

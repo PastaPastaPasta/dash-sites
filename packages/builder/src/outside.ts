@@ -1,4 +1,4 @@
-import { parsePlace, sha256Hex, type SiteFile } from '@dash-sites/core';
+import { MAX_PLACES, parsePlace, sha256Hex, type SiteFile } from '@dash-sites/core';
 import { quietly, type KeyValue } from './wallet.js';
 
 /**
@@ -32,7 +32,7 @@ export function readOutside(saved: unknown): Map<string, string[]> {
       const parsed = typeof place === 'string' ? parsePlace(place) : undefined;
       return parsed ? [parsed.uri] : [];
     });
-    if (known.length > 0) out.set(hash, [...new Set(known)]);
+    if (known.length > 0) out.set(hash, [...new Set(known)].slice(0, MAX_PLACES));
   }
   return out;
 }
@@ -46,10 +46,10 @@ export function outsidePlaces(bytes: Uint8Array): string[] {
   return kept.get(fileHash(bytes)) ?? [];
 }
 
-/** Sets where a file is kept; an empty list stores it on Platform again. */
+/** Sets where a file is kept, up to as many places as a site may list; an empty list stores it on Platform again. */
 export function setOutsidePlaces(bytes: Uint8Array, places: string[], hash = fileHash(bytes)): void {
   kept.delete(hash);
-  if (places.length > 0) kept.set(hash, [...new Set(places)]);
+  if (places.length > 0) kept.set(hash, [...new Set(places)].slice(0, MAX_PLACES));
   while (kept.size > REMEMBERED) kept.delete(kept.keys().next().value as string);
   quietly(() => storage?.setItem(KEY, JSON.stringify(Object.fromEntries(kept))));
   for (const listener of listeners) listener();

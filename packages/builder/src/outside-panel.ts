@@ -1,4 +1,4 @@
-import { parsePlace, type PlaceFetchers, type SiteFile } from '@dash-sites/core';
+import { MAX_PLACES, parsePlace, type PlaceFetchers, type SiteFile } from '@dash-sites/core';
 import { BUCKET_CORS, browserFetchers, confirmPlaces, readPlaces, uploadToBucket, uploadToPinata, type Bucket, type OutsideFile } from './elsewhere.js';
 import { fileHash, outsidePlaces, setOutsidePlaces } from './outside.js';
 
@@ -58,7 +58,11 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
   const typed = new Map<string, string>();
 
   const field = (label: string, input: HTMLInputElement, hint?: string): HTMLElement => el('label', {}, label, ...(hint ? [el('span', { class: 'soft' }, hint)] : []), input);
-  const text = (placeholder: string, secret = false): HTMLInputElement => el('input', { type: secret ? 'password' : 'text', placeholder, spellcheck: false, autocomplete: 'off', autocapitalize: 'none' });
+  const text = (placeholder: string, secret = false): HTMLInputElement => {
+    const input = el('input', { type: secret ? 'password' : 'text', placeholder, spellcheck: false, autocomplete: 'off', autocapitalize: 'none' });
+    if (secret) for (const ignore of ['data-1p-ignore', 'data-lpignore', 'data-bwignore']) input.setAttribute(ignore, 'true');
+    return input;
+  };
 
   const bucket = {
     endpoint: text('https://<account>.r2.cloudflarestorage.com'),
@@ -151,10 +155,13 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     problems.delete(hash);
     unconfirmed.delete(hash);
     try {
+      const room = MAX_PLACES - outsidePlaces(file.bytes).length;
+      if (room <= 0) throw new Error(`A file can list ${MAX_PLACES} places. Remove one first`);
       if (how === 'address') {
         const { places, unknown } = readPlaces(address);
         if (unknown.length > 0) throw new Error(`${unknown[0]} is not an https:// address or an IPFS CID`);
         if (places.length === 0) throw new Error('Give the address or the IPFS CID of the file');
+        if (places.length > room) throw new Error(`A file can list ${MAX_PLACES} places, and this would make ${MAX_PLACES - room + places.length}`);
         busy.set(hash, 'Asking for the file…');
         render();
         const failed = (await confirmPlaces(asOutside(file), places, fetchers)).find((result) => result.problem);

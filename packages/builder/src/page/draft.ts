@@ -3,7 +3,7 @@ import type { SiteAsset } from '../assets.js';
 import { safeUrl, THEMES, type Theme } from '../template.js';
 import type { KeyValue } from '../wallet.js';
 import { cleanRichText } from './markup.js';
-import { emptyPageModel, IMAGE_PATH, imagePaths, newBlock, readPageModel, serializePageModel, type Block, type PageModel } from './model.js';
+import { emptyPageModel, IMAGE_PATH, imagePaths, newBlock, PAGE_MODEL_VERSION, readPageModel, serializePageModel, type Block, type PageModel } from './model.js';
 
 export const PAGE_DRAFT_KEY = 'dash-sites.page';
 export const PAGE_IMAGES_KEY = 'dash-sites.page-images';
@@ -54,6 +54,8 @@ export interface LoadedDraft {
   assets: SiteAsset[];
   /** Images the draft refers to that this browser did not keep. */
   missingImages: number;
+  /** This browser holds a draft from a newer builder, which is left as it is. */
+  newer: boolean;
 }
 
 function read(store: KeyValue | undefined, key: string): unknown {
@@ -64,8 +66,11 @@ function read(store: KeyValue | undefined, key: string): unknown {
   }
 }
 
+const isNewer = (saved: unknown): boolean => typeof saved === 'object' && saved !== null && Number((saved as { v?: unknown }).v) > PAGE_MODEL_VERSION;
+
 export function loadPageDraft(store: KeyValue | undefined): LoadedDraft {
   const saved = read(store, PAGE_DRAFT_KEY);
+  if (isNewer(saved)) return { model: emptyPageModel(), assets: [], missingImages: 0, newer: true };
   let model: PageModel | undefined;
   if (saved) {
     try {
@@ -76,7 +81,7 @@ export function loadPageDraft(store: KeyValue | undefined): LoadedDraft {
   }
   if (!model) {
     const legacy = modelFromLegacyDraft(read(store, LEGACY_DRAFT_KEY));
-    return { model: legacy ?? emptyPageModel(), assets: [], missingImages: 0 };
+    return { model: legacy ?? emptyPageModel(), assets: [], missingImages: 0, newer: false };
   }
   const stored = read(store, PAGE_IMAGES_KEY);
   const assets: SiteAsset[] = [];
@@ -91,12 +96,16 @@ export function loadPageDraft(store: KeyValue | undefined): LoadedDraft {
       missingImages += 1;
     }
   }
-  return { model, assets, missingImages };
+  return { model, assets, missingImages, newer: false };
 }
 
-/** Keeps the draft in this browser. Images go too when they fit; the result says whether they did. */
-export function savePageDraft(store: KeyValue | undefined, model: PageModel, assets: readonly SiteAsset[]): 'saved' | 'without-images' | 'failed' {
+/**
+ * Keeps the draft in this browser. Images go too when they fit; the result says whether they did.
+ * A draft from a newer builder is never written over: this version cannot read what it would lose.
+ */
+export function savePageDraft(store: KeyValue | undefined, model: PageModel, assets: readonly SiteAsset[]): 'saved' | 'without-images' | 'failed' | 'newer' {
   if (!store) return 'failed';
+  if (isNewer(read(store, PAGE_DRAFT_KEY))) return 'newer';
   try {
     store.setItem(PAGE_DRAFT_KEY, serializePageModel(model));
   } catch {

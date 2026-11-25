@@ -314,7 +314,7 @@ try {
   await row.locator('.outside-places').waitFor();
   check((await row.locator('.outside-places').textContent()) === 'Kept at media.example.com', 'an address that serves the file is kept as its place');
   const after = await panel.textContent('#page-cost');
-  const total = (text) => Number(/about ([\d.]+) DASH/.exec(text)[1]);
+  const total = (text) => Number(/^About ([\d.]+) DASH/.exec(text)[1]);
   check(/one image \([\d.]+ KB\) about 0\.\d{5} DASH\. One image is kept outside Platform/.test(after) && total(after) < total(before) / 2, `and the page costs less: ${after}`);
   check(/outside Platform$/.test(await listed.textContent()), 'the image is listed as kept outside');
   if (shots) await panel.locator('#step-content').screenshot({ path: join(shots, 'outside-address-light.png') });

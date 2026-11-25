@@ -25,13 +25,15 @@ export interface ManifestFile {
   parts: Part[];
   /** Places outside Platform that hold the file, as URIs, tried in order. The file then has no parts. */
   src?: string[];
+  /** Set by a reader for an entry it cannot serve, with the reason. Never written. */
+  unread?: string;
 }
 
 /**
  * Version 2 adds `src`. A version 2 reader ignores keys it does not know, skips places whose kind it
- * does not know, and refuses only the files whose encoding it does not know, so later additions
- * leave older readers serving everything they still understand. A change they must not ignore
- * raises the version.
+ * does not know, and refuses only the files it cannot read: an encoding it does not know, places in
+ * a form it does not know, or bytes it has no parts for. Later additions so leave older readers
+ * serving everything they still understand. A change they must not ignore raises the version.
  */
 export interface Manifest {
   v: 1 | 2;
@@ -86,11 +88,17 @@ export function storedLength(file: ManifestFile): number {
 
 const ENCODING = /^[a-z0-9-]{1,16}$/;
 
-function validatePlaces(value: unknown, path: string): string[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_PLACES) throw new ManifestError(`bad src in ${path}`);
-  if (!value.every(isPlaceUri)) throw new ManifestError(`bad place in ${path}`);
-  if (new Set(value).size !== value.length) throw new ManifestError(`duplicate place in ${path}`);
-  return [...(value as string[])];
+const UNREAD_PLACES = 'lists where it is stored in a form this version cannot read';
+const UNREAD_BOTH = 'is stored outside Platform and on it at once, which this version cannot read';
+const UNREAD_SIZE = 'is larger than this version loads from outside Platform';
+const UNREAD_PARTS = 'is stored in a form this version cannot read';
+
+function placesProblem(file: Record<string, unknown>): string | undefined {
+  const src = file.src;
+  if (!Array.isArray(src) || src.length === 0 || src.length > MAX_PLACES || !src.every(isPlaceUri) || new Set(src).size !== src.length) return UNREAD_PLACES;
+  if ((file.parts as unknown[]).length > 0 || file.enc !== undefined) return UNREAD_BOTH;
+  if (file.size === 0 || (file.size as number) > MAX_ELSEWHERE_FILE_BYTES) return UNREAD_SIZE;
+  return undefined;
 }
 
 export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS): Manifest {
@@ -126,11 +134,10 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
     if (!isHash(file.sha256)) throw new ManifestError(`bad sha256 in ${path}`);
     if (file.enc !== undefined && (strict ? file.enc !== 'gzip' : typeof file.enc !== 'string' || !ENCODING.test(file.enc))) throw new ManifestError(`bad enc in ${path}`);
     if (!Array.isArray(file.parts)) throw new ManifestError(`bad parts in ${path}`);
+    const entry = { type: file.type, size: file.size, sha256: file.sha256, parts: [] };
     if (file.src !== undefined) {
-      const src = validatePlaces(file.src, path);
-      if (file.parts.length > 0 || file.enc !== undefined) throw new ManifestError(`${path} is stored elsewhere and also on Platform`);
-      if (file.size === 0 || file.size > MAX_ELSEWHERE_FILE_BYTES) throw new ManifestError(`bad size in ${path}`);
-      out[path] = { type: file.type, size: file.size, sha256: file.sha256, parts: [], src };
+      const unread = placesProblem(file);
+      out[path] = unread ? { ...entry, unread } : { ...entry, src: [...(file.src as string[])] };
       continue;
     }
     const parts: Part[] = [];
@@ -142,7 +149,11 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
       parts.push([index, offset, length]);
       stored += length;
     }
-    if (file.enc === undefined && stored !== file.size) throw new ManifestError(`size mismatch in ${path}`);
+    if (file.enc === undefined && stored !== file.size) {
+      if (strict) throw new ManifestError(`size mismatch in ${path}`);
+      out[path] = { ...entry, unread: UNREAD_PARTS };
+      continue;
+    }
     if (stored > limits.maxSiteBytes) throw new ManifestError(`file too large: ${path}`);
     total += file.size;
     if (total > limits.maxSiteBytes) throw new ManifestError('site too large');
@@ -153,7 +164,12 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
 
 /** Canonical form: keys sorted, no whitespace, UTF-8. */
 export function encodeManifest(manifest: Manifest): Uint8Array {
-  return utf8.encode(JSON.stringify(sortKeys(validateManifest(manifest))));
+  const valid = validateManifest(manifest);
+  for (const [path, file] of Object.entries(valid.files)) {
+    const unread = manifest.files[path]?.unread ?? file.unread;
+    if (unread) throw new ManifestError(`${path} ${unread}`);
+  }
+  return utf8.encode(JSON.stringify(sortKeys(valid)));
 }
 
 export function decodeManifest(bytes: Uint8Array, limits: Limits = DEFAULT_LIMITS): Manifest {

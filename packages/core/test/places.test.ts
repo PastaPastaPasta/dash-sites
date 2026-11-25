@@ -92,8 +92,9 @@ describe('manifest version 2', () => {
     expect(() => buildSite(elsewhere([`https://media.example.com/${'"'.repeat(1000)}`]))).toThrow(PackError);
   });
 
-  it('rejects a malformed list of places', () => {
-    const { manifest } = buildSite(elsewhere([HTTPS]));
+  it('refuses only the file whose places it cannot read, and never writes one', async () => {
+    const bundle = buildSite(elsewhere([HTTPS]));
+    const { manifest } = bundle;
     const withFile = (patch: Record<string, unknown>) => ({ ...manifest, files: { ...manifest.files, '/b.bin': { ...manifest.files['/b.bin'], ...patch } } });
     for (const patch of [
       { src: [] },
@@ -108,7 +109,12 @@ describe('manifest version 2', () => {
       { size: 0 },
       { size: MAX_ELSEWHERE_FILE_BYTES + 1 },
     ]) {
-      expect(() => validateManifest(withFile(patch)), JSON.stringify(patch).slice(0, 80)).toThrow(ManifestError);
+      const what = JSON.stringify(patch).slice(0, 80);
+      const read = validateManifest(withFile(patch));
+      expect(read.files['/b.bin'], what).toEqual({ type: 'application/octet-stream', size: (patch as { size?: number }).size ?? big.length, sha256: sha256Hex(big), parts: [], unread: expect.any(String) });
+      expect((await readFile(read, '/a.js', chunksOf(bundle))).bytes, what).toEqual(FILES[1]?.bytes);
+      await expect(reading(read, using({ [HTTPS]: big })), what).rejects.toThrow(ContentError);
+      expect(() => encodeManifest(read), what).toThrow(ManifestError);
     }
   });
 });
@@ -138,6 +144,13 @@ describe('forward compatibility', () => {
   it('refuses only the file whose encoding it does not know', async () => {
     const manifest = decodeManifest(canonical(later));
     await expect(readFile(manifest, '/index.html', chunksOf(bundle))).rejects.toThrow(/a form this version cannot read/);
+  });
+
+  it('refuses only the file that is stored in a way added later', async () => {
+    const manifest = decodeManifest(canonical({ ...later, files: { ...later.files, '/b.bin': { ...later.files['/b.bin'], src: undefined, ext: { npm: 'pkg', version: '1.0.0', path: 'b.bin' } } } }));
+    expect(manifest.files['/b.bin']?.unread).toMatch(/a form this version cannot read/);
+    await expect(reading(manifest, using({ [HTTPS]: big }))).rejects.toThrow(/a form this version cannot read/);
+    expect((await readFile(manifest, '/a.js', chunksOf(bundle))).bytes).toEqual(FILES[1]?.bytes);
   });
 
   it('refuses a file only when it knows none of its places', async () => {

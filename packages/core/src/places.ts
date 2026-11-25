@@ -1,4 +1,4 @@
-import { sha256Hex, toHex } from './bytes.js';
+import { concat, sha256Hex, toHex } from './bytes.js';
 import { MAX_PLACE_LENGTH } from './limits.js';
 
 /**
@@ -74,26 +74,26 @@ export async function tryPlace(
 }
 
 /** A download slower than this on average is given up, so a place cannot hold a request open for good. */
-const SLOWEST_BYTES_PER_SECOND = 32 * 1024;
+export const SLOWEST_BYTES_PER_SECOND = 32 * 1024;
 
-/** Reads `body` into a buffer of `size` bytes, giving up when it is longer, stalls for `idleMs` or crawls. */
+/** Reads at most `size` bytes of `body`, giving up when it is longer, stalls for `idleMs` or crawls. */
 export async function readCapped(body: ReadableStream<Uint8Array>, size: number, idleMs: number, abort?: () => void): Promise<Uint8Array> {
   const reader = body.getReader();
   const deadline = Date.now() + idleMs + (size / SLOWEST_BYTES_PER_SECOND) * 1000;
   let loaded = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const bytes = new Uint8Array(size);
+    const pieces: Uint8Array[] = [];
     for (;;) {
       const stalled = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error('the download stalled')), idleMs);
       });
       const { done, value } = await Promise.race([reader.read(), stalled]);
       clearTimeout(timer);
-      if (done) return bytes.subarray(0, loaded);
+      if (done) return concat(pieces);
       if (loaded + value.length > size) throw new Error('it serves more bytes than the file that was published');
       if (Date.now() > deadline) throw new Error('the download was too slow');
-      bytes.set(value, loaded);
+      pieces.push(value);
       loaded += value.length;
     }
   } catch (error) {

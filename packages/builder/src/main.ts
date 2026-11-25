@@ -110,7 +110,7 @@ function refresh(): void {
     const noIndex = bundle.manifest.files['/index.html'] ? '' : ' There is no index.html at the top, so the home page will be empty.';
     const { elsewhere } = bundle.stats;
     const outside = elsewhere.files === 0 ? '' : ` ${elsewhere.files === 1 ? 'One file' : `${elsewhere.files} files`} (${sizeText(elsewhere.bytes)}) ${elsewhere.files === 1 ? 'is' : 'are'} kept outside Platform.`;
-    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs at most about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${outside}${noIndex}`;
+    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${outside}${noIndex}`;
   }
   const button = $<HTMLButtonElement>('publish');
   button.disabled = !bundle || !chosen || publishing;

@@ -40,7 +40,10 @@ A version 2 reader:
 
 - ignores keys it does not know, in the manifest and in a file entry;
 - skips places whose kind it does not know, and uses the ones it does;
-- refuses only the files whose encoding it does not know.
+- refuses only the files it cannot read, and serves the rest: a file whose
+  encoding it does not know, whose `src` is in a form it does not know (more
+  than 8 places, or places together with parts), or whose parts do not add up
+  to its size, which is how a file stored under a key added later looks.
 
 So a later shell can add a kind of place (`ar://`, a Blossom hash), a hash
 per piece so large media can be served in ranges, or another encoding, and a
@@ -170,4 +173,11 @@ Uploading is the builder's and the CLI's job, never the shell's.
   is not measured. The builder waits 90 seconds, then lets the owner keep
   the place unconfirmed.
 - Safari and Firefox.
-- Hashes per piece and range requests, for media.
+- Hashes per piece and range requests, for media. Until then the shell checks
+  a kept file's hash on every read, including each range a player asks for.
+- Whether the shell should run the IPFS client at all. It is 1.2 MB of
+  third-party code inside the worker ([DESIGN.md](DESIGN.md) §6 says what
+  that risks and what bounds it). A shell that fetches HTTPS places only is
+  smaller and changes less; IPFS places would then wait for a later shell.
+- The places a browser remembers are kept per browser, not per identity, and
+  only for the 300 files most recently moved.

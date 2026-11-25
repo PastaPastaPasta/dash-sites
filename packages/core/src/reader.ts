@@ -86,6 +86,7 @@ export async function readFile(
 ): Promise<FileContent> {
   const file = manifest.files[path];
   if (!file) throw new ContentError(`no such file: ${path}`);
+  if (file.unread) throw new ContentError(`${path} ${file.unread}`);
   if (file.src) {
     const bytes = await elsewhere(path, file);
     if (!(await matchesFile(bytes, file))) throw new ContentError(`${path} does not match its hash`);

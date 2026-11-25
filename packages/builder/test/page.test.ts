@@ -133,6 +133,17 @@ describe('page model', () => {
     const tidy = tidyPageModel({ theme: 'bogus', pages: { '/': [{ type: 'header', props: { id: 'header-1', name: '  Bob  ', image: 'https://x/y.png', extra: 1 } }, { type: 'nope' }, { type: 'button', props: { label: 'Go', url: 'javascript:x' } }] } });
     expect(tidy).toEqual({ v: 1, theme: 'paper', pages: { '/': [{ type: 'header', props: { image: '', name: 'Bob', tagline: '' } }, { type: 'button', props: { label: 'Go', url: '' } }] } });
   });
+
+  it('cuts long rich text so that what it saves can be read back', () => {
+    const long = [`<p>${'<strong><em>word</em></strong> '.repeat(1200)}</p>`, `<ul>${'<li>item</li>'.repeat(2000)}</ul>`, '&'.repeat(30000), `<p>${'x'.repeat(19990)}<strong><em>tail`];
+    for (const body of long) {
+      const tidy = tidyPageModel({ theme: 'paper', pages: { '/': [{ type: 'text', props: { body } }] } });
+      const kept = (tidy.pages['/'][0]?.props as { body: string }).body;
+      expect(kept.length).toBeGreaterThan(15000);
+      expect(kept.length).toBeLessThanOrEqual(20000);
+      expect(readPageModel(JSON.parse(serializePageModel(tidy)))).toEqual(tidy);
+    }
+  });
 });
 
 describe('blocks', () => {
@@ -304,6 +315,17 @@ describe('drafts', () => {
     store.setItem(PAGE_DRAFT_KEY, '{broken');
     expect(loadPageDraft(store).model).toEqual(emptyPageModel());
   });
+
+  it('leaves a draft from a newer builder as it is', () => {
+    const store = memory();
+    const later = JSON.stringify({ v: 2, theme: 'paper', layout: 'wide', pages: { '/': [{ type: 'poll', props: {} }] } });
+    store.setItem(PAGE_DRAFT_KEY, later);
+    store.setItem(PAGE_IMAGES_KEY, '{"/images/a.webp":"AA=="}');
+    expect(loadPageDraft(store)).toEqual({ model: emptyPageModel(), assets: [], missingImages: 0, newer: true });
+    expect(savePageDraft(store, reference, [picture])).toBe('newer');
+    expect(store.getItem(PAGE_DRAFT_KEY)).toBe(later);
+    expect(store.getItem(PAGE_IMAGES_KEY)).toBe('{"/images/a.webp":"AA=="}');
+  });
 });
 
 describe('reopening a published page', () => {
@@ -329,6 +351,7 @@ describe('reopening a published page', () => {
     expect(opened.assets).toEqual([picture]);
     expect(opened.outside).toEqual([{ sha256: sha256Hex(picture.bytes), places: [place] }]);
     expect(opened.lost).toEqual([]);
+    expect(opened.unknownPlaces).toBe(0);
     expect(trustedOutside(opened, 'owner1')).toEqual(opened.outside);
     expect(trustedOutside(opened, 'someone-else')).toEqual([]);
     expect(trustedOutside(opened, undefined)).toEqual([]);
