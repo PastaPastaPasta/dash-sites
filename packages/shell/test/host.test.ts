@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSite, normalizeLabel, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, cdnSource, integrityOf, normalizeLabel, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
@@ -37,6 +37,7 @@ class Harness {
   nonces = 0;
   background: Promise<unknown>[] = [];
   denied?: HostOptions['denied'];
+  external?: HostOptions['external'];
   host = this.start();
 
   constructor() {
@@ -68,6 +69,7 @@ class Harness {
       onOwnerChange: () => void (this.ownerChanges += 1),
       nonce: () => `nonce-${++this.nonces}`,
       denied: this.denied,
+      external: this.external,
     });
     return this.host;
   }
@@ -396,5 +398,83 @@ describe('site host', () => {
     expect(parseRange('bytes=-4', 10)).toEqual([6, 9]);
     expect(parseRange('bytes=2-', 10)).toEqual([2, 9]);
     expect(parseRange('items=1-2', 10)).toBeUndefined();
+  });
+});
+
+describe('external npm assets', () => {
+  const wasm = new Uint8Array(40_000).map((_, i) => (i * 7) % 251);
+  const files = (): SiteFile[] => [...site('ext'), { path: '/sdk.wasm', bytes: wasm }];
+  const ext = { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' } };
+
+  async function setup(serve: (url: string) => Uint8Array | number) {
+    const h = new Harness();
+    const fetched: string[] = [];
+    h.external = cdnSource(async (input) => {
+      const url = String(input);
+      fetched.push(url);
+      const answer = serve(url);
+      return typeof answer === 'number' ? new Response(null, { status: answer }) : new Response(answer);
+    });
+    h.host = h.start();
+    h.platform.registerName('alice', 'owner');
+    await publishSite(h.platform.as('owner'), 'alice', buildSite(files(), { external: ext }));
+    await h.open();
+    return { h, fetched };
+  }
+
+  it('serves the file from the first npm CDN once its hash matches, and keeps it', async () => {
+    const { h, fetched } = await setup(() => wasm);
+    const reply = await h.get('/sdk.wasm', { navigation: false });
+    expect(reply.status).toBe(200);
+    expect(reply.body).toEqual(wasm);
+    expect(fetched).toEqual(['https://cdn.jsdelivr.net/npm/@dashevo/wasm-sdk@5.0.0-rc.8/dist/raw/wasm_sdk_bg.wasm']);
+    expect((await h.get('/sdk.wasm', { navigation: false })).status).toBe(200);
+    expect(fetched.length).toBe(1);
+    expect((await h.get('/')).status).toBe(200);
+  });
+
+  it('falls back to the second CDN when the first is down or wrong', async () => {
+    for (const first of [503, new Uint8Array(wasm.length)]) {
+      const { h, fetched } = await setup((url) => (url.startsWith('https://cdn.jsdelivr.net/') ? first : wasm));
+      const reply = await h.get('/sdk.wasm', { navigation: false });
+      expect(reply.status).toBe(200);
+      expect(reply.body).toEqual(wasm);
+      expect(fetched.map((url) => new URL(url).origin)).toEqual(['https://cdn.jsdelivr.net', 'https://unpkg.com']);
+    }
+  });
+
+  it('refuses a file no CDN serves with the published hash, and says why', async () => {
+    const tampered = wasm.slice();
+    tampered[123] ^= 1;
+    const { h } = await setup(() => tampered);
+    const reply = await h.get('/sdk.wasm', { navigation: false });
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toMatch(/no copy matched the fingerprint/);
+    expect(body(reply)).toMatch(/Nothing from it ran/);
+  });
+
+  it('says the file could not be downloaded when no CDN answers', async () => {
+    const { h } = await setup(() => 503);
+    const reply = await h.get('/sdk.wasm', { navigation: false });
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toMatch(/could not be downloaded/);
+    expect(body(reply)).not.toMatch(/fingerprint/);
+  });
+
+  it('says the file is gone when every CDN answers 404', async () => {
+    const { h } = await setup(() => 404);
+    const reply = await h.get('/sdk.wasm', { navigation: false });
+    expect(body(reply)).toMatch(/no longer have it/);
+  });
+
+  it('does not trust a kept copy that was changed', async () => {
+    const { h, fetched } = await setup(() => wasm);
+    await h.get('/sdk.wasm', { navigation: false });
+    await h.settle();
+    const key = `ext/${integrityOf(wasm)}`;
+    const kept = h.store.chunks.get(key) as Uint8Array;
+    kept[0] ^= 1;
+    expect((await h.get('/sdk.wasm', { navigation: false })).body).toEqual(wasm);
+    expect(fetched.length).toBe(2);
   });
 });

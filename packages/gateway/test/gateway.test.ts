@@ -5,6 +5,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildSite, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { createGateway, emptyDenylist, parseDenylist, parseDomain, RefreshingCache, type GatewayConfig } from '../src/index.js';
+import type { GatewayOptions } from '../src/server.js';
+import { brotliCompressSync } from 'node:zlib';
+import { cdnSource } from '@dash-sites/core';
 
 const text = (s: string) => utf8.encode(s);
 const SITE: SiteFile[] = [
@@ -47,6 +50,7 @@ class Harness {
   reads = 0;
   failReads = false;
   config = config();
+  external?: GatewayOptions['external'];
   private server?: Server;
   private port = 0;
 
@@ -63,7 +67,7 @@ class Harness {
       getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
     };
     this.config = config(overrides);
-    this.server = createServer(createGateway({ reader, config: this.config, now: () => this.clock }));
+    this.server = createServer(createGateway({ reader, config: this.config, now: () => this.clock, external: this.external }));
     await new Promise<void>((resolve) => this.server?.listen(0, '127.0.0.1', resolve));
     this.port = (this.server.address() as AddressInfo).port;
     return this;
@@ -356,5 +360,120 @@ describe('RefreshingCache', () => {
     expect((await cache.get('k')).value.height).toBe(5);
     clock += 100;
     expect((await cache.get('k')).value.height).toBe(9);
+  });
+});
+
+describe('gateway: version 2 sites', () => {
+  const lib = text('export const value = 42;\n'.repeat(400));
+  const sdk = new Uint8Array(30_000).map((_, i) => (i * 13) % 251);
+  const brotli = (d: Uint8Array) => new Uint8Array(brotliCompressSync(d));
+  let served = sdk;
+  let fetches = 0;
+  const h = new Harness();
+
+  const counting = cdnSource(async () => {
+    fetches += 1;
+    return new Response(served);
+  });
+
+  beforeAll(async () => {
+    h.external = counting;
+    h.platform.registerName('alice', 'alice-id');
+    h.platform.registerName('bob', 'bob-id');
+    const ext = { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' } };
+    await publishSite(h.platform.as('alice-id'), 'alice', buildSite([{ path: '/index.html', bytes: text('a') }, { path: '/lib.js', bytes: lib }, { path: '/sdk.wasm', bytes: sdk }], { brotli, external: ext }));
+    await publishSite(h.platform.as('bob-id'), 'bob', buildSite([{ path: '/index.html', bytes: text('b') }, { path: '/lib.js', bytes: lib }, { path: '/sdk.wasm', bytes: sdk }]));
+    await h.start();
+  });
+  afterAll(() => h.stop());
+
+  it('never labels brotli or external bytes as gzip when another site stores the same file as gzip', async () => {
+    const a = await h.get('alice.id.example.org', '/lib.js', { 'accept-encoding': 'gzip' });
+    expect(a.status).toBe(200);
+    expect(a.headers['content-encoding']).toBeUndefined();
+    expect(new Uint8Array(a.body)).toEqual(lib);
+    const b = await h.get('bob.id.example.org', '/lib.js', { 'accept-encoding': 'gzip' });
+    expect(b.headers['content-encoding']).toBe('gzip');
+    expect(new Uint8Array(gunzipSync(b.body))).toEqual(lib);
+    const wa = await h.get('alice.id.example.org', '/sdk.wasm', { 'accept-encoding': 'gzip' });
+    expect(new Uint8Array(wa.body)).toEqual(sdk);
+    const wb = await h.get('bob.id.example.org', '/sdk.wasm', { 'accept-encoding': 'gzip' });
+    const bobBytes = wb.headers['content-encoding'] === 'gzip' ? gunzipSync(wb.body) : wb.body;
+    expect(new Uint8Array(bobBytes)).toEqual(sdk);
+  });
+
+  it("cannot be made to refuse another site's external file", async () => {
+    h.platform.registerName('mallory', 'mallory-id');
+    const bad = buildSite([{ path: '/index.html', bytes: text('m') }, { path: '/sdk.wasm', bytes: sdk }], { external: { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/missing.wasm' } } });
+    await publishSite(h.platform.as('mallory-id'), 'mallory', bad);
+    await h.stop();
+    h.external = cdnSource(async (url) => (String(url).includes('missing') ? new Response(null, { status: 404 }) : new Response(sdk)));
+    await h.start();
+    expect((await h.get('mallory.id.example.org', '/sdk.wasm')).status).toBe(502);
+    const alice = await h.get('alice.id.example.org', '/sdk.wasm');
+    expect(alice.status).toBe(200);
+    expect(new Uint8Array(alice.body)).toEqual(sdk);
+    await h.stop();
+    h.external = counting;
+    await h.start();
+  });
+
+  it("cannot refuse another site's external file by naming its SHA-256 on a different file", async () => {
+    h.platform.registerName('trent', 'trent-id');
+    const other = sdk.slice();
+    other[7] ^= 1;
+    const bundle = buildSite([{ path: '/index.html', bytes: text('m2') }, { path: '/sdk.wasm', bytes: other }], { external: { '/sdk.wasm': { npm: 'pkg', version: '3.0.0', path: 'o.wasm' } } });
+    const { encodeManifest, gzip, formatContentUri, sha256Hex } = await import('@dash-sites/core');
+    const entry = bundle.manifest.files['/sdk.wasm']!;
+    const doctored = { ...bundle.manifest, files: { ...bundle.manifest.files, '/sdk.wasm': { ...entry, sha256: sha256Hex(sdk) } } };
+    const piece = gzip(encodeManifest(doctored));
+    const hash = sha256Hex(piece);
+    const mallory = h.platform.as('trent-id');
+    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await mallory.createChunk(chunkHash, data);
+    await mallory.createChunk(hash, piece);
+    await mallory.putSite((await mallory.getDomain('trent')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    await h.stop();
+    h.external = cdnSource(async (url) => new Response(String(url).includes('o.wasm') ? other : sdk));
+    await h.start();
+    expect((await h.get('trent.id.example.org', '/sdk.wasm')).status).toBe(502);
+    const alice = await h.get('alice.id.example.org', '/sdk.wasm');
+    expect(alice.status).toBe(200);
+    expect(new Uint8Array(alice.body)).toEqual(sdk);
+    await h.stop();
+    h.external = counting;
+    await h.start();
+  });
+
+  it('does not fetch an external file again for every request when its SHA-256 is wrong', async () => {
+    h.platform.registerName('dave', 'dave-id');
+    const bundle = buildSite([{ path: '/index.html', bytes: text('d') }, { path: '/y.wasm', bytes: sdk }], { external: { '/y.wasm': { npm: 'pkg', version: '2.0.0', path: 'y.wasm' } } });
+    const entry = bundle.manifest.files['/y.wasm']!;
+    const wrong = { ...bundle.manifest, files: { ...bundle.manifest.files, '/y.wasm': { ...entry, sha256: '0'.repeat(64) } } };
+    // Store the doctored manifest the way publishSite would.
+    const { encodeManifest, gzip, formatContentUri, sha256Hex } = await import('@dash-sites/core');
+    const piece = gzip(encodeManifest(wrong));
+    const hash = sha256Hex(piece);
+    const dave = h.platform.as('dave-id');
+    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await dave.createChunk(chunkHash, data);
+    await dave.createChunk(hash, piece);
+    await dave.putSite((await dave.getDomain('dave')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    served = sdk;
+    const before = fetches;
+    for (let i = 0; i < 4; i++) expect((await h.get('dave.id.example.org', '/y.wasm')).status).toBe(502);
+    expect(fetches - before).toBe(1);
+  });
+
+  it('refuses an external file no CDN serves with its hash, and does not refetch it on every request', async () => {
+    h.platform.registerName('carol', 'carol-id');
+    const other = sdk.slice();
+    other[5] ^= 1;
+    await publishSite(h.platform.as('carol-id'), 'carol', buildSite([{ path: '/index.html', bytes: text('c') }, { path: '/x.wasm', bytes: other }], { external: { '/x.wasm': { npm: 'pkg', version: '1.0.0', path: 'x.wasm' } } }));
+    served = sdk;
+    const before = fetches;
+    const first = await h.get('carol.id.example.org', '/x.wasm');
+    expect(first.status).toBe(502);
+    expect(first.body.toString()).toContain('no npm mirror served it with the hash');
+    expect((await h.get('carol.id.example.org', '/x.wasm')).status).toBe(502);
+    expect(fetches - before).toBe(2);
   });
 });

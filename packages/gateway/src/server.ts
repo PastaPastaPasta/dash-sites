@@ -2,6 +2,10 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import {
   CHUNK_SIZE,
   ContentError,
+  ExternalAssetError,
+  cdnSource,
+  type ExternalAsset,
+  type ExternalSource,
   dashHeaders,
   decide,
   DENIED_TITLE,
@@ -45,6 +49,8 @@ export interface GatewayOptions {
   config: GatewayConfig;
   now?: () => number;
   log?: (line: Record<string, unknown>) => void;
+  /** Where external npm assets come from; the npm CDNs by default. Bytes are checked either way. */
+  external?: ExternalSource;
 }
 
 function clientAddress(req: IncomingMessage, trustProxy: boolean): string {
@@ -116,7 +122,43 @@ export function createGateway(options: GatewayOptions): RequestListener {
   });
   const manifests = new LruCache<Manifest>(500);
   const chunks = new LruCache<Uint8Array>(config.chunkCacheBytes, (data) => data.length);
-  const files = new LruCache<{ bytes: Uint8Array; stored: Uint8Array }>(config.chunkCacheBytes / 4, (file) => file.bytes.length + file.stored.length);
+  const files = new LruCache<{ bytes: Uint8Array; stored: Uint8Array }>(config.chunkCacheBytes / 4, (file) => file.bytes.length + (file.stored === file.bytes ? 0 : file.stored.length));
+
+  // External npm assets: one fetch at a time per file, and a failed one is not retried for a few
+  // minutes, so a manifest naming a file no CDN serves cannot make the gateway download it per request.
+  const fetchExternal = options.external ?? cdnSource();
+  // Keyed by the whole entry (package, version, path, hash, size): another site naming the same
+  // hash with a wrong path or size can only make its own entry fail, never someone else's.
+  const externalInFlight = new Map<string, Promise<Uint8Array>>();
+  const externalFailed = new LruCache<{ until: number; error: unknown }>(10_000);
+  // Verified bytes, so a file evicted from `files` (or read for another entry) is not fetched again.
+  const externalBytes = new LruCache<Uint8Array>(config.chunkCacheBytes / 4, (bytes) => bytes.length);
+  const externalKey = (asset: ExternalAsset, size: number): string => `${asset.npm}@${asset.version}/${asset.path}#${asset.integrity}:${size}`;
+  const external: ExternalSource = (asset, size) => {
+    const key = externalKey(asset, size);
+    const kept = externalBytes.get(key);
+    if (kept) return Promise.resolve(kept);
+    const failed = externalFailed.get(key);
+    if (failed && failed.until > now()) return Promise.reject(failed.error);
+    let pending = externalInFlight.get(key);
+    if (!pending) {
+      pending = fetchExternal(asset, size)
+        .then((bytes) => {
+          externalBytes.set(key, bytes);
+          return bytes;
+        })
+        .catch((error: unknown) => {
+          externalFailed.set(key, { until: now() + 5 * 60 * SECOND, error });
+          throw error;
+        })
+        .finally(() => externalInFlight.delete(key));
+      externalInFlight.set(key, pending);
+    }
+    return pending;
+  };
+  // An external file whose bytes match its SHA-384 but not the entry's SHA-256 or size: refused
+  // for a while without reading it again. Keyed by the whole entry, so it never refuses another site's file.
+  const badExternalFiles = new LruCache<number>(10_000);
 
   const chunkSource = (ownerId: string): ChunkSource => async (hashes) => {
     const out = new Map<string, Uint8Array>();
@@ -255,17 +297,29 @@ export function createGateway(options: GatewayOptions): RequestListener {
     Object.assign(headers, { 'Content-Type': entry.type, ETag: etag, 'Cache-Control': cacheControl, Vary: 'Accept-Encoding' });
     if (decision.status === 200 && !epochChanged && etagMatches(req.headers['if-none-match'], etag)) return { status: 304, headers };
 
-    let content = files.get(entry.sha256);
+    // The same file can be stored differently by different sites (gzip, brotli, plain, external):
+    // the stored bytes are only reused for an entry stored the same way.
+    const fileKey = `${entry.sha256}:${entry.ext ? 'ext' : (entry.enc ?? 'plain')}`;
+    let content = files.get(fileKey);
+    const badKey = entry.ext ? `${externalKey(entry.ext, entry.size)}#${entry.sha256}` : '';
+    if (!content && entry.ext && (badExternalFiles.get(badKey) ?? 0) > now()) {
+      return html(502, messagePage('Unavailable', 'This file cannot be served', 'Its stored content is incomplete or does not match the hash its owner published.', config), domain);
+    }
     if (!content) {
       try {
-        const read = await readFile(manifest, decision.path, chunkSource(resolution.ownerId));
+        const read = await readFile(manifest, decision.path, chunkSource(resolution.ownerId), external);
         content = { bytes: read.bytes, stored: read.stored };
       } catch (error) {
+        if (error instanceof ExternalAssetError) {
+          log({ event: 'external-refused', name: normalized, path: decision.path, error: error.message });
+          return html(502, messagePage('Unavailable', 'This file cannot be served', `It is a file of the npm package ${escapeHtml(`${error.asset.npm}@${error.asset.version}`)}, and no npm mirror served it with the hash its owner published.`, config), domain);
+        }
         if (!(error instanceof ContentError)) throw error;
+        if (entry.ext) badExternalFiles.set(badKey, now() + 5 * 60 * SECOND);
         log({ event: 'bad-file', name: normalized, path: decision.path, error: error.message });
         return html(502, messagePage('Unavailable', 'This file cannot be served', 'Its stored content is incomplete or does not match the hash its owner published.', config), domain);
       }
-      files.set(entry.sha256, content);
+      files.set(fileKey, content);
     }
     if (entry.enc === 'gzip' && acceptsGzip(req)) return { status: decision.status, headers: { ...headers, 'Content-Encoding': 'gzip' }, body: content.stored };
     return { status: decision.status, headers, body: content.bytes };
