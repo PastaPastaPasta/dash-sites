@@ -1,5 +1,5 @@
 diff --git a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
-index 9cdace46b4..3ea71dc6f7 100644
+index 9cdace46b4..33010e1e56 100644
 --- a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
 +++ b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
 @@ -31,6 +31,7 @@ mod dpns_v3_tests {
@@ -31,7 +31,7 @@ index 9cdace46b4..3ea71dc6f7 100644
 +        .expect("expected the schema file to be JSON");
 +        let contract = serde_json::json!({
 +            "$formatVersion": "1",
-+            "id": "5BS87xCmGqFKv6fndGjv6cJWbokqWtGs6ui91oRn7q6u",
++            "id": "CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT",
 +            "ownerId": "AkhihKhRLGjKB1WTdUG7BWrGnTaTTHcMzdSBsKSJ5GNm",
 +            "version": 1,
 +            "documentSchemas": schemas,
