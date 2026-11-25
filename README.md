@@ -7,84 +7,94 @@ Platform; there is no web host.
 
 | | |
 | --- | --- |
-| Showcase site | https://p2p.id.dashhq.org/ (`p2p.dash`, testnet) |
-| Sites, mainnet | https://dash.site/ (a static site: files on Cloudflare, no server) |
-| Publish, mainnet | https://dash.site/new |
-| Gateway, testnet | https://id.dashhq.org/ |
-| Builder, testnet | https://dash-sites.thepasta.org/ |
+| Sites, mainnet | https://dash.site/ (`alice.dash.site`): a static site with no backend |
+| Make and publish a site, mainnet | https://dash.site/new (`/publish` redirects here) |
+| Sites, testnet | https://id.dashhq.org/ (`alice.id.dashhq.org`), showcase at https://p2p.id.dashhq.org/ |
+| Make and publish a site, testnet | https://dash-sites.thepasta.org/ |
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
-The testnet data contract is
-`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. The mainnet contract is
-`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`. `dash.site` opens mainnet
-names (`alice.dash.site`) as a static site: the same static page for every
-name, served from a Cloudflare Worker with no server.
+The data contract is `5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s` on
+mainnet and `3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx` on testnet
+(`DEPLOYMENTS` in `packages/core/src/config.ts`).
 
-## How a site is opened
+## How a name opens on dash.site
 
-`https://alice.id.dashhq.org/` answers with the same small page for every
-name. It installs a service worker, and the worker does the rest in your
-browser: it proves who owns `alice.dash` and what site record that owner
-published, fetches the files from Dash Platform nodes, checks every file
-against the SHA-256 in the proved manifest, and serves them to the page. The
-host sends only that static page, never site content, and is not needed after
-the first visit.
+dash.site is a static site with no backend service. It runs as an assets-only
+Cloudflare Worker, so no code runs on any request. Every host under it,
+`alice.dash.site` included, gets the same few files: a small page, a service
+worker (`sw.js`) and the verifier. The page holds no site content. When you
+open `https://alice.dash.site/`, your browser does the rest:
 
-With the extension you type `alice.dash` instead and land on the same thing.
+1. The page installs the service worker and shows "Loading alice.dash.site…"
+   with a progress bar. Technical detail sits behind "Details", and on errors.
+2. The worker loads the verifier (the Dash SDK built to WebAssembly). While it
+   downloads, the worker picks fast Platform nodes from the masternode list
+   at `quorums.mainnet.networks.dash.org`.
+3. The worker uses Platform proofs to check who owns `alice.dash` and which
+   site record that owner published. It then fetches the files from Platform
+   nodes and checks each one against the SHA-256 in the proved manifest
+   before the page gets it.
 
-What is still trusted, and why, is in [the design doc](docs/DESIGN.md#6-security):
-the shell you were sent, the quorum key service the Dash SDK uses, and Dash
-Platform's validators.
+The bare `dash.site` is the landing page. Typing a name there goes to
+`https://<name>.dash.site/`. Each name is its own origin, with its own
+storage and service worker. Crawlers, link previews and browsers without
+service workers get the static page, not the site. What is still trusted is
+in [the design doc](docs/DESIGN.md#6-security): the page you were sent, the
+quorum key service the Dash SDK uses, and Dash Platform's validators.
 
-### Check that no backend is involved
+The testnet host `id.dashhq.org` works the same way. It also runs the
+fallback process in `packages/gateway`, which renders sites for clients
+without service workers. With the extension you can type `alice.dash` instead.
 
-```sh
-npm ci && npm run build
-npx playwright install chromium
-npm run e2e:shell          # p2p.dash through id.dashhq.org, no extension
-npm run e2e:extension      # the same through the extension
-```
+**Speed.**
 
-`e2e/shell.mjs` opens the site in a fresh Chromium profile and fails unless
-the gateway host sent only the shell, every other host the browser contacted
-is a Dash Platform node or the quorum key service, and the site still loads
-with the gateway host blocked. It also passes while the gateway's own content
-process is stopped (`systemctl stop dash-sites-gateway` on the host).
+- The verifier is a 5.7 MB WebAssembly file (brotli quality 11) and a script
+  of about 0.2 MB compressed. Both have content-hashed names and are cached
+  as `immutable`.
+- A first visit to `d4shhq.dash.site` takes a median of about 1.1 s on a
+  fast connection and 2.4 to 2.6 s at 50 Mbit/s (measured from a cloud
+  sandbox).
+- Repeat visits are served by the installed worker.
+- The page, `sw.js` and `shell.json` are sent as `no-cache`, so a new or
+  blocking worker takes effect on the next visit.
 
-To do it by hand: open the site once, then block `id.dashhq.org` (DevTools →
-Network → Block request domain, or `/etc/hosts`) and reload. To avoid the
-public host altogether, serve the shell yourself:
+**Theme.** Every dash.site page, from the loading page and errors to the
+landing page and `/new`, follows the system light or dark theme
+(`color-scheme: light dark` and system colors). [AGENTS.md](AGENTS.md) makes
+this a rule for new pages.
 
-```sh
-npm run serve -w @dash-sites/shell     # http://<name>.localhost:8080/
-```
-
-and set the extension's gateway to `http://localhost:8080`.
+**Abuse reports and blocking.** The landing page and the loading page link
+to "Report abuse" (this repository's issues). dash.site cannot change or remove anything on
+Dash Platform, but it can stop opening a name. To do that, route the name's
+host to a second assets-only Worker that serves
+`packages/shell/src/denied-sw.js` as `/sw.js` and an "unavailable" page for
+everything else. The new `sw.js` clears the site from browsers that already
+have it ([DESIGN §8](docs/DESIGN.md#8-hosting)). `id.dashhq.org` has an
+operator denylist (`dash-sites-deny`) for names, owners and content
+([DESIGN](docs/DESIGN.md#operator-denylist)). A self-hosted shell has neither.
 
 ## Publish a site
 
-The hosted builder publishes on testnet. To publish on mainnet, use the CLI
-below with `--network mainnet`.
-
-**In the browser**: open the [builder](https://dash-sites.thepasta.org/) and
-choose **Sign in with DashPay**. Scan the code with the DashPay app (More,
-Tools, Connections, Scan QR) and approve it; on a phone, the button under the
-code opens the wallet instead. The wallet gives the page a key that can only
-write Dash Sites documents, with a spending limit and an end date you set on
-the approval screen, and its own keys never leave it. Then pick a name you
-own, write a page or upload a folder or zip, and publish. You see the fee
-before anything is sent.
+**In the browser**: open https://dash.site/new for mainnet, or the
+[testnet builder](https://dash-sites.thepasta.org/). Choose **Sign in with
+DashPay**, scan the code with the DashPay app (More, Tools, Connections, Scan
+QR) and approve. On a phone, the button under the code opens the wallet
+instead. The wallet gives the page a key that can only write Dash Sites
+documents, with a spending limit and an end date you set on the approval
+screen. The wallet's own keys never leave it. Then pick a name you own, write
+a page or upload a folder or zip, and publish. You see the fee before anything
+is sent.
 
 - Wallets: DashPay for Android 11.9.2 or later and Dash Wallet for iOS 9.1.4
-  or later. On testnet, use DashPay's testnet build, the `-testnet.apk` on the
+  or later. Testnet needs DashPay's testnet build, the `-testnet.apk` on the
   [DashPay Wallet releases](https://github.com/dashpay/dash-wallet/releases/latest).
-- A wallet sign-in cannot register names (the key is limited to Dash Sites).
-  Register a name in the wallet, or use the key sign-in below.
+- A wallet sign-in cannot register names, because its key is limited to Dash
+  Sites. Register a name in the wallet, or use the key sign-in below.
 - **Sign in with a private key instead** takes an identity id (or name) and an
-  authentication key, or an identity file. That key stays in the page.
+  authentication key, or an identity file. The key stays in the page.
 
-**From a terminal**:
+**From a terminal** (testnet by default, `--network mainnet` for mainnet):
 
 ```sh
 npm ci && npm run build
@@ -96,64 +106,115 @@ dash-sites resolve alice
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
 ```
 
-`--identity-file` takes the identity JSON that dash-bridge writes; `--identity <id>` with `DASH_SITES_KEY=<WIF>` works too. Storage costs
-about 0.3 DASH per megabyte, paid once; deleting old chunks refunds most of it.
-Testnet funds: https://faucet.thepasta.org.
+`--identity-file` takes the identity JSON that dash-bridge writes. You can
+also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
+0.3 DASH per megabyte, paid once, and deleting old chunks refunds most of it.
+Get testnet funds at https://faucet.thepasta.org. Run `dash-sites` with no
+arguments for every command.
 
-A site can read its own proved record at `/.well-known/dash/site.json` and its
-file list at `/.well-known/dash/manifest.json`, whoever serves it. Sites are
-static: requests other than GET and HEAD are refused, and a site cannot
+A site can read its own proved record at `/.well-known/dash/site.json` and
+its file list at `/.well-known/dash/manifest.json`, whoever serves it. Sites
+are static: requests other than GET and HEAD are refused, and a site cannot
 register a service worker of its own.
 
 ## Install the extension
 
-Download `dash-sites-extension-chrome-<version>.zip` from the releases page,
-unzip it, open `chrome://extensions`, turn on Developer mode and choose "Load
-unpacked". Then type `p2p.dash` in the address bar, or `dash`, a space and a
-name. The Firefox build is `dash-sites-extension-firefox-<version>.zip`
-(`about:debugging` → "Load Temporary Add-on"). Store listings are not
-published yet; the steps are in [packages/extension](packages/extension/README.md).
+1. Download `dash-sites-extension-chrome-<version>.zip` from the releases
+   page and unzip it.
+2. Open `chrome://extensions`, turn on Developer mode and choose "Load
+   unpacked".
+3. Type `p2p.dash` in the address bar, or `dash`, a space and a name.
 
-## Repository
+The Firefox build is `dash-sites-extension-firefox-<version>.zip`; load it
+from `about:debugging` with "Load Temporary Add-on". There are no store
+listings yet. The steps are in [packages/extension](packages/extension/README.md).
+
+## Develop
 
 | Path | What |
 | --- | --- |
 | `packages/core` | Protocol library: names, manifest, packing, resolution, publishing, Platform access |
-| `packages/shell` | The static shell: bootstrap page, service worker, verifier |
-| `packages/gateway` | Server-rendered fallback, landing page and resolve API |
+| `packages/shell` | The static page, service worker and verifier that every name's host serves |
+| `packages/builder` | The page at `/new` on dash.site, and the testnet builder |
+| `packages/gateway` | The fallback process and resolve API on `id.dashhq.org` |
 | `packages/cli` | `dash-sites` command |
-| `packages/builder` | Web builder (static) |
 | `packages/extension` | Browser extension (Chromium and Firefox, MV3) |
 | `packages/showcase` | The site published at `p2p.dash` |
 | `contract/` | The `dash-sites` data contract |
-| `deploy/` | Gateway host provisioning and deployment |
+| `deploy/` | dash.site Workers (`deploy/cloudflare`) and the testnet droplet |
 | `e2e/` | Browser tests against live names |
 
 ```sh
 npm ci
 npm run build       # everything, including the extension zips
+npm run typecheck
 npm test            # unit tests
 npm run lint
 ```
 
-## Run a gateway
+The browser tests open a live name in a fresh Chromium profile. They fail
+unless the host sent only the static page, every other host the browser
+contacted is a Dash Platform node or the quorum key service, and the site
+still loads with the host blocked.
 
-`deploy/provision.sh <domain> <ipv4>` prepares an Ubuntu host (Caddy, Node,
-a wildcard certificate by DNS-01 with no DNS credentials on the host), and
-`deploy/deploy.sh <ssh-target>` installs the shell, the fallback process and
-the Caddy configuration. DNS records and the steps for moving to another
-domain such as `dash.dev` are in [docs/DESIGN.md](docs/DESIGN.md#8-hosting).
+```sh
+npx playwright install chromium
+npm run e2e:shell                      # p2p.dash through id.dashhq.org
+npm run e2e:shell -- d4shhq dash.site  # a mainnet name through dash.site
+npm run e2e:extension
+npm run e2e:builder
+```
 
-`id.dashhq.org` can stop serving a name, owner or content
-(`dash-sites-deny`, see [docs/DESIGN.md](docs/DESIGN.md#operator-denylist)),
-and the dash.site static page can stop opening a name with a blocking route
-([docs/DESIGN.md](docs/DESIGN.md#8-hosting)). Only a hosted build
-(`DENYLIST=1`, set by `deploy.sh` when the host's `gateway.env` has
-`DENYLIST_FILE`) includes the denylist check; a self-hosted shell leaves it out.
+**dash.site on your machine.** Build both Workers' files the way
+`deploy/cloudflare/deploy.sh` does:
 
-The contract is registered on both networks (`DEPLOYMENTS` in
-`packages/core/src/config.ts`); a gateway or builder picks one with
-`NETWORK=testnet|mainnet`.
+```sh
+export NETWORK=mainnet GATEWAY_DOMAIN=dash.site DENYLIST=0 BUILDER_URL=https://dash.site/new
+npx tsc -b && node packages/shell/build.mjs && SITE=1 node packages/builder/build.mjs
+```
+
+Then run one Worker at a time with Wrangler. Run the static page and test a
+name against it:
+
+```sh
+npx --yes wrangler@4 dev --config deploy/cloudflare/wrangler.jsonc --port 8787 --local-protocol https
+E2E_HOST_MAP=127.0.0.1:8787 npm run e2e:shell -- d4shhq dash.site
+```
+
+Run the `/new` page and open http://localhost:8788/new:
+
+```sh
+npx --yes wrangler@4 dev --config deploy/cloudflare/app.jsonc --port 8788
+```
+
+To serve the static page without Cloudflare, run `npm run build` (a testnet
+build) and then `npm run serve -w @dash-sites/shell`. Open
+`http://<name>.localhost:8080/`.
+
+## Deploy
+
+- **dash.site** (both Workers, `dash-site` and `dash-site-app`):
+  `CLOUDFLARE_API_TOKEN=… CLOUDFLARE_ACCOUNT_ID=… deploy/cloudflare/deploy.sh`.
+  It builds for mainnet and deploys `app.jsonc` and then `wrangler.jsonc`.
+  Cache headers are set in each build's `_headers`. Files with hashed names
+  are `immutable`; the pages and `sw.js` are `no-cache`.
+- **Testnet builder**: GitHub Pages, deployed by `.github/workflows/pages.yml`
+  on every push to `main`.
+- **id.dashhq.org**: `deploy/provision.sh <domain> <ipv4>` prepares an Ubuntu
+  host (Caddy, Node, and a wildcard certificate by DNS-01 with no DNS
+  credentials on the host). `deploy/deploy.sh <ssh-target>` installs the
+  shell, the fallback process and the Caddy configuration. DNS and moving
+  domains are covered in [DESIGN §8](docs/DESIGN.md#8-hosting).
+
+## Planned
+
+These are open PRs and are not live:
+
+- [#14](https://github.com/PastaPastaPasta/dash-sites/pull/14): a new
+  contract that fetches a site in one proved query, including the name's
+  owner.
+- [#16](https://github.com/PastaPastaPasta/dash-sites/pull/16): a block editor
+  in the builder, and large files kept outside Platform.
 
 ## License
 
