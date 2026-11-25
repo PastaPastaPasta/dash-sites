@@ -3,7 +3,9 @@ import {
   httpsFetcher,
   IPFS_GLOBAL,
   IPFS_MODULE,
+  IPFS_WAIT_MS,
   parsePlace,
+  PLACE_IDLE_MS,
   sha256Hex,
   toHex,
   tryPlace,
@@ -132,17 +134,29 @@ export async function uploadToPinata(jwt: string, file: OutsideFile, options: { 
 
 const IPFS_WORKER = `
 const ready = self.${IPFS_GLOBAL}.createVerifiedFetch({ gateways: [] });
-self.onmessage = async ({ data: { id, uri, size, waitMs } }) => {
+self.postMessage({ started: true });
+self.onmessage = async ({ data: { id, uri, size, waitMs, idleMs } }) => {
   const stop = new AbortController();
-  const timer = setTimeout(() => stop.abort(), waitMs);
+  let timer = setTimeout(() => stop.abort(), waitMs);
   try {
     const response = await (await ready)(uri, { signal: stop.signal });
-    if (!response.ok) throw new Error('it answered ' + response.status);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > size) throw new Error('it serves more bytes than the file that was published');
-    self.postMessage({ id, bytes }, [bytes.buffer]);
+    if (!response.ok || !response.body) throw new Error('it answered ' + response.status);
+    const reader = response.body.getReader();
+    const bytes = new Uint8Array(size);
+    let loaded = 0;
+    for (;;) {
+      clearTimeout(timer);
+      timer = setTimeout(() => stop.abort(), idleMs);
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (loaded + value.length > size) throw new Error('it serves more bytes than the file that was published');
+      bytes.set(value, loaded);
+      loaded += value.length;
+    }
+    const out = bytes.slice(0, loaded);
+    self.postMessage({ id, bytes: out }, [out.buffer]);
   } catch (error) {
-    self.postMessage({ id, problem: stop.signal.aborted ? 'no peer that holds it answered' : String(error && error.message || error) });
+    self.postMessage({ id, problem: stop.signal.aborted ? 'no peer that holds it answered in time' : String(error && error.message || error) });
   } finally {
     clearTimeout(timer);
   }
@@ -153,21 +167,25 @@ self.onmessage = async ({ data: { id, uri, size, waitMs } }) => {
  * Fetches IPFS places in a worker of its own. The IPFS client is downloaded from npm and started
  * only if it matches the pinned hash; in a worker it cannot reach the page, which holds the key.
  */
-export function ipfsInWorker(options: { waitMs?: number; fetch?: typeof fetch } = {}): PlaceFetcher {
+export function ipfsInWorker(options: { waitMs?: number; idleMs?: number; fetch?: typeof fetch } = {}): PlaceFetcher {
   let worker: Promise<Worker> | undefined;
   let next = 0;
   const waiting = new Map<number, { resolve: (bytes: Uint8Array) => void; reject: (error: Error) => void }>();
   const start = async (): Promise<Worker> => {
     const source = await fetchPinned(IPFS_MODULE, options);
-    const started = new Worker(URL.createObjectURL(new Blob([source as BlobPart, IPFS_WORKER], { type: 'text/javascript' })));
-    started.onmessage = ({ data }: MessageEvent<{ id: number; bytes?: Uint8Array; problem?: string }>) => {
+    const url = URL.createObjectURL(new Blob([source as BlobPart, IPFS_WORKER], { type: 'text/javascript' }));
+    const started = new Worker(url);
+    started.onmessage = ({ data }: MessageEvent<{ started?: boolean; id: number; bytes?: Uint8Array; problem?: string }>) => {
+      if (data.started) return URL.revokeObjectURL(url);
       const request = waiting.get(data.id);
       waiting.delete(data.id);
       if (data.bytes) request?.resolve(data.bytes);
       else request?.reject(new Error(data.problem ?? 'the IPFS client failed'));
     };
     started.onerror = () => {
-      for (const request of waiting.values()) request.reject(new Error('the IPFS client could not start'));
+      URL.revokeObjectURL(url);
+      started.terminate();
+      for (const request of waiting.values()) request.reject(new Error('the IPFS client stopped'));
       waiting.clear();
       worker = undefined;
     };
@@ -182,7 +200,7 @@ export function ipfsInWorker(options: { waitMs?: number; fetch?: typeof fetch } 
     return new Promise((resolve, reject) => {
       const id = next++;
       waiting.set(id, { resolve, reject });
-      running.postMessage({ id, uri, size, waitMs: options.waitMs ?? 60_000 });
+      running.postMessage({ id, uri, size, waitMs: options.waitMs ?? IPFS_WAIT_MS, idleMs: options.idleMs ?? PLACE_IDLE_MS });
     });
   };
 }

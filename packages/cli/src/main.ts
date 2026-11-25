@@ -215,7 +215,7 @@ const commands: Record<string, () => Promise<void>> = {
     const { fetchers } = outside(resolution.canonicalLabel);
     const { bytes } = await readFile(manifest, decision.path, source, (path, file) => readElsewhere(path, file, fetchers));
     if (values.output) writeFileSync(values.output, bytes);
-    else process.stdout.write(bytes);
+    else await new Promise<void>((resolve, reject) => process.stdout.write(bytes, (error) => (error ? reject(error) : resolve())));
   },
 
   async check() {

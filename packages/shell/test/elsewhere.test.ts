@@ -86,6 +86,24 @@ describe('files stored outside Platform', () => {
     expect(asked).toEqual([HTTPS]);
   });
 
+  it('are not downloaded again while the browser is still keeping the first copy', async () => {
+    const { get, asked, store } = await serve({ [HTTPS]: photo });
+    let finish = (): void => undefined;
+    const slow = new Promise<void>((resolve) => (finish = resolve));
+    const put = store.putChunk;
+    store.putChunk = async (hash, data) => {
+      await slow;
+      return put(hash, data);
+    };
+    expect((await get('/photo.webp')).status).toBe(200);
+    expect((await get('/photo.webp', 'bytes=0-9')).status).toBe(206);
+    expect(asked).toEqual([HTTPS]);
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((await get('/photo.webp')).status).toBe(200);
+    expect(asked).toEqual([HTTPS]);
+  });
+
   it('fall back to the next place when one serves other bytes', async () => {
     const { get, asked, store } = await serve({ [HTTPS]: utf8.encode('replaced'), [MIRROR]: photo });
     expect((await get('/photo.webp')).body).toEqual(photo);

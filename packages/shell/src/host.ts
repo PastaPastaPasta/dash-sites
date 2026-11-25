@@ -228,16 +228,19 @@ export class SiteHost {
 
   /**
    * A file kept outside Platform: the browser's copy when it still matches, else a download from
-   * the places the manifest lists, shared by the requests that want the same file at once.
+   * the places the manifest lists, shared by the requests that want the same file until it is kept.
    */
   private readonly elsewhere = async (path: string, file: ManifestFile): Promise<Uint8Array> => {
     const kept = await this.options.store.getChunk(file.sha256).catch(() => undefined);
     if (kept && (await matchesFile(kept, file))) return kept;
     let download = this.fetching.get(file.sha256);
     if (!download) {
-      download = readElsewhere(path, file, this.options.places ?? {}).finally(() => this.fetching.delete(file.sha256));
+      download = readElsewhere(path, file, this.options.places ?? {});
       this.fetching.set(file.sha256, download);
-      void download.then((bytes) => this.options.store.putChunk(file.sha256, bytes)).catch(() => undefined);
+      void download
+        .then((bytes) => this.options.store.putChunk(file.sha256, bytes))
+        .catch(() => undefined)
+        .finally(() => this.fetching.delete(file.sha256));
     }
     return download;
   };

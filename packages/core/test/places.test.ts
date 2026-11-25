@@ -89,6 +89,7 @@ describe('manifest version 2', () => {
     }
     expect(() => buildSite([{ path: '/empty.bin', bytes: new Uint8Array(0), src: [HTTPS] }])).toThrow(/empty/);
     expect(buildSite(elsewhere(['https://MEDIA.example.com/b.bin'])).manifest.files['/b.bin']?.src).toEqual([HTTPS]);
+    expect(() => buildSite(elsewhere([`https://media.example.com/${'"'.repeat(1000)}`]))).toThrow(PackError);
   });
 
   it('rejects a malformed list of places', () => {
@@ -209,6 +210,17 @@ describe('places', () => {
     const stalled = (async () => new Response(new ReadableStream<Uint8Array>({ start: (controller) => controller.enqueue(big.subarray(0, 10)) }))) as typeof fetch;
     const error = (await reading(manifest, { https: httpsFetcher({ fetch: stalled, idleMs: 20 }) }).catch((e: unknown) => e)) as ElsewhereError;
     expect(error.attempts[0]?.problem).toBe('the download stalled');
+  });
+
+  it('moves on from a place that never answers, even one that ignores being told to stop', async () => {
+    const mirror = 'https://mirror.example.org/b.bin';
+    const { manifest } = buildSite(elsewhere([IPFS, HTTPS, mirror]));
+    const never = new Promise<never>(() => undefined);
+    const deaf = (async (input: RequestInfo | URL) => (String(input) === HTTPS ? never : new Response(big as BodyInit))) as typeof fetch;
+    const fetchers: PlaceFetchers = { https: httpsFetcher({ fetch: deaf, idleMs: 20 }), ipfs: ipfsFetcher(() => never, { waitMs: 20 }) };
+    expect((await reading(manifest, fetchers)).bytes).toEqual(big);
+    const { manifest: only } = buildSite(elsewhere([IPFS, HTTPS]));
+    expect(((await reading(only, fetchers).catch((e: unknown) => e)) as ElsewhereError).attempts.map(({ problem }) => problem)).toEqual(['it did not answer', 'it did not answer']);
   });
 
   it('fetches IPFS places through the IPFS client, started on first use', async () => {

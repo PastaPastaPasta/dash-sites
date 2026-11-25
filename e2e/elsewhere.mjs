@@ -3,6 +3,7 @@
 //   node packages/shell/build.mjs && node e2e/elsewhere.mjs [name] [screenshot-dir]
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +13,12 @@ const { chromium } = await import('playwright');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const name = process.argv[2] ?? 'elsewhere-demo-2511';
 const shots = process.argv[3];
-const port = 8000 + Math.floor(Math.random() * 1000);
+const port = await new Promise((resolve) => {
+  const probe = createServer().listen(0, '127.0.0.1', () => {
+    const free = probe.address().port;
+    probe.close(() => resolve(free));
+  });
+});
 const origin = `http://${name}.localhost:${port}`;
 const check = (ok, message) => {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${message}`);

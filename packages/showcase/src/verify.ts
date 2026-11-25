@@ -24,7 +24,8 @@ export async function verify(label: string, network: Network, report: Report): P
   report(true, `Manifest matches the hash in the record and lists ${paths.length} files`);
   let good = 0;
   for (const path of paths) {
-    const published = (await readFile(manifest, path, source)).file.sha256;
+    const entry = manifest.files[path];
+    const published = entry?.src ? entry.sha256 : (await readFile(manifest, path, source)).file.sha256;
     const response = await fetch(path, { cache: 'no-store' });
     const served = sha256Hex(new Uint8Array(await response.arrayBuffer()));
     if (response.ok && served === published) good++;

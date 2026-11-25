@@ -27,7 +27,7 @@ export function parsePlace(uri: string): Place | undefined {
     } catch {
       return undefined;
     }
-    if (url.protocol !== 'https:' || url.hostname === '' || url.username !== '' || url.password !== '') return undefined;
+    if (url.protocol !== 'https:' || url.hostname === '' || url.username !== '' || url.password !== '' || !isPlaceUri(url.href)) return undefined;
     return { kind: 'https', uri: url.href };
   }
   const ipfs = IPFS.exec(uri);
@@ -73,13 +73,17 @@ export async function tryPlace(
   }
 }
 
-/** Reads `body` into a buffer of `size` bytes, giving up when it is longer or stalls for `idleMs`. */
+/** A download slower than this on average is given up, so a place cannot hold a request open for good. */
+const SLOWEST_BYTES_PER_SECOND = 32 * 1024;
+
+/** Reads `body` into a buffer of `size` bytes, giving up when it is longer, stalls for `idleMs` or crawls. */
 export async function readCapped(body: ReadableStream<Uint8Array>, size: number, idleMs: number, abort?: () => void): Promise<Uint8Array> {
-  const bytes = new Uint8Array(size);
   const reader = body.getReader();
+  const deadline = Date.now() + idleMs + (size / SLOWEST_BYTES_PER_SECOND) * 1000;
   let loaded = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const bytes = new Uint8Array(size);
     for (;;) {
       const stalled = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new Error('the download stalled')), idleMs);
@@ -88,6 +92,7 @@ export async function readCapped(body: ReadableStream<Uint8Array>, size: number,
       clearTimeout(timer);
       if (done) return bytes.subarray(0, loaded);
       if (loaded + value.length > size) throw new Error('it serves more bytes than the file that was published');
+      if (Date.now() > deadline) throw new Error('the download was too slow');
       bytes.set(value, loaded);
       loaded += value.length;
     }
@@ -101,13 +106,24 @@ export async function readCapped(body: ReadableStream<Uint8Array>, size: number,
 
 export const PLACE_IDLE_MS = 30_000;
 
-/** Runs a fetch-like call for a place and reads its answer, giving up when it stalls. */
+/**
+ * Runs a fetch-like call for a place and reads its answer. The call gets `waitMs` to answer, whether
+ * or not it honours the signal, so one place that hangs cannot keep the next from being tried.
+ */
 async function download(call: (signal: AbortSignal) => Promise<Response>, size: number, waitMs: number, idleMs: number): Promise<Uint8Array> {
   const stop = new AbortController();
-  const waiting = setTimeout(() => stop.abort(), waitMs);
+  let waiting: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_resolve, reject) => {
+    waiting = setTimeout(() => {
+      stop.abort();
+      reject(new Error('it did not answer'));
+    }, waitMs);
+  });
   let response: Response;
   try {
-    response = await call(stop.signal);
+    const answer = call(stop.signal);
+    answer.catch(() => undefined);
+    response = await Promise.race([answer, late]);
   } catch (error) {
     throw new Error(stop.signal.aborted ? 'it did not answer' : `it could not be reached (${String((error as Error)?.message ?? error)})`);
   } finally {
@@ -137,8 +153,5 @@ export const IPFS_WAIT_MS = 60_000;
 
 /** Fetches an IPFS place through `load`, which starts the IPFS client the first time it is needed. */
 export function ipfsFetcher(load: () => Promise<VerifiedFetch>, options: { waitMs?: number; idleMs?: number } = {}): PlaceFetcher {
-  return async (uri, size) => {
-    const verifiedFetch = await load();
-    return download((signal) => verifiedFetch(uri, { signal }), size, options.waitMs ?? IPFS_WAIT_MS, options.idleMs ?? PLACE_IDLE_MS);
-  };
+  return (uri, size) => download(async (signal) => (await load())(uri, { signal }), size, options.waitMs ?? IPFS_WAIT_MS, options.idleMs ?? PLACE_IDLE_MS);
 }
