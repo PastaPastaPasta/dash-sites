@@ -96,6 +96,8 @@ export interface HostOptions {
   log?: (entry: Record<string, unknown>) => void;
   /** Where external npm assets are fetched from; defaults to the npm CDNs. Bytes are checked either way. */
   external?: ExternalSource;
+  /** Decompresses brotli-encoded site files; avoids duplicating a JS decoder in the worker. */
+  brotli?: (data: Uint8Array, size: number) => Uint8Array | Promise<Uint8Array>;
   /** The site is stored in a format newer than this worker reads: look for a newer worker. */
   onNewerFormat?: () => void;
 }
@@ -317,7 +319,12 @@ export class SiteHost {
       resolution = await this.current(request);
     } catch (error) {
       this.options.log?.({ event: 'resolve-failed', error: String(error) });
-      if (url.pathname.startsWith(HOST_API)) return this.json(503, { status: 'unavailable' });
+      if (url.pathname.startsWith(HOST_API)) {
+        if (error instanceof Error && error.name === 'VerifierError') {
+          return this.json(503, { status: 'unavailable', reason: 'verifier', message: error.message });
+        }
+        return this.json(503, { status: 'unavailable' });
+      }
       return this.page(503, 'Unavailable', 'Dash Platform could not be reached', `Your browser could not get a proved answer about <code>${dashName}</code> from Dash Platform. Reload to try again.`);
     }
     if (url.pathname === RESET_PATH) return this.reset(request);
@@ -365,7 +372,11 @@ export class SiteHost {
     if (decision.kind === 'not-found') return this.page(404, '404', 'Page not found', `<code>${dashName}</code> has no page at this address.`);
     let file: Awaited<ReturnType<typeof readFile>>;
     try {
-      file = await readFile(manifest, decision.path, this.chunks(resolution.site.id), { external: this.external(), elsewhere: this.elsewhere });
+      file = await readFile(manifest, decision.path, this.chunks(resolution.site.id), {
+        external: this.external(),
+        elsewhere: this.elsewhere,
+        brotli: this.options.brotli,
+      });
     } catch (error) {
       if (error instanceof ExternalAssetError) {
         this.options.log?.({ event: 'external-refused', asset: `${error.asset.npm}@${error.asset.version}/${error.asset.path}`, attempts: error.attempts });
