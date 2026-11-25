@@ -830,8 +830,10 @@ record onto a name its writer does not own, and a replace by the previous
 owner after the name is transferred. On protocol 14 it takes a move onto
 another name the writer owns. On protocol 15 it also refuses the delete of a record, a change
 of parent domain, and any write once the name is deleted. Each refusal is
-checked against the consensus error it should raise. It also parses the
-schema with the full validation of both versions.
+checked against the consensus error it should raise. On both protocols a
+contested name takes no site record, its contenders' included, until the
+vote awards it. It also parses the schema with the full validation of both
+versions.
 All of it passed on the final schema on 2026-11-25. To run it against a
 later Platform:
 
