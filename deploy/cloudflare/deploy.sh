@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export NETWORK=${NETWORK:-mainnet} GATEWAY_DOMAIN=dash.site DENYLIST=0
 export BUILDER_URL="https://dash.site/new"
-if [ "$NETWORK" = mainnet ]; then export PEER_GATEWAY="testnet https://id.dashhq.org"; else unset PEER_GATEWAY; fi
+unset PEER_GATEWAY
 npx tsc -b
 node packages/shell/build.mjs >/dev/null
 SITE=1 node packages/builder/build.mjs >/dev/null

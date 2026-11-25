@@ -9,6 +9,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 // SITE=1 builds dash.site's /new (this builder) for the dash-site-app Worker.
 const site = process.env.SITE === '1';
+const network = process.env.NETWORK ?? 'testnet';
 const out = join(root, site ? 'dist-site' : 'dist');
 const app = site ? join(out, 'new') : out;
 rmSync(out, { recursive: true, force: true });
@@ -32,7 +33,8 @@ const result = await build({
   define: {
     'process.env.NODE_ENV': '"production"',
     __GATEWAY_DOMAIN__: JSON.stringify(process.env.GATEWAY_DOMAIN ?? 'id.dashhq.org'),
-    __NETWORK__: JSON.stringify(process.env.NETWORK ?? 'testnet'),
+    __NETWORK__: JSON.stringify(network),
+    __ONLY_NETWORK__: JSON.stringify(network),
     __REMEMBER_WALLET__: JSON.stringify(!site),
   },
   logLevel: 'warning',
@@ -54,8 +56,11 @@ const icon = fingerprint('icon.svg', readFileSync(join(root, 'src', 'icon.svg'))
 const script = Object.entries(result.metafile.outputs).find(([, output]) => output.entryPoint === 'src/main.ts')?.[0];
 if (!script) throw new Error('builder: no app entry in the esbuild output');
 const assets = { 'styles.css': styles, 'icon.svg': icon, 'assets/app.js': `assets/${script.split('/').pop()}` };
-const html = readFileSync(join(root, 'src', 'index.html'), 'utf8').replace(/(href|src)="(styles\.css|icon\.svg|assets\/app\.js)"/g, (_, attr, path) => `${attr}="${assets[path]}"`);
+const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
+  .replace(/<!--testnet-->([\s\S]*?)<!--\/testnet-->/g, (_, part) => (network === 'testnet' ? part : ''))
+  .replace(/(href|src)="(styles\.css|icon\.svg|assets\/app\.js)"/g, (_, attr, path) => `${attr}="${assets[path]}"`);
 if (Object.values(assets).some((path) => !html.includes(`"${path}"`))) throw new Error('builder: index.html no longer links every asset');
+if (network !== 'testnet' && /testnet/i.test(html)) throw new Error(`builder: the ${network} page mentions testnet`);
 writeFileSync(join(app, 'index.html'), html);
 
 if (site) {
