@@ -449,7 +449,7 @@ describe('resolve and publish', () => {
     const earlier = { ...platform.meta(), timeMs: 0 };
     const previousOwner = { domain: { ...platform.domains.get('a11ce')!, ownerId: 'bob-id' } };
     for (const value of [undefined, previousOwner]) {
-      expect((await collectGarbage({ ...alice, getName: async () => ({ value, meta: earlier }) }, gcLater(platform))).deleted).toBe(0);
+      expect((await collectGarbage({ ...alice, getDomain: async () => ({ value: value?.domain, meta: earlier }) }, gcLater(platform))).deleted).toBe(0);
     }
     expect((await resolveName(alice, 'alice')).status).toBe('ok');
   });
