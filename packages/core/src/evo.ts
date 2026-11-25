@@ -289,24 +289,31 @@ async function signingKey(sdk: EvoSDK, config: NetworkConfig, credentials: Crede
   let publicKeyHex: string;
   try {
     privateKey = credentials.privateKey ? PrivateKey.fromBytes(credentials.privateKey, config.network) : PrivateKey.fromWIF(credentials.privateKeyWif ?? '');
-    publicKeyHex = (await wallet.keyPairFromWif(privateKey.toWIF())).publicKey;
   } catch {
     throw new KeyRefused('the private key is not a valid WIF');
   }
-  const candidates = [publicKeyHex.toLowerCase(), hash160Hex(publicKeyHex)];
-  const matches = identity.publicKeys.filter((key) => candidates.includes(String(key.data).toLowerCase()) && key.disabledAt === undefined);
-  if (matches.length === 0) throw new KeyRefused('the private key does not belong to this identity, or the key was disabled');
-  const usable = matches.find((key) => key.purpose === 'AUTHENTICATION' && levels.includes(key.securityLevel));
-  if (!usable) {
-    const found = matches.map((key) => `${key.purpose}/${key.securityLevel}`).join(', ');
-    throw new KeyRefused(`this key is ${found}; an AUTHENTICATION key of level ${levels.join(' or ')} is needed`);
+  try {
+    try {
+      publicKeyHex = (await wallet.keyPairFromWif(privateKey.toWIF())).publicKey;
+    } catch {
+      throw new KeyRefused('the private key is not a valid WIF');
+    }
+    const candidates = [publicKeyHex.toLowerCase(), hash160Hex(publicKeyHex)];
+    const matches = identity.publicKeys.filter((key) => candidates.includes(String(key.data).toLowerCase()) && key.disabledAt === undefined);
+    if (matches.length === 0) throw new KeyRefused('the private key does not belong to this identity, or the key was disabled');
+    const usable = matches.find((key) => key.purpose === 'AUTHENTICATION' && levels.includes(key.securityLevel));
+    if (!usable) {
+      const found = matches.map((key) => `${key.purpose}/${key.securityLevel}`).join(', ');
+      throw new KeyRefused(`this key is ${found}; an AUTHENTICATION key of level ${levels.join(' or ')} is needed`);
+    }
+    const bound = boundContract(usable);
+    if (bound !== undefined && bound !== config.contractId) throw new KeyRefused('this key is limited to another app, so it cannot publish sites');
+    const signer = new IdentitySigner();
+    signer.addKey(privateKey);
+    return { identityKey: usable, signer };
+  } finally {
+    quietlyFree(privateKey);
   }
-  const bound = boundContract(usable);
-  if (bound !== undefined && bound !== config.contractId) throw new KeyRefused('this key is limited to another app, so it cannot publish sites');
-  const signer = new IdentitySigner();
-  signer.addKey(privateKey);
-  quietlyFree(privateKey);
-  return { identityKey: usable, signer };
 }
 
 /** Reads until `done` accepts the answer: a node can answer from the block before a write. */
