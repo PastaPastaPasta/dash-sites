@@ -1,10 +1,10 @@
 import { concat, sha256Hex } from './bytes.js';
 import { formatContentUri } from './content.js';
+import { integrityOf, isExternalAsset, type ExternalAsset } from './external.js';
 import { gzip } from './gzip.js';
 import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_MANIFEST_BYTES, MAX_MANIFEST_CHUNKS, type Limits } from './limits.js';
-import { encodeManifest, isValidContentType, isValidPath, type Manifest, type ManifestFile, type Part } from './manifest.js';
+import { encodeManifest, isValidContentType, isValidPath, usesVersion2, type Manifest, type ManifestFile, type Part } from './manifest.js';
 import { contentTypeFor, isCompressible } from './mime.js';
-import { integrityOf, isExternalAsset, type ExternalAsset } from './external.js';
 
 export interface SiteFile {
   /** Absolute site path, e.g. `/index.html`. */
@@ -77,10 +77,6 @@ function split(data: Uint8Array): Uint8Array[] {
   return out;
 }
 
-/**
- * Turns a set of files into the chunks and manifest to publish. The result depends only on the
- * files, so publishing the same site twice stores nothing new.
- */
 export interface BuildOptions {
   spa?: boolean;
   limits?: Limits;
@@ -94,6 +90,10 @@ export interface BuildOptions {
   brotli?: (data: Uint8Array) => Uint8Array;
 }
 
+/**
+ * Turns a set of files into the chunks and manifest to publish. The result depends only on the
+ * files, so publishing the same site twice stores nothing new.
+ */
 export function buildSite(files: SiteFile[], options: BuildOptions = {}): SiteBundle {
   const limits = options.limits ?? DEFAULT_LIMITS;
   if (files.length === 0) throw new PackError('a site needs at least one file');
@@ -148,8 +148,7 @@ export function buildSite(files: SiteFile[], options: BuildOptions = {}): SiteBu
   for (const path of Object.keys(options.external ?? {})) {
     if (!entries[path]?.ext) throw new PackError(`external asset ${path} is not a file of the site`);
   }
-  const v2 = Object.values(entries).some((entry) => entry.ext || entry.enc === 'br');
-  const manifest: Manifest = { v: v2 ? 2 : 1, chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
+  const manifest: Manifest = { v: usesVersion2(entries) ? 2 : 1, chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
   const encoded = encodeManifest(manifest);
   if (encoded.length > MAX_MANIFEST_BYTES) throw new PackError('manifest is too large');
   const manifestPieces = split(gzip(encoded));

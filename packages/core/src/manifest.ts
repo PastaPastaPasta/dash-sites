@@ -81,6 +81,11 @@ export function storedLength(file: ManifestFile): number {
   return total;
 }
 
+/** Whether any file needs manifest version 2: an external asset or brotli. */
+export function usesVersion2(files: Record<string, ManifestFile>): boolean {
+  return Object.values(files).some((file) => file.ext !== undefined || file.enc === 'br');
+}
+
 export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS): Manifest {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new ManifestError('not an object');
   const raw = input as Record<string, unknown>;
@@ -141,7 +146,7 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
       ...(ext ? { ext: { npm: ext.npm, version: ext.version, path: ext.path, integrity: ext.integrity } } : {}),
     };
   }
-  if (v2 && !Object.values(out).some((file) => file.ext || file.enc === 'br')) throw new ManifestError('version 2 without a version 2 feature');
+  if (v2 && !usesVersion2(out)) throw new ManifestError('version 2 without a version 2 feature');
   return { v: v2 ? 2 : 1, chunks: chunks as string[], files: out, ...(raw.spa ? { spa: true } : {}) };
 }
 

@@ -21,6 +21,7 @@ import {
   type Network,
   type NetworkConfig,
   type PlatformReader,
+  type SiteBundle,
 } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { EvoReader, EvoWriter, registerContract, type Credentials } from '@dash-sites/core/evo';
@@ -119,7 +120,7 @@ function buildOptions(): BuildOptions {
 }
 
 /** Refuses the site unless every npm CDN serves each external file with its integrity. */
-async function checkExternal(bundle: ReturnType<typeof buildSite>): Promise<void> {
+async function checkExternal(bundle: SiteBundle): Promise<void> {
   const results = await checkExternalAssets(bundle.manifest.files);
   for (const r of results) console.error(`${r.result.padEnd(11)} ${r.path} <- ${r.url}${r.detail ? ` (${r.detail})` : ''}`);
   if (results.some((r) => r.result === 'mismatch')) fail('an external file is not byte-identical to the npm package file on every CDN; store it instead');

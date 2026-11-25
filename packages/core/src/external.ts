@@ -48,15 +48,19 @@ export function isExternalAsset(value: unknown): value is ExternalAsset {
   );
 }
 
+function sri(digest: Uint8Array): string {
+  return `sha384-${base64.encode(digest)}`;
+}
+
 export function integrityOf(bytes: Uint8Array): string {
-  return `sha384-${base64.encode(sha384(bytes))}`;
+  return sri(sha384(bytes));
 }
 
 /** {@link integrityOf} with the platform's native SHA-384 where there is one: a large file is hashed on every load. */
 export async function integrityOfAsync(bytes: Uint8Array): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) return integrityOf(bytes);
-  return `sha384-${base64.encode(new Uint8Array(await subtle.digest('SHA-384', bytes as BufferSource)))}`;
+  return sri(new Uint8Array(await subtle.digest('SHA-384', bytes as BufferSource)));
 }
 
 export function externalUrls(asset: ExternalAsset): string[] {
@@ -102,37 +106,48 @@ async function readCapped(response: Response, size: number): Promise<Uint8Array 
   return at === size ? out : undefined;
 }
 
+type Fetched = { bytes: Uint8Array } | { status: number } | { failure: 'wrong size' | 'hash mismatch' };
+
 /**
- * Fetches an external asset from each CDN in turn and returns the first copy whose SHA-384 matches.
- * Redirects are refused, so a response can only come from the origins listed above.
+ * One CDN request for an external asset: the bytes only when they have exactly `size` bytes and
+ * match the asset's integrity. Redirects are refused, so a response can only come from `url`'s origin.
  */
+async function fetchChecked(fetchImpl: typeof fetch, url: string, asset: ExternalAsset, size: number): Promise<Fetched> {
+  const response = await fetchImpl(url, { redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+  if (!response.ok) return { status: response.status };
+  const bytes = await readCapped(response, size);
+  if (!bytes) return { failure: 'wrong size' };
+  if ((await integrityOfAsync(bytes)) !== asset.integrity) return { failure: 'hash mismatch' };
+  return { bytes };
+}
+
+function errorText(error: unknown): string {
+  return String((error as Error)?.message ?? error);
+}
+
+/** Fetches an external asset from each CDN in turn and returns the first copy whose SHA-384 matches. */
 export function cdnSource(fetchImpl: typeof fetch = (input, init) => fetch(input, init)): ExternalSource {
   return async (asset, size) => {
     const attempts: string[] = [];
     for (const url of externalUrls(asset)) {
       const origin = new URL(url).origin;
       try {
-        const response = await fetchImpl(url, { redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
-        if (!response.ok) {
-          attempts.push(`${origin}: HTTP ${response.status}`);
-          continue;
-        }
-        const bytes = await readCapped(response, size);
-        if (!bytes) {
-          attempts.push(`${origin}: wrong size`);
-          continue;
-        }
-        if ((await integrityOfAsync(bytes)) !== asset.integrity) {
-          attempts.push(`${origin}: hash mismatch`);
-          continue;
-        }
-        return bytes;
+        const fetched = await fetchChecked(fetchImpl, url, asset, size);
+        if ('bytes' in fetched) return fetched.bytes;
+        attempts.push(`${origin}: ${'status' in fetched ? `HTTP ${fetched.status}` : fetched.failure}`);
       } catch (error) {
-        attempts.push(`${origin}: ${String((error as Error)?.message ?? error)}`);
+        attempts.push(`${origin}: ${errorText(error)}`);
       }
     }
     throw new ExternalAssetError(asset, attempts);
   };
+}
+
+export interface ExternalCheck {
+  path: string;
+  url: string;
+  result: 'ok' | 'mismatch' | 'unreachable';
+  detail?: string;
 }
 
 /**
@@ -143,22 +158,20 @@ export function cdnSource(fetchImpl: typeof fetch = (input, init) => fetch(input
 export async function checkExternalAssets(
   files: Record<string, { size: number; ext?: ExternalAsset }>,
   fetchImpl: typeof fetch = (input, init) => fetch(input, init),
-): Promise<Array<{ path: string; url: string; result: 'ok' | 'mismatch' | 'unreachable'; detail?: string }>> {
-  const out: Array<{ path: string; url: string; result: 'ok' | 'mismatch' | 'unreachable'; detail?: string }> = [];
+): Promise<ExternalCheck[]> {
+  const out: ExternalCheck[] = [];
   for (const [path, file] of Object.entries(files)) {
     if (!file.ext) continue;
     for (const url of externalUrls(file.ext)) {
       try {
-        const response = await fetchImpl(url, { redirect: 'error', credentials: 'omit', cache: 'no-store' });
-        if (!response.ok) {
-          out.push({ path, url, result: response.status === 404 ? 'mismatch' : 'unreachable', detail: `HTTP ${response.status}` });
-          continue;
+        const fetched = await fetchChecked(fetchImpl, url, file.ext, file.size);
+        if ('status' in fetched) {
+          out.push({ path, url, result: fetched.status === 404 ? 'mismatch' : 'unreachable', detail: `HTTP ${fetched.status}` });
+        } else {
+          out.push({ path, url, result: 'bytes' in fetched ? 'ok' : 'mismatch' });
         }
-        const bytes = await readCapped(response, file.size);
-        const ok = bytes !== undefined && (await integrityOfAsync(bytes)) === file.ext.integrity;
-        out.push({ path, url, result: ok ? 'ok' : 'mismatch' });
       } catch (error) {
-        out.push({ path, url, result: 'unreachable', detail: String((error as Error)?.message ?? error) });
+        out.push({ path, url, result: 'unreachable', detail: errorText(error) });
       }
     }
   }

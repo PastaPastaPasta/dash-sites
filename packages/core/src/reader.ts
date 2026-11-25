@@ -1,5 +1,5 @@
 import { decompress as brotliDecompress } from 'brotli/decompress';
-import { concat, sha256Hex } from './bytes.js';
+import { concat, sha256Hex, toHex } from './bytes.js';
 import { cdnSource, integrityOfAsync, type ExternalSource } from './external.js';
 import type { ContentRef } from './content.js';
 import { gunzip } from './gzip.js';
@@ -58,7 +58,7 @@ const defaultExternal = cdnSource();
 async function sha256HexAsync(bytes: Uint8Array): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) return sha256Hex(bytes);
-  return [...new Uint8Array(await subtle.digest('SHA-256', bytes as BufferSource))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return toHex(new Uint8Array(await subtle.digest('SHA-256', bytes as BufferSource)));
 }
 
 /** Reads one file of a manifest and checks it against the manifest's size and hash. */
