@@ -137,65 +137,17 @@ export function clearSession(dir: string, network: Network): boolean {
 }
 
 export function qrTerminal(uri: string, options: { color?: boolean } = {}): string {
-  const rows = encodeQR(uri, 'raw', { ecc: 'low', border: 2 });
-  const color = options.color ?? false;
-  const lines: string[] = [];
-  for (let y = 0; y < rows.length; y += 2) {
-    const top = rows[y] ?? [];
-    const bottom = rows[y + 1];
-    let line = '';
-    let style = '';
-    for (let x = 0; x < top.length; x++) {
-      const darkTop = Boolean(top[x]);
-      const darkBottom = Boolean(bottom?.[x]);
-      if (!color) {
-        if (darkTop && darkBottom) line += '█';
-        else if (darkTop) line += '▀';
-        else if (darkBottom) line += '▄';
-        else line += ' ';
-        continue;
-      }
-      let nextStyle: string;
-      let ch: string;
-      if (darkTop && darkBottom) {
-        nextStyle = '\x1b[48;5;16m';
-        ch = ' ';
-      } else if (!darkTop && !darkBottom) {
-        nextStyle = '\x1b[48;5;231m';
-        ch = ' ';
-      } else {
-        nextStyle = '\x1b[38;5;16;48;5;231m';
-        ch = darkTop ? '▀' : '▄';
-      }
-      if (nextStyle !== style) {
-        line += nextStyle;
-        style = nextStyle;
-      }
-      line += ch;
-    }
-    lines.push(color ? `${line}\x1b[0m` : line);
-  }
-  return lines.join('\n');
+  const ascii = encodeQR(uri, 'ascii', { ecc: 'low', border: 2 }).trimEnd();
+  if (!options.color) return ascii;
+  return ascii
+    .split('\n')
+    .map((line) => `\x1b[38;5;231;48;5;16m${line}\x1b[0m`)
+    .join('\n');
 }
 
 export function qrSvg(uri: string): string {
-  const rows = encodeQR(uri, 'raw', { ecc: 'low', border: 4 });
-  let path = '';
-  rows.forEach((row, y) => {
-    let x = 0;
-    while (x < row.length) {
-      if (!row[x]) {
-        x += 1;
-        continue;
-      }
-      let end = x;
-      while (row[end]) end += 1;
-      path += `M${x} ${y}h${end - x}v1h${x - end}z`;
-      x = end;
-    }
-  });
-  const size = rows.length;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#fff"/><path d="${path}" fill="#000"/></svg>\n`;
+  const svg = encodeQR(uri, 'svg', { ecc: 'low', border: 4 });
+  return `${svg.replace('>', ' shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/>')}\n`;
 }
 
 export interface WalletLoginInput {

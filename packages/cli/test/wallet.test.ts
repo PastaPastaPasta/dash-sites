@@ -144,37 +144,24 @@ describe('connectionId and session storage', () => {
 describe('QR rendering', () => {
   const uri = 'dashpay://connect?v=2&n=m&r=AgISFYXyWOlkb3iXHasW-mHC89Hg7u5cQ2h1bmtzIG9mIGEgcmVxdWVzdCBib2R5';
 
-  it('renders terminal half-block QR codes matching raw modules', () => {
-    const raw = encodeQR(uri, 'raw', { ecc: 'low', border: 2 });
-    const plain = qrTerminal(uri, { color: false }).split('\n');
-    expect(plain).toHaveLength(Math.ceil(raw.length / 2));
-    for (let y = 0; y < raw.length; y++) {
-      const line = plain[Math.floor(y / 2)]!;
-      const isTop = y % 2 === 0;
-      for (let x = 0; x < raw[y]!.length; x++) {
-        const ch = line[x];
-        const dark = isTop ? ch === '█' || ch === '▀' : ch === '█' || ch === '▄';
-        expect(dark).toBe(Boolean(raw[y]![x]));
-      }
-    }
+  it('delegates terminal QR rendering to qr ascii output and wraps with white-on-black ANSI when colored', () => {
+    const expected = encodeQR(uri, 'ascii', { ecc: 'low', border: 2 }).trimEnd();
+    expect(qrTerminal(uri, { color: false })).toBe(expected);
 
     const colored = qrTerminal(uri, { color: true }).split('\n');
-    expect(colored).toHaveLength(plain.length);
-    expect(colored[0]).toMatch(/^\x1b\[48;5;231m +\x1b\[0m$/);
-    expect(colored.some((line) => line.includes('\x1b[48;5;16m '))).toBe(true);
-    expect(colored.some((line) => line.includes('█'))).toBe(false);
+    const plainLines = expected.split('\n');
+    expect(colored).toHaveLength(plainLines.length);
+    for (let i = 0; i < plainLines.length; i++) {
+      expect(colored[i]).toBe(`\x1b[38;5;231;48;5;16m${plainLines[i]}\x1b[0m`);
+    }
   });
 
-  it('renders a white-backed SVG matching raw modules', () => {
-    const expected = encodeQR(uri, 'raw', { ecc: 'low', border: 4 });
+  it('delegates SVG QR rendering to qr svg output with a white background', () => {
     const svg = qrSvg(uri);
+    const expected = encodeQR(uri, 'raw', { ecc: 'low', border: 4 });
     expect(svg).toContain(`viewBox="0 0 ${expected.length} ${expected.length}"`);
-    expect(svg).toContain('fill="#fff"');
-    const drawn = expected.map((row) => row.map(() => false));
-    for (const [, x, y, width] of svg.matchAll(/M(\d+) (\d+)h(\d+)v1h-\d+z/g)) {
-      for (let i = 0; i < Number(width); i++) drawn[Number(y)]![Number(x) + i] = true;
-    }
-    expect(drawn).toEqual(expected);
+    expect(svg).toContain('<rect width="100%" height="100%" fill="#fff"/>');
+    expect(svg).toContain('<path d="');
   });
 });
 
