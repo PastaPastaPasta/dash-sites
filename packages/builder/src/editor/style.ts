@@ -43,7 +43,8 @@ html.editing,html.editing body{overflow:hidden}
 .ed-icon{font:500 18px/1 var(--display);width:32px;height:32px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--ink);cursor:pointer}
 .ed-icon:disabled{opacity:.4;cursor:default}
 .ed-themes button{font:600 13px var(--display);padding:4px 11px;cursor:pointer}
-.ed-cost{display:flex;flex-direction:column;align-items:flex-end;font-size:12.5px;line-height:1.25;color:var(--muted)}
+.ed-themes{flex:none;flex-wrap:nowrap}
+.ed-cost{flex:none;display:flex;flex-direction:column;align-items:flex-end;font-size:12.5px;line-height:1.25;color:var(--muted);white-space:nowrap}
 .ed-cost b{color:var(--ink);font-size:13.5px;font-weight:650}
 .ed-add{font:600 13px var(--display);color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:6px;padding:6px 8px;cursor:pointer;max-width:11rem}
 .ed-done{font:650 14px var(--display);color:var(--blue-ink);background:var(--blue);border:0;border-radius:6px;padding:8px 18px;cursor:pointer}
@@ -62,5 +63,5 @@ html.editing,html.editing body{overflow:hidden}
 .ed-error{margin:0;color:var(--bad)}
 .dsp{min-height:100%}
 .dsp main{min-height:60vh}
-@media (max-width:760px){.ed-split{display:none}.ed-bar{padding:8px 10px}.ed-group{gap:6px}.ed-title{display:none}.ed-themes button{padding:3px 8px;font-size:12px}.ed-cost{margin-left:auto}}
+@media (max-width:760px){.ed-split{display:none}.ed-bar{padding:8px 10px;gap:8px 6px}.ed-group{display:contents}.ed-title{display:none}.ed-done{order:1;margin-left:auto}.ed-themes{order:2}.ed-themes button{padding:3px 8px;font-size:12px}.ed-cost{order:3;margin-left:auto}}
 `;
