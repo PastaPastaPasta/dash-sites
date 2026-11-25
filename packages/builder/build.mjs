@@ -6,7 +6,7 @@ import { build } from 'esbuild';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-// SITE=1 builds dash.site's /new (this builder) and /publish pages for the dash-site-app Worker.
+// SITE=1 builds dash.site's /new (this builder) for the dash-site-app Worker.
 const site = process.env.SITE === '1';
 const out = join(root, site ? 'dist-site' : 'dist');
 const app = site ? join(out, 'new') : out;
@@ -14,7 +14,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(join(app, 'assets'), { recursive: true });
 
 await build({
-  entryPoints: { app: join(root, 'src', 'main.ts'), ...(site && { publish: join(root, 'src', 'publish.ts') }) },
+  entryPoints: { app: join(root, 'src', 'main.ts') },
   outdir: join(app, 'assets'),
   bundle: true,
   splitting: true,
@@ -39,11 +39,8 @@ if (site) {
   // /new is served without a trailing slash, so the page's relative links are made absolute.
   const page = readFileSync(join(app, 'index.html'), 'utf8').replace(/(href|src)="(styles\.css|icon\.svg|assets\/app\.js)"/g, '$1="/new/$2"').replace('<a class="mark" href="./">', '<a class="mark" href="/">');
   writeFileSync(join(app, 'index.html'), page);
-  const publish = join(out, 'publish');
-  cpSync(join(root, 'src', 'publish'), publish, { recursive: true });
-  const showcase = join(root, '..', 'showcase', 'site');
-  cpSync(join(showcase, 'fonts'), join(publish, 'fonts'), { recursive: true });
-  cpSync(join(showcase, 'img', 'mark.svg'), join(publish, 'mark.svg'));
+  // /publish was a separate name-check page; /new does all of it now, so old links land there.
+  writeFileSync(join(out, '_redirects'), '/publish /new 301\n/publish/* /new 301\n');
   const csp = [
     "default-src 'none'",
     "script-src 'self' 'wasm-unsafe-eval'",
