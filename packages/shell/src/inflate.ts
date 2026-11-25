@@ -2,7 +2,8 @@ import { BrotliDecStream, BrotliStreamResultCode, initSync } from 'brotli-dec-wa
 
 /** Turns brotli input into output as it arrives; `done` once the stream has ended. */
 export interface Inflater {
-  push(input: Uint8Array): Uint8Array[];
+  /** The output for `input`; throws once it would exceed `limit` bytes. */
+  push(input: Uint8Array, limit: number): Uint8Array[];
   readonly done: boolean;
   free(): void;
 }
@@ -22,17 +23,15 @@ export function brotliInflater(decoder: () => BufferSource): Inflater {
     get done() {
       return done;
     },
-    push(input) {
+    push(input, limit) {
       const out: Uint8Array[] = [];
-      for (;;) {
-        if (done) {
-          if (input.length) throw new Error('the compressed data continues past its end');
-          return out;
-        }
+      let produced = 0;
+      while (!done) {
         const result = stream.dec(input, OUTPUT_CHUNK);
-        const { code, buf } = result;
-        const used = result.input_offset;
+        const { code, buf, input_offset: used } = result;
         result.free();
+        produced += buf.length;
+        if (produced > limit) throw new Error('the decompressed data is larger than expected');
         if (buf.length) out.push(buf);
         input = input.subarray(used);
         if (code === BrotliStreamResultCode.ResultSuccess) done = true;
@@ -41,6 +40,8 @@ export function brotliInflater(decoder: () => BufferSource): Inflater {
           return out;
         }
       }
+      if (input.length) throw new Error('the compressed data continues past its end');
+      return out;
     },
     free: () => stream.free(),
   };

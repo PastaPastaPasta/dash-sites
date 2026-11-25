@@ -355,7 +355,8 @@ or instantiating anything, and keeps them in Cache Storage; browsers will not
 store a worker script that large for a private window. The verifier build
 patches the SDK bundle to drop the inline copy and to instantiate the module
 the worker compiled; the build stops if the bundle no longer has the shape
-the patch expects. On a static deployment (`GATEWAY_DOMAIN`)
+the patch expects. The compressed file is named for the WebAssembly it
+holds, so `sw.js` does not depend on the brotli encoder that built it. On a static deployment (`GATEWAY_DOMAIN`)
 every name's worker fetches the verifier from the bare domain
 (`https://dash.site/dash-sites-verifier-<hash>.js` and `….wasm.br`, CORS-enabled), so the
 browser downloads it once for every name: until the domain is on the PSL all

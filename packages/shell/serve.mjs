@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const dist = join(dirname(fileURLToPath(import.meta.url)), 'dist');
 const port = Number(process.argv[2] ?? 8080);
 if (!existsSync(join(dist, 'sw.js'))) throw new Error('build the shell first: npm run build -w @dash-sites/shell');
-const scripts = new Set(readdirSync(dist).filter((file) => file.endsWith('.js')));
+const scripts = new Set(readdirSync(dist).filter((file) => /\.(js|br)$/.test(file)));
 
 createServer((req, res) => {
   const name = (req.url ?? '/').split('?')[0].slice(1);

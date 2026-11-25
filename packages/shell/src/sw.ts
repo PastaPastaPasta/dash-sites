@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { readerConfig, toHex, type Network, type PlatformReader } from '@dash-sites/core';
+import { readerConfig, toHex, type Network } from '@dash-sites/core';
 import { hostedDenylist } from './hosted-denylist.js';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
@@ -8,7 +8,7 @@ import type { Verifier } from './verifier.js';
 
 declare const self: ServiceWorkerGlobalScope & { dashSitesVerifier?: Verifier };
 declare const __VERIFIER__: Pinned;
-declare const __SDK__: Pinned & { packedSize: number };
+declare const __SDK__: Pinned;
 declare const __NETWORK__: string;
 declare const __CONTRACT_ID__: string;
 declare const __BUILDER_URL__: string;
@@ -25,6 +25,8 @@ interface Pinned {
 const matches = async (bytes: Uint8Array, file: Pinned): Promise<boolean> =>
   toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))) === file.sha256;
 
+const VERIFIER_URLS = [__VERIFIER__.url, __SDK__.url];
+
 /**
  * The verifier is two files: its script, and the Dash SDK's WebAssembly served compressed with brotli.
  * The worker fetches both and keeps them in Cache Storage rather than importing them, because browsers
@@ -35,89 +37,79 @@ async function loadVerifier(): Promise<{ verifier: Verifier; sdk: WebAssembly.Mo
   const cache = await caches.open(SHELL_CACHE).catch(() => undefined);
   const keptSdk = kept(cache, __SDK__);
   // The SDK is most of the bytes, so its download starts while the script is still coming.
-  const sdkResponse = keptSdk.then((bytes) => (bytes ? undefined : fetch(__SDK__.url)));
-  sdkResponse.catch(() => undefined);
-  const source = (await kept(cache, __VERIFIER__)) ?? (await downloadChecked(cache, __VERIFIER__, 'text/javascript', (body) => collect(body, __VERIFIER__.size)));
-  (0, eval)(new TextDecoder().decode(source));
-  const verifier = self.dashSitesVerifier as Verifier;
-  const wasm =
-    (await keptSdk) ??
-    (await downloadChecked(cache, __SDK__, 'application/wasm', (body) => inflate(body, verifier.inflater()), await sdkResponse.catch(() => undefined)));
+  const early = new AbortController();
+  const sdkResponse = keptSdk.then((bytes) => (bytes ? undefined : fetch(__SDK__.url, { signal: early.signal }))).catch(() => undefined);
+  let verifier: Verifier;
+  try {
+    const source = (await kept(cache, __VERIFIER__)) ?? (await downloadChecked(cache, __VERIFIER__, (body) => collect(body, __VERIFIER__.size)));
+    (0, eval)(new TextDecoder().decode(source));
+    verifier = self.dashSitesVerifier as Verifier;
+  } catch (error) {
+    early.abort();
+    throw error;
+  }
+  const wasm = (await keptSdk) ?? (await downloadChecked(cache, __SDK__, (body) => inflate(body, verifier.inflater()), await sdkResponse));
   return { verifier, sdk: await WebAssembly.compile(wasm as BufferSource) };
 }
 
+/** A stored copy that matches; one that cannot be read or does not match is dropped. */
 async function kept(cache: Cache | undefined, file: Pinned): Promise<Uint8Array | undefined> {
   const response = await cache?.match(file.url).catch(() => undefined);
-  const bytes = response && new Uint8Array(await response.arrayBuffer());
-  return bytes && (await matches(bytes, file)) ? bytes : undefined;
+  if (!response) return undefined;
+  const bytes = await response.arrayBuffer().then(
+    (buffer) => new Uint8Array(buffer),
+    () => undefined,
+  );
+  if (bytes && (await matches(bytes, file))) return bytes;
+  await cache?.delete(file.url).catch(() => undefined);
+  return undefined;
 }
 
 /** Retried past the HTTP cache: one bad response cached as immutable would otherwise break every name. */
 async function downloadChecked(
   cache: Cache | undefined,
   file: Pinned,
-  type: string,
-  read: (body: ReadableStream<Uint8Array>) => Promise<Uint8Array>,
+  decode: (body: ReadableStream<Uint8Array>) => Promise<Uint8Array>,
   first?: Response,
 ): Promise<Uint8Array> {
   const attempt = async (response: Response | Promise<Response>): Promise<Uint8Array | undefined> => {
     const { ok, status, body } = await response;
     if (!ok || !body) throw new Error(`the verifier could not be downloaded (${status})`);
-    const bytes = await read(body);
+    const bytes = await decode(body);
     return (await matches(bytes, file)) ? bytes : undefined;
   };
   const bytes = (await attempt(first ?? fetch(file.url)).catch(() => undefined)) ?? (await attempt(fetch(file.url, { cache: 'reload' })));
   if (!bytes) throw new Error('the verifier does not match the hash this worker was built with');
-  await cache?.put(file.url, new Response(bytes as BodyInit, { headers: { 'Content-Type': type } })).catch(() => undefined);
+  await cache?.put(file.url, new Response(bytes as BodyInit)).catch(() => undefined);
   return bytes;
 }
 
-/** Reads a download into a buffer of the size the worker was built with, reporting progress. */
-async function collect(body: ReadableStream<Uint8Array>, size: number): Promise<Uint8Array> {
+/**
+ * Reads a download into a buffer of the size the worker was built with. `transform` gets each chunk
+ * and the room left, and `tell` hears how full the buffer is.
+ */
+async function collect(
+  body: ReadableStream<Uint8Array>,
+  size: number,
+  transform: (chunk: Uint8Array, room: number) => Iterable<Uint8Array> = (chunk) => [chunk],
+  tell?: (share: number) => void,
+): Promise<Uint8Array> {
   const bytes = new Uint8Array(size);
   let loaded = 0;
-  await read(body, (chunk) => {
-    if (loaded + chunk.length > size) throw new Error('the verifier is larger than the one this worker was built with');
-    bytes.set(chunk, loaded);
-    loaded += chunk.length;
-  });
-  return bytes.subarray(0, loaded);
-}
-
-/** Decompresses the SDK as it arrives, into a buffer of the size the worker was built with. */
-async function inflate(body: ReadableStream<Uint8Array>, inflater: Inflater): Promise<Uint8Array> {
-  const bytes = new Uint8Array(__SDK__.size);
-  let loaded = 0;
-  try {
-    await read(body, (chunk) => {
-      for (const out of inflater.push(chunk)) {
-        if (loaded + out.length > bytes.length) throw new Error('the verifier is larger than the one this worker was built with');
-        bytes.set(out, loaded);
-        loaded += out.length;
-      }
-    });
-    if (!inflater.done) throw new Error('the verifier download was cut short');
-  } finally {
-    inflater.free();
-  }
-  return bytes.subarray(0, loaded);
-}
-
-const PROGRESS_TOTAL = __VERIFIER__.size + __SDK__.packedSize;
-let received = 0;
-let told = 0;
-
-async function read(body: ReadableStream<Uint8Array>, each: (chunk: Uint8Array) => void): Promise<void> {
+  let told = 0;
   const reader = body.getReader();
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) return;
-      each(value);
-      received += value.length;
-      if (Date.now() - told > 100) {
+      if (done) return bytes.subarray(0, loaded);
+      for (const out of transform(value, size - loaded)) {
+        if (loaded + out.length > size) throw new Error('the verifier is larger than the one this worker was built with');
+        bytes.set(out, loaded);
+        loaded += out.length;
+      }
+      if (tell && Date.now() - told > 100) {
         told = Date.now();
-        void progress(Math.min(1, received / PROGRESS_TOTAL));
+        tell(loaded / size);
       }
     }
   } catch (error) {
@@ -126,34 +118,41 @@ async function read(body: ReadableStream<Uint8Array>, each: (chunk: Uint8Array) 
   }
 }
 
+/** Decompresses the SDK as it arrives and tells open pages how far it has got. */
+async function inflate(body: ReadableStream<Uint8Array>, inflater: Inflater): Promise<Uint8Array> {
+  try {
+    const bytes = await collect(body, __SDK__.size, (chunk, room) => inflater.push(chunk, room), (share) => void progress(share));
+    if (!inflater.done) throw new Error('the verifier download was cut short');
+    return bytes;
+  } finally {
+    inflater.free();
+  }
+}
+
 async function progress(share: number): Promise<void> {
   for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) client.postMessage({ dashSitesProgress: share });
 }
 
-let loading: ReturnType<typeof loadVerifier> | undefined;
-function load(): ReturnType<typeof loadVerifier> {
-  loading ??= loadVerifier().catch((error: unknown) => {
-    loading = undefined;
-    throw error;
-  });
-  return loading;
+/** Shares one run of `start` until it fails; the next call after a failure starts again. */
+function retryable<T>(start: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | undefined;
+  return () =>
+    (pending ??= start().catch((error: unknown) => {
+      pending = undefined;
+      throw error;
+    }));
 }
 
-let reader: Promise<PlatformReader> | undefined;
-function connect(): Promise<PlatformReader> {
-  reader ??= load()
-    .then(({ verifier, sdk }) => verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk))
-    .catch((error: unknown) => {
-      reader = undefined;
-      throw error;
-    });
-  return reader;
-}
+const load = retryable(loadVerifier);
+const connect = retryable(async () => {
+  const { verifier, sdk } = await load();
+  return verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk);
+});
 
 /** Earlier versions' verifier files are dropped once this worker is in charge. */
 async function pruneShellCache(): Promise<void> {
   const cache = await caches.open(SHELL_CACHE);
-  const current = new Set([__VERIFIER__.url, __SDK__.url].map((url) => new URL(url, self.location.href).href));
+  const current = new Set(VERIFIER_URLS.map((url) => new URL(url, self.location.href).href));
   for (const request of await cache.keys()) {
     if (new URL(request.url).pathname.startsWith('/dash-sites-verifier-') && !current.has(request.url)) await cache.delete(request);
   }
@@ -183,7 +182,7 @@ const host = new SiteHost({
   label: self.location.hostname.split('.')[0] as string,
   network: __NETWORK__,
   reader: connect,
-  store: new BrowserStore([__VERIFIER__.url, __SDK__.url]),
+  store: new BrowserStore(VERIFIER_URLS),
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
   denied: hostedDenied,

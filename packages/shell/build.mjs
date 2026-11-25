@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { brotliCompressSync, constants, gunzipSync } from 'node:zlib';
+import { brotliCompressSync, brotliDecompressSync, constants, gunzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -42,11 +42,11 @@ const sdkPlugin = {
   setup(b) {
     b.onLoad({ filter: /[\\/]@dashevo[\\/]evo-sdk[\\/]dist[\\/]evo-sdk\.module\.js$/ }, ({ path }) => {
       let code = readFileSync(path, 'utf8');
-      const inline = only(code, /const (\w+)="(H4sI[A-Za-z0-9+/=]+)"/, 'inline WebAssembly');
+      const inline = only(code, /const ([\w$]+)="(H4sI[A-Za-z0-9+/=]+)"/, 'inline WebAssembly');
       sdkWasm = gunzipSync(Buffer.from(inline[2], 'base64'));
       if (sdkWasm.readUInt32BE(0) !== 0x0061736d) throw new Error('evo-sdk: the inline payload is not WebAssembly');
       code = code.replace(inline[0], () => `const ${inline[1]}=""`);
-      const init = only(code, /async function (\w+)\((\w+)\)\{if\((\w+)\)\{if\(void 0===\2\)\{return \w+\(\{module:await \w+\(\)\}\)\}return (\w+)\(\2\)\}/, 'WebAssembly init');
+      const init = only(code, /async function ([\w$]+)\(([\w$]+)\)\{if\(([\w$]+)\)\{if\(void 0===\2\)\{return [\w$]+\(\{module:await [\w$]+\(\)\}\)\}return ([\w$]+)\(\2\)\}/, 'WebAssembly init');
       const [whole, , arg, , instantiate] = init;
       code = code.replace(whole, () => whole.replace('{', () => `{if(void 0===${arg})return ${instantiate}({module_or_path:globalThis.dashSitesSdk});`));
       return { contents: code, loader: 'js' };
@@ -69,19 +69,29 @@ if (!sdkWasm) throw new Error('evo-sdk: the verifier build did not load the SDK 
 const verifierName = `dash-sites-verifier-${sha256(verifier).slice(0, 16)}.js`;
 writeFileSync(join(out, verifierName), verifier);
 
-/** Brotli at quality 11 takes a minute or two, so the result is kept per input hash. */
+/**
+ * Brotli at quality 11 takes a minute or two, so the result is kept per input hash, and checked on
+ * every build. The file is named for the WebAssembly it holds: that is what the worker checks, and
+ * another brotli encoder may produce different bytes for it.
+ */
 function brotli(data) {
   const cached = join(root, 'node_modules', '.cache', `sdk-${sha256(data)}.q11w24.br`);
-  if (existsSync(cached)) return readFileSync(cached);
+  const fits = (packed) => brotliDecompressSync(packed).equals(data);
+  if (existsSync(cached)) {
+    const packed = readFileSync(cached);
+    if (fits(packed)) return packed;
+  }
   const packed = brotliCompressSync(data, {
     params: { [constants.BROTLI_PARAM_QUALITY]: 11, [constants.BROTLI_PARAM_LGWIN]: 24, [constants.BROTLI_PARAM_SIZE_HINT]: data.length },
   });
+  if (!fits(packed)) throw new Error('brotli did not round-trip the SDK WebAssembly');
   mkdirSync(dirname(cached), { recursive: true });
-  writeFileSync(cached, packed);
+  writeFileSync(`${cached}.tmp`, packed);
+  renameSync(`${cached}.tmp`, cached);
   return packed;
 }
 const sdkPacked = brotli(sdkWasm);
-const sdkName = `dash-sites-verifier-${sha256(sdkPacked).slice(0, 16)}.wasm.br`;
+const sdkName = `dash-sites-verifier-${sha256(sdkWasm).slice(0, 16)}.wasm.br`;
 writeFileSync(join(out, sdkName), sdkPacked);
 // On a static deployment every name's worker fetches the verifier from the bare domain, so the
 // browser downloads it once for all names (they are one site for the HTTP cache).
@@ -131,7 +141,7 @@ await build({
     __CONTRACT_ID__: JSON.stringify(process.env.CONTRACT_ID ?? ''),
     __BUILDER_URL__: JSON.stringify(builderUrl),
     __VERIFIER__: JSON.stringify({ url: verifierUrl, sha256: sha256(verifier), size: verifier.length }),
-    __SDK__: JSON.stringify({ url: sdkUrl, sha256: sha256(sdkWasm), size: sdkWasm.length, packedSize: sdkPacked.length }),
+    __SDK__: JSON.stringify({ url: sdkUrl, sha256: sha256(sdkWasm), size: sdkWasm.length }),
     __DENYLIST__: JSON.stringify(hosted),
     __BOOT_PAGE__: JSON.stringify(html),
   },
