@@ -48,13 +48,14 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
   const manifest = await loadManifest(resolution.content, chunks).catch((error: unknown) => {
     throw error instanceof NewerFormatError ? newer : error;
   });
+  if (manifest.partial) throw newer;
   if (!manifest.files[PAGE_MODEL_PATH]) throw new ReopenError(`The site at ${name} was not made with the page editor, so there is nothing to open. Upload its files instead.`);
   const outsidePlatform = { elsewhere: (at: string, file: ManifestFile) => readElsewhere(at, file, places) };
   let parsed: unknown;
   try {
     parsed = JSON.parse(utf8.decode((await readFile(manifest, PAGE_MODEL_PATH, chunks, outsidePlatform)).bytes));
-  } catch {
-    throw new ReopenError(`The page stored at ${name} cannot be read.`);
+  } catch (error) {
+    throw error instanceof NewerFormatError ? newer : new ReopenError(`The page stored at ${name} cannot be read.`);
   }
   const model = readPageModel(parsed);
   const assets: SiteAsset[] = [];
@@ -71,6 +72,7 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
       unknownPlaces += (entry.src ?? []).length - known.length;
       if (known.length > 0) outside.push({ sha256: entry.sha256, places: known });
     } catch (error) {
+      if (error instanceof NewerFormatError) throw newer;
       if (!(error instanceof ElsewhereError)) throw error;
       lost.push(path);
     }

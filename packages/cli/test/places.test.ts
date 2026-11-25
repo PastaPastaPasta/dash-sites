@@ -68,6 +68,7 @@ describe('an error from the IPFS client', () => {
     const stray = Object.assign(new Error('Invalid state: Controller is already closed'), { stack: 'TypeError: Invalid state\n    at AbortSignal.t (eval at startIpfs (file:///x/packages/core/dist/ipfs.js:36:5), <anonymous>:5:52130)' });
     expect(fromIpfsClient(stray)).toBe(true);
     expect(fromIpfsClient(new Error('eval at startIpfs'))).toBe(false);
+    expect(fromIpfsClient(new Error('it said\n    at x (eval at startIpfs (y)'))).toBe(false);
     expect(fromIpfsClient(undefined)).toBe(false);
   });
 });

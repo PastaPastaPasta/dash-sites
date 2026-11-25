@@ -85,9 +85,22 @@ What stays as in every other format:
 - **Writers write the lowest version** (rule 4): 1, then 2 for brotli or npm
   files, then 3 only when a file has `src`.
 
-A reader that ignored something marks the manifest as partial. A partial
-manifest is never written back, and `gc` and `publish --prune` delete nothing
-for an identity while one of its manifests is partial. The builder warns
+What a version 3 reader still requires of every file entry, or the whole
+manifest is invalid: `type`, `size` and `sha256` as in version 1; `parts`,
+which is `[]` for a file kept at places; and an `enc`, when there is one,
+that is 1 to 16 characters of `a-z`, `0-9` and `-`.
+
+A version 3 manifest is in canonical form when it is UTF-8 JSON with no
+whitespace, with the keys of every object sorted by UTF-16 code unit and
+numbers and strings written as `JSON.stringify` writes them, and with `spa`
+either `true` or absent. A key added later is never a whole number in digits,
+which JavaScript would order differently.
+
+A reader that ignored a key or refused a file marks the manifest as partial.
+A partial manifest is never written back, and `gc` and `publish --prune`
+delete nothing for an identity while a manifest one of its names shows is
+partial. The builder does not open a partial manifest for editing: it says
+the site was published with a newer builder and asks for a reload. It warns
 before a page it reopened would be published without places it did not know.
 
 ## What a reader does with each version
@@ -233,6 +246,13 @@ format version, with the chunk bytes as they were written:
 - `site-v2.json` is a version 2 manifest with brotli and an npm file.
 - `site-v3.json` is a version 3 manifest with a file kept at two places, the
   first of which does not answer, next to brotli and an npm file.
+- `site-v3-later.json` is a version 3 manifest as a later writer might write
+  one, written by hand because no writer here can: a key the reader does not
+  know in the manifest and in a file entry, a place of an unknown kind next
+  to one that answers, and files with an unknown `enc` or only unknown
+  places. It fixes what version 3 being open means: the reader serves the
+  files it lists as served, refuses the others one by one, and marks the
+  manifest partial.
 
 The fixture tests:
 

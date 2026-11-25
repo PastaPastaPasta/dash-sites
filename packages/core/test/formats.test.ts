@@ -33,11 +33,11 @@ describe('stored formats', () => {
       const source = (hashes: string[]) => platform.as('anyone').getChunks(resolution.site.id, hashes);
       const manifest = await loadManifest(resolution.content, source);
       expect(manifest.v).toBe(fixture.manifestVersion);
-      expect(Object.keys(manifest.files).sort()).toEqual(Object.keys(fixture.files).sort());
-      for (const [path, sha256] of Object.entries(fixture.files)) {
-        const file = await readFile(manifest, path, source, { external: fixtureExternal(fixture), elsewhere: (at, entry) => readElsewhere(at, entry, fixturePlaces(fixture)) });
-        expect(sha256Hex(file.bytes)).toBe(sha256);
-      }
+      expect(Object.keys(manifest.files).sort()).toEqual([...Object.keys(fixture.files), ...(fixture.unread ?? [])].sort());
+      expect(manifest.partial ?? false).toBe(fixture.unread !== undefined);
+      const read = (path: string) => readFile(manifest, path, source, { external: fixtureExternal(fixture), elsewhere: (at, entry) => readElsewhere(at, entry, fixturePlaces(fixture)) });
+      for (const [path, sha256] of Object.entries(fixture.files)) expect(sha256Hex((await read(path)).bytes)).toBe(sha256);
+      for (const path of fixture.unread ?? []) await expect(read(path), path).rejects.toThrow();
     });
   }
 

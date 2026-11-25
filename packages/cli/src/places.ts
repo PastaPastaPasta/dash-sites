@@ -41,7 +41,12 @@ async function ipfsModule(): Promise<Uint8Array> {
 }
 
 /** Whether an error was thrown by the IPFS client's own code, which `startIpfs` builds from the pinned module. */
-export const fromIpfsClient = (error: unknown): boolean => /\n\s+at [^\n]*\(eval at startIpfs \(/.test(String((error as Error)?.stack));
+export function fromIpfsClient(error: unknown): boolean {
+  if (!(error instanceof Error) || typeof error.stack !== 'string') return false;
+  const message = error.stack.indexOf(error.message);
+  const frames = message < 0 ? error.stack : error.stack.slice(message + error.message.length);
+  return /\n\s+at [^\n]*\(eval at startIpfs \(/.test(frames);
+}
 
 /**
  * The IPFS client can throw from its own timers and listeners after a file was read. Nothing it

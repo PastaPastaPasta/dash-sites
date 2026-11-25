@@ -13,6 +13,8 @@ export interface FormatFixture {
   manifestVersion: number;
   /** sha256 of every file the site serves, by path. */
   files: Record<string, string>;
+  /** Paths the manifest lists that a reader of this version refuses one by one, which also makes the manifest partial. */
+  unread?: string[];
   /** Stored chunks, base64, by hash. */
   chunks: Record<string, string>;
   /** Files of npm packages the site names but does not store, base64, by `package@version/path`. */
@@ -21,7 +23,7 @@ export interface FormatFixture {
   places?: Record<string, string>;
 }
 
-export const FIXTURES = ['site-v1', 'site-v2', 'site-v3'] as const;
+export const FIXTURES = ['site-v1', 'site-v2', 'site-v3', 'site-v3-later'] as const;
 
 const fromBase64 = (data: string): Uint8Array => Uint8Array.from(Buffer.from(data, 'base64'));
 

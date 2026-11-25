@@ -396,4 +396,13 @@ describe('reopening a published page', () => {
     site!.v = FORMATS.site + 1;
     await expect(readPublishedPage(platform.as('visitor'), 'alice.dash')).rejects.toThrow(/newer builder than this one\. Reload/);
   });
+
+  it('asks for a newer builder when the manifest holds something this one would not write back', async () => {
+    const platform = await published(renderSite(reference, 'alice.dash', []));
+    const [site] = [...platform.sites.values()];
+    const piece = gzip(utf8.encode('{"chunks":[],"files":{},"later":1,"v":3}'));
+    await platform.as('owner1').createChunk(site!.id, sha256Hex(piece), piece);
+    site!.content = `dash-manifest:v1:${sha256Hex(piece)}`;
+    await expect(readPublishedPage(platform.as('visitor'), 'alice.dash')).rejects.toThrow(/newer builder than this one\. Reload/);
+  });
 });

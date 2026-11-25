@@ -141,6 +141,8 @@ describe('forward compatibility', () => {
     expect(bundle.manifest.partial).toBeUndefined();
     expect(decodeManifest(encodeManifest(bundle.manifest)).partial).toBeUndefined();
     expect(() => encodeManifest(manifest)).toThrow(ManifestError);
+    expect(decodeManifest(canonical({ ...later, spa: true })).spa).toBe(true);
+    expect(() => decodeManifest(canonical({ ...later, spa: false }))).toThrow(/canonical/);
     for (const v of [2, 3]) expect(() => encodeManifest({ ...buildSite(FILES).manifest, v, extra: 1 } as Manifest)).toThrow(ManifestError);
     expect(manifest.files['/a.js']).toEqual(bundle.manifest.files['/a.js']);
     expect(manifest.files['/b.bin']?.src).toEqual(['ar://kZ9', 'blossom:abc', HTTPS]);

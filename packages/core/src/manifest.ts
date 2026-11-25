@@ -231,7 +231,9 @@ export function decodeManifest(bytes: Uint8Array, limits: Limits = DEFAULT_LIMIT
     throw new ManifestError('not UTF-8 JSON');
   }
   const manifest = validateManifest(parsed, limits);
-  const canonical = manifest.v === 3 ? utf8.encode(JSON.stringify(sortKeys(parsed))) : encodeManifest(manifest);
+  const open = manifest.v === 3;
+  const canonical = open ? utf8.encode(JSON.stringify(sortKeys(parsed))) : encodeManifest(manifest);
+  if (open && (parsed as { spa?: boolean }).spa === false) throw new ManifestError('not in canonical form');
   if (canonical.length !== bytes.length || canonical.some((byte, i) => byte !== bytes[i])) throw new ManifestError('not in canonical form');
   return manifest;
 }

@@ -515,6 +515,7 @@ describe('stored formats', () => {
         expect(reply.status).toBe(200);
         expect(sha256Hex(typeof reply.body === 'string' ? utf8.encode(reply.body) : (reply.body as Uint8Array))).toBe(sha256);
       }
+      for (const path of fixture.unread ?? []) expect((await h.get(path, { navigation: false })).status, path).toBe(502);
       expect(h.newerFormats).toBe(0);
     });
   }
