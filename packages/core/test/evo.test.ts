@@ -111,7 +111,8 @@ describe('reading a name', () => {
   const chunk = (index: number) => ({ toObject: () => ({ hash: Uint8Array.from(Buffer.from(hashes[index] as string, 'hex')), d0: bytes[index] }) });
   const documents = (...found: unknown[]) => ({ kind: 'documents', documents: found });
 
-  function reader(composite: (query: unknown) => Promise<unknown>, metas: Record<string, typeof meta> = {}) {
+  /** A reader over a fake SDK. A list of metas for a document type is used one query at a time. */
+  function reader(composite: (query: unknown) => Promise<unknown>, metas: Record<string, typeof meta | Array<typeof meta>> = {}) {
     const queries: Array<{ dataContractId: string; documentTypeName: string; where: unknown[][] }> = [];
     const asked: unknown[] = [];
     const sdk = {
@@ -120,7 +121,9 @@ describe('reading a name', () => {
         queryWithProof: async (query: (typeof queries)[number]) => {
           queries.push(query);
           const data = { domain: new Map([[DOMAIN_ID, domain]]), site: new Map([[SITE_ID, record]]) }[query.documentTypeName] ?? new Map([['c', chunk(2)]]);
-          return { data, metadata: { toJSON: () => metas[query.documentTypeName] ?? meta } };
+          const given = metas[query.documentTypeName];
+          const answered = Array.isArray(given) ? (given.shift() ?? meta) : (given ?? meta);
+          return { data, metadata: { toJSON: () => answered } };
         },
       },
     };
@@ -203,6 +206,10 @@ describe('reading a name', () => {
     const straddled = reader(failing, { domain: before });
     await expect(straddled.reader.getName('a11ce')).rejects.toThrow(/different blocks/);
     expect(straddled.queries.filter((query) => (query as { documentTypeName?: string }).documentTypeName === 'domain')).toHaveLength(2);
+
+    const settled = reader(failing, { domain: [before] });
+    expect(await settled.reader.getName('a11ce')).toEqual({ value: read, meta });
+    expect(settled.queries).toHaveLength(4);
 
     const behind = { ...meta, height: 8 };
     expect(await reader(failing, { site: behind }).reader.getName('a11ce')).toEqual({ value: read, meta: behind });

@@ -227,9 +227,9 @@ async function listSettled(writer: PlatformWriter, published?: SiteRecord): Prom
  * A node answering from a block before the record's last write cannot tell, so the record counts as shown.
  */
 async function shown(writer: PlatformWriter, site: SiteRecord): Promise<boolean> {
-  const name = await writer.getName(site.normalizedLabel);
-  if (name.meta.timeMs < site.updatedAt) return true;
-  return name.value ? isCurrent(name.value.domain, site) : false;
+  const domain = await writer.getDomain(site.normalizedLabel);
+  if (domain.meta.timeMs < site.updatedAt) return true;
+  return domain.value ? isCurrent(domain.value, site) : false;
 }
 
 /** The chunks each site record of the identity still needs, by record id. Every listed record has an entry. */
