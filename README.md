@@ -147,15 +147,19 @@ a wildcard certificate by DNS-01 with no DNS credentials on the host), and
 the Caddy configuration. DNS records and the steps for moving to another
 domain such as `dash.dev` are in [docs/DESIGN.md](docs/DESIGN.md#8-hosting).
 
-The hosted gateways (`dash.site`, `id.dashhq.org`) can stop serving a name,
-owner or content (`dash-sites-deny`, see
+The hosted gateway (`id.dashhq.org`) can stop serving a name, owner or
+content (`dash-sites-deny`, see
 [docs/DESIGN.md](docs/DESIGN.md#operator-denylist)). Only a hosted build
 (`DENYLIST=1`, set by `deploy.sh` when the host's `gateway.env` has
 `DENYLIST_FILE`) includes that check; a self-hosted shell leaves it out.
+`dash.site` is a static page, not a gateway: its build has no denylist, and a
+name is blocked in front of it
+([docs/DESIGN.md](docs/DESIGN.md#dashsite-static-files-only)).
 
-The contract is registered on both networks (`DEPLOYMENTS` in
-`packages/core/src/config.ts`); a gateway or builder picks one with
-`NETWORK=testnet|mainnet`.
+The contract is registered on testnet (`DEPLOYMENTS` in
+`packages/core/src/config.ts`); a gateway or builder picks a network with
+`NETWORK=testnet|mainnet`. On a network without a contract every registered
+name has no site.
 
 ## License
 
