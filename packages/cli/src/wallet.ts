@@ -71,16 +71,35 @@ function writePrivateFile(path: string, content: string): void {
 
 export function connectionId(dir: string, network: Network): Uint8Array {
   const path = connectionPath(dir, network);
-  try {
-    const saved = readFileSync(path, 'utf8').trim();
-    if (/^[0-9a-f]{32}$/.test(saved)) return fromHex(saved);
-  } catch {
-    // No saved connection id yet.
-  }
+  const readSaved = (): Uint8Array | undefined => {
+    try {
+      const saved = readFileSync(path, 'utf8').trim();
+      return /^[0-9a-f]{32}$/.test(saved) ? fromHex(saved) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const existing = readSaved();
+  if (existing) return existing;
   const fresh = new Uint8Array(randomBytes(16));
   ensurePrivateDir(dir);
-  writePrivateFile(path, `${toHex(fresh)}\n`);
-  return fresh;
+  try {
+    writeFileSync(path, `${toHex(fresh)}\n`, { mode: 0o600, flag: 'wx' });
+    try {
+      chmodSync(path, 0o600);
+    } catch {
+      // Non-POSIX filesystems may ignore chmod.
+    }
+    return fresh;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      const raced = readSaved();
+      if (raced) return raced;
+      writePrivateFile(path, `${toHex(fresh)}\n`);
+      return fresh;
+    }
+    throw error;
+  }
 }
 
 export function saveSession(dir: string, session: StoredSession): string {
@@ -181,10 +200,11 @@ export interface WalletLoginResult {
 export async function runWalletLogin(input: WalletLoginInput): Promise<WalletLoginResult> {
   const now = input.now ?? Date.now;
   const clock = await input.port.chainClock();
+  const clockReadAt = now();
   if (clock.protocolVersion < APP_CONNECT_MIN_PROTOCOL) {
     throw new Error(`wallet sign-in needs Platform protocol ${APP_CONNECT_MIN_PROTOCOL}, and ${input.config.network} runs ${clock.protocolVersion}`);
   }
-  const pending = newWalletRequest(input.config, { connectionId: input.connectionId, chainNow: clock.timeMs, now: now() });
+  const pending = newWalletRequest(input.config, { connectionId: input.connectionId, chainNow: clock.timeMs, now: clockReadAt });
   let grant: WalletGrant;
   try {
     input.onRequest(pending);
@@ -208,10 +228,13 @@ export async function runWalletLogin(input: WalletLoginInput): Promise<WalletLog
     if (input.confirm && !(await input.confirm(grant, owned))) {
       throw new Error('login cancelled; nothing was saved');
     }
-    if (grant.expiresAt <= now() + EXPIRY_MARGIN_MS) {
+    const chainNow = clock.timeMs + Math.max(0, now() - clockReadAt);
+    if (grant.expiresAt <= chainNow + EXPIRY_MARGIN_MS) {
       throw new Error('the key your wallet approved expires within 5 minutes; start again');
     }
+    if (input.signal?.aborted) throw new DOMException('cancelled', 'AbortError');
     await input.verifyWriter(grant.identityId, grant.privateKey);
+    if (input.signal?.aborted) throw new DOMException('cancelled', 'AbortError');
     const sessionFile = input.save({
       v: 1,
       network: input.config.network,

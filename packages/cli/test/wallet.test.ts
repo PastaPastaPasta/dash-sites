@@ -339,4 +339,31 @@ describe('runWalletLogin', () => {
     expect(save).not.toHaveBeenCalled();
     expect(seenKey?.every((b) => b === 0)).toBe(true);
   });
+
+  it('does not save if aborted during verifyWriter', async () => {
+    const dir = makeTempDir();
+    const { port, answer } = mockConnectWorld();
+    const save = vi.fn(() => sessionPath(dir, 'testnet'));
+    const abort = new AbortController();
+
+    await expect(
+      runWalletLogin({
+        config: CONFIG,
+        port,
+        connectionId: connectionId(dir, 'testnet'),
+        signal: abort.signal,
+        now: () => CHAIN_NOW,
+        pollOptions: { intervalMs: 1, settleMs: 0, now: () => CHAIN_NOW },
+        onRequest: (pending) => {
+          void answer(pending);
+        },
+        listOwnedNames: async () => [],
+        verifyWriter: async () => {
+          abort.abort();
+        },
+        save,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(save).not.toHaveBeenCalled();
+  });
 });
