@@ -85,13 +85,20 @@ uses it for `check`) and in a worker under the builder's Content Security
 Policy, including files held only by Pinata and by Filecoin storage
 providers, each in 1.3 to 3.8 s.
 
+The builder's panel was run against testnet as well
+(`outside-demo-2511.dash`): a three-file upload that would have cost 0.056
+DASH with everything on Platform. The browser fetched the 66 KB image from
+its HTTPS address in 0.4 s and the 117 KB image from IPFS in 2.0 to 2.8 s,
+matched both, and the site published for 0.0018 DASH.
+
 Three things to know:
 
 - **Finding who holds a file uses one service.** A browser cannot walk IPFS's
   lookup network itself, so Helia asks `delegated-ipfs.dev`, run by the IPFS
   project, which answers with a list of providers. The bytes then come from
   those providers. Building the shell with `IPFS_ROUTERS` set uses other
-  services.
+  services. Helia also resolves some providers' addresses through a public
+  DNS-over-HTTPS resolver (Cloudflare's or Google's).
 - **A service worker has no WebRTC.** HTTPS, WebSockets and WebTransport
   work there, and were enough in every test.
 - **Not tested**: Safari and Firefox, and a file freshly pinned by us on each
@@ -132,6 +139,11 @@ Uploading is the builder's and the CLI's job, never the shell's.
   The key or token is typed into the builder and kept in memory only. After
   an upload the builder asks the place for the file, as a visitor's browser
   will, before it marks the file as kept outside.
+- The builder's panel is "Keep large files outside Dash Platform" in step 3.
+  It lists the files of 8 KB or more, for a built page and for an uploaded
+  site alike, with what each costs on Platform. A file's places are
+  remembered in the browser by the file's hash, so a changed file goes back
+  on Platform until its new version has a place.
 - Arweave upload needs a funded wallet key in the page, so it is not built;
   an Arweave file is added by its address.
 
@@ -148,7 +160,12 @@ Uploading is the builder's and the CLI's job, never the shell's.
 
 ## Left to do
 
-- Real uploads to R2 and Pinata from the builder have been exercised against
-  a local S3 server and a stand-in for Pinata, not yet against live accounts.
+- Uploads from the builder to R2 and to Pinata have not been run against
+  live accounts. The bucket upload was run against a local S3 server and
+  both against stand-ins in the browser test. Giving the address of a file
+  that is already online was run for real, over HTTPS and over IPFS.
+- How soon a file just pinned at Pinata can be found by other IPFS clients
+  is not measured. The builder waits 90 seconds, then lets the owner keep
+  the place unconfirmed.
 - Safari and Firefox.
 - Hashes per piece and range requests, for media.

@@ -1,7 +1,9 @@
 # Visual site builder and Dash widgets
 
-Status: proposal, nothing built. Date: 2026-11-25. Wanted from Pasta: yes, no,
-or change X (the open calls are listed in [§8](#8-decisions-wanted)).
+Status, 2026-11-25: milestone 1 (the block editor, §5.1) and files kept
+outside Platform ([BULK-STORAGE.md](BULK-STORAGE.md)) are built in this PR.
+Widgets (§5.2, §5.3, §5.5 and milestones 2 to 4) are still a proposal, with
+nothing built. The open calls are listed in [§8](#8-decisions-wanted).
 
 Decided in review (Pasta, 2026-11-25): the shell that loads sites stays
 simple and unchanging, so that others can run it. It serves no widget code.
@@ -149,22 +151,29 @@ bundling its icons, and turning its telemetry off. §5.2 to §5.5 do not change.
 - **Where**: a lazily loaded part of `packages/builder`, replacing the "Write
   a page" tab. Sign-in, name choice, cost, publish and "Upload a site" stay as
   they are.
-- **Away from the key**: the editor loads in a sandboxed frame with no access
-  to the page around it, and exchanges only the page model with it by
-  message. The page that holds the key never loads Puck, React or their
-  dependencies. The prototype confirmed Puck runs this way with its inline
-  preview; its nested preview frame does not, so themes must respond to the
-  width of their container, not of the window. If that proves too limiting in
-  milestone 1, the fallback is no sandbox and the existing rule that the key
-  on `dash.site/new` is dropped after each publish.
+- **Away from the key**: proposed as a sandboxed frame with no access to the
+  page around it. **Not built in milestone 1**, which took the fallback: the
+  editor runs in the builder's own page, so that text is edited in place and
+  images share one store with the rest of the builder. What limits the risk
+  today: Puck and React are pinned to exact versions and bundled at build
+  time, nothing is fetched from another host, the editor's code loads only
+  when the editor is opened, and on `dash.site/new` the key is dropped after
+  each publish and after ten idle minutes. The sandboxed frame is still the
+  aim (§6, §7).
 - **Blocks for milestone 1**: profile header (picture, name, tagline), text
   (headings, bold, links, lists), link list, image, columns of cards, button,
-  divider, footer. The three existing looks (Paper, Night, Signal) become
-  themes: a set of colours and a type stack applied to every block.
+  divider, footer.
+- **Looks**: a set of colours and a type stack applied to every block. A new
+  page starts on **Auto**, which is light for a visitor whose system is light
+  and dark for one whose system is dark. Paper, Night and Signal are looks an
+  author picks on purpose, and they stay as picked for every visitor.
+- **Light and dark**: everything on dash.site follows the system setting. The
+  builder and the editor do (Puck's colours are mapped onto the builder's
+  own), and so does a page unless its author picked a look.
 - **Page model**: `{ v, theme, pages: { "/": [ { type, props } … ] } }`.
-  Drafts are saved in the browser. On publish the model is stored once as a
-  small file beside the pages, so the owner can reopen and edit the site from
-  any device. On the reference page that file is 596 bytes compressed, under
+  Drafts are saved in the browser. On publish the model is stored once as
+  `/dash-site.json`, so the owner can reopen and edit the site from any
+  device. On the reference page that file is 693 bytes compressed, about
   0.0002 DASH.
 - **Rendering**: HTML with one inline stylesheet holding only the rules of
   the blocks used. No script unless a widget is on the page. Text entered by
@@ -172,7 +181,9 @@ bundling its icons, and turning its telemetry off. §5.2 to §5.5 do not change.
 - **Images**: the largest cost by far, so they are resized and re-encoded to
   WebP in the browser before they enter the page, with the stored size and
   its price shown per image. An owner with many or large images can keep
-  them off Platform instead ([BULK-STORAGE.md](BULK-STORAGE.md)).
+  them off Platform instead, from a panel in the same step
+  ([BULK-STORAGE.md](BULK-STORAGE.md)). Reopening a site fetches such images
+  from their places and keeps them there.
 - **Fonts**: system font stacks. Web fonts are deferred (§5.4).
 - **Cost meter**: the existing estimate, always visible while editing, split
   into text and images.
@@ -201,6 +212,9 @@ different things.
   them as plain text. It starts when the widget scrolls into view.
 - It holds no key, so it needs no protection from the site around it. A site
   can show whatever it likes on its own page anyway.
+- It follows the visitor's light or dark setting, unless the site's author
+  set a theme, which it then uses. The write page below follows the system
+  setting too.
 - This works on today's shell. Its worker leaves requests to other hosts
   alone, and the showcase site at `p2p.dash` already does proved reads from
   inside its page.
@@ -348,7 +362,7 @@ its author something, however little, is also the first line of spam control.
 | Risk | What limits it |
 | --- | --- |
 | Puck changes or stalls before 1.0 | Exact version pinned; our model and renderer do not depend on it; the fallback is our own section list |
-| A compromised editor dependency steals a publishing key | The editor runs in a sandboxed frame and never sees the key (§5.1). The builder's policy must allow connections to any HTTPS host, because Platform nodes are bare addresses, so isolation is the control, not the policy |
+| A compromised editor dependency steals a publishing key | Open after milestone 1: the editor shares the builder's page (§5.1). Exact versions are pinned and bundled at build time, the code loads only when the editor is opened, and `dash.site/new` drops the key after each publish. The builder's policy must allow connections to any HTTPS host, because Platform nodes are bare addresses, so a sandboxed frame is the real control and is still to be built |
 | A site imitates the write page, or shows a sign-in code of its own | The real write page is at the widget name's address, in view in its tab, and the wallet shows what it is approving. Residual, as for the builder's sign-in today: a visitor who approves an imitation hands it a key that can comment and vote as them, up to its spending limit, until it expires or they remove it in the wallet |
 | Whoever owns the widget name controls the write page for every site | Keep that identity's keys offline and never transfer the name. Every change is a new record on Platform that anyone can see. A site can point at another copy |
 | Comment text attacks the page showing it | Text is rendered as text, never as HTML, and the script that shows it holds no key |
@@ -374,15 +388,29 @@ Each milestone ends on testnet and is usable on its own.
 | **M4: Mainnet** | The builder at `dash.site/new`, the write site under its mainnet name, the social contract on mainnet | After PR #14's contract is on mainnet and Pasta approves the registration, with its cost quoted from testnet |
 | Later | Several pages and a blog list, a template gallery, web fonts, more widgets (guestbook, reactions, a "pay alice.dash" button), a Publii guide, posting inside the page | |
 
+**M1 as built.** The reference page was built in the editor and published on
+testnet (`page-demo-2511.dash`), then opened for editing in a second browser
+that was not signed in. The builder's policy is unchanged, and the editor
+makes no request to another host. Three things fall short of the row above:
+
+- The reference page's text costs 0.00172 DASH; with its 96-pixel picture
+  the estimate is 0.00242 DASH, over the 0.002 target.
+- Phones were tested in Chromium's emulation with touch, not on a device,
+  and Safari and Firefox were not tested.
+- The editor is not in a sandboxed frame (§5.1).
+
+Added since the row was written: the Auto look, and the panel that moves
+large files off Platform.
+
 M1 is deliberately the part with no permanent consequences: no contract, no
 visitor keys, no new name, no change to the shell. It answers whether people can build a site
 they like without writing code.
 
 ## 8. Decisions wanted
 
-1. **Blocks (Puck) or free-form (GrapesJS)?** Recommended: blocks, with
-   upload as the free-form path.
-2. **Go for M1 on the testnet builder?**
+1. ~~Blocks (Puck) or free-form (GrapesJS)?~~ Decided and built: blocks,
+   with upload as the free-form path.
+2. ~~Go for M1 on the testnet builder?~~ Decided and built (§7).
 3. **Should the social contract have moderators** who can delete any comment,
    or none, as `dash-sites` has? It cannot be added after registration.
    Recommended: none; owners hide.
@@ -394,6 +422,8 @@ they like without writing code.
    once.
 6. **May builder-made sites load fonts from npm mirrors** as well?
    Recommended: not yet.
+7. **Move the editor into a sandboxed frame before the builder with the
+   editor goes to `dash.site/new`?** Recommended: yes (§5.1).
 
 ## 9. Not in this proposal
 
