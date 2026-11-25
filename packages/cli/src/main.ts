@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
 import { brotliCompressSync, constants as zlib } from 'node:zlib';
+import { decompress as brotliDecompress } from 'brotli/decompress';
 import {
   buildSite,
   checkExternalAssets,
@@ -110,8 +111,21 @@ function requireName(): string {
   return values.name;
 }
 
+/**
+ * Brotli at the highest quality, with a window no larger than the file needs (readers allocate the
+ * window to decode). A file that does not decode back exactly with the readers' own decoder is
+ * returned unchanged, so it is stored as gzip instead.
+ */
 function brotli(data: Uint8Array): Uint8Array {
-  return new Uint8Array(brotliCompressSync(data, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_LGWIN]: 24, [zlib.BROTLI_PARAM_SIZE_HINT]: data.length } }));
+  const window = Math.min(24, Math.max(10, Math.ceil(Math.log2(Math.max(data.length, 1)))));
+  const compressed = new Uint8Array(brotliCompressSync(data, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_LGWIN]: window, [zlib.BROTLI_PARAM_SIZE_HINT]: data.length } }));
+  try {
+    const decoded = brotliDecompress(compressed, data.length);
+    if (decoded.length === data.length && decoded.every((byte, i) => byte === data[i])) return compressed;
+  } catch {
+    // stored as gzip below
+  }
+  return data;
 }
 
 function buildOptions(): BuildOptions {

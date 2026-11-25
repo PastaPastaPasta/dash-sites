@@ -418,6 +418,25 @@ describe('gateway: version 2 sites', () => {
     await h.start();
   });
 
+  it('does not fetch an external file again for every request when its SHA-256 is wrong', async () => {
+    h.platform.registerName('dave', 'dave-id');
+    const bundle = buildSite([{ path: '/index.html', bytes: text('d') }, { path: '/y.wasm', bytes: sdk }], { external: { '/y.wasm': { npm: 'pkg', version: '2.0.0', path: 'y.wasm' } } });
+    const entry = bundle.manifest.files['/y.wasm']!;
+    const wrong = { ...bundle.manifest, files: { ...bundle.manifest.files, '/y.wasm': { ...entry, sha256: '0'.repeat(64) } } };
+    // Store the doctored manifest the way publishSite would.
+    const { encodeManifest, gzip, formatContentUri, sha256Hex } = await import('@dash-sites/core');
+    const piece = gzip(encodeManifest(wrong));
+    const hash = sha256Hex(piece);
+    const dave = h.platform.as('dave-id');
+    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await dave.createChunk(chunkHash, data);
+    await dave.createChunk(hash, piece);
+    await dave.putSite((await dave.getDomain('dave')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    served = sdk;
+    const before = fetches;
+    for (let i = 0; i < 4; i++) expect((await h.get('dave.id.example.org', '/y.wasm')).status).toBe(502);
+    expect(fetches - before).toBe(1);
+  });
+
   it('refuses an external file no CDN serves with its hash, and does not refetch it on every request', async () => {
     h.platform.registerName('carol', 'carol-id');
     const other = sdk.slice();

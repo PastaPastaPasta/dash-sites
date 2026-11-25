@@ -265,6 +265,12 @@ external asset; the worker's own requests to Platform nodes go to their IP
 addresses, so a header CSP on the worker could not be narrower than `https:`,
 and the allowlist is enforced in code instead.
 
+**Privacy.** Opening a site with an external asset tells jsDelivr and unpkg
+the visitor's IP address and which package file they fetched, and the request
+carries the site's origin (`Origin` header), as for any cross-origin fetch. A
+CDN that does not answer within 15 seconds, or stalls for 30 seconds while
+sending, is skipped for the next.
+
 **Compatibility.** A manifest that uses neither feature stays version 1 and
 byte-identical to before. One that uses either is version 2. Readers that only
 know version 1 (older shells, gateways and extensions) reject version 2 whole,

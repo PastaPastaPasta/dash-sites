@@ -72,8 +72,10 @@ export function externalUrls(asset: ExternalAsset): string[] {
 export type ExternalSource = (asset: ExternalAsset, size: number) => Promise<Uint8Array>;
 
 export class ExternalAssetError extends Error {
-  /** True when some CDN answered with bytes that did not match, false when none could be reached. */
+  /** True when some CDN answered with bytes that did not match. */
   readonly mismatch: boolean;
+  /** True when every CDN answered that it has no such file (the version was unpublished, say). */
+  readonly missing: boolean;
 
   constructor(
     readonly asset: ExternalAsset,
@@ -82,10 +84,28 @@ export class ExternalAssetError extends Error {
     super(`${asset.npm}@${asset.version}/${asset.path} could not be fetched with the published hash (${attempts.join('; ')})`);
     this.name = 'ExternalAssetError';
     this.mismatch = attempts.some((attempt) => attempt.endsWith('hash mismatch') || attempt.endsWith('wrong size'));
+    this.missing = !this.mismatch && attempts.length > 0 && attempts.every((attempt) => /HTTP (404|410)$/.test(attempt));
   }
 }
 
-async function readCapped(response: Response, size: number): Promise<Uint8Array | undefined> {
+/** A CDN gets this long to answer with headers, and this long between two parts of the body, before the next CDN is tried. */
+export const EXTERNAL_HEADERS_TIMEOUT_MS = 15_000;
+export const EXTERNAL_IDLE_TIMEOUT_MS = 30_000;
+
+class StalledError extends Error {}
+
+function withTimeout<T>(work: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stalled = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      onTimeout();
+      reject(new StalledError(`no answer within ${ms / 1000} s`));
+    }, ms);
+  });
+  return Promise.race([work, stalled]).finally(() => clearTimeout(timer));
+}
+
+async function readCapped(response: Response, size: number, idleMs = EXTERNAL_IDLE_TIMEOUT_MS): Promise<Uint8Array | undefined> {
   if (!response.body) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     return bytes.length === size ? bytes : undefined;
@@ -94,7 +114,7 @@ async function readCapped(response: Response, size: number): Promise<Uint8Array 
   let at = 0;
   const reader = response.body.getReader();
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = await withTimeout(reader.read(), idleMs, () => void reader.cancel().catch(() => undefined));
     if (done) break;
     if (at + value.length > size) {
       await reader.cancel().catch(() => undefined);
@@ -112,10 +132,20 @@ type Fetched = { bytes: Uint8Array } | { status: number } | { failure: 'wrong si
  * One CDN request for an external asset: the bytes only when they have exactly `size` bytes and
  * match the asset's integrity. Redirects are refused, so a response can only come from `url`'s origin.
  */
-async function fetchChecked(fetchImpl: typeof fetch, url: string, asset: ExternalAsset, size: number): Promise<Fetched> {
-  const response = await fetchImpl(url, { redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+export interface ExternalTimeouts {
+  headersMs?: number;
+  idleMs?: number;
+}
+
+async function fetchChecked(fetchImpl: typeof fetch, url: string, asset: ExternalAsset, size: number, timeouts: ExternalTimeouts = {}): Promise<Fetched> {
+  const abort = new AbortController();
+  const response = await withTimeout(
+    fetchImpl(url, { redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', signal: abort.signal }),
+    timeouts.headersMs ?? EXTERNAL_HEADERS_TIMEOUT_MS,
+    () => abort.abort(),
+  );
   if (!response.ok) return { status: response.status };
-  const bytes = await readCapped(response, size);
+  const bytes = await readCapped(response, size, timeouts.idleMs);
   if (!bytes) return { failure: 'wrong size' };
   if ((await integrityOfAsync(bytes)) !== asset.integrity) return { failure: 'hash mismatch' };
   return { bytes };
@@ -126,13 +156,13 @@ function errorText(error: unknown): string {
 }
 
 /** Fetches an external asset from each CDN in turn and returns the first copy whose SHA-384 matches. */
-export function cdnSource(fetchImpl: typeof fetch = (input, init) => fetch(input, init)): ExternalSource {
+export function cdnSource(fetchImpl: typeof fetch = (input, init) => fetch(input, init), timeouts: ExternalTimeouts = {}): ExternalSource {
   return async (asset, size) => {
     const attempts: string[] = [];
     for (const url of externalUrls(asset)) {
       const origin = new URL(url).origin;
       try {
-        const fetched = await fetchChecked(fetchImpl, url, asset, size);
+        const fetched = await fetchChecked(fetchImpl, url, asset, size, timeouts);
         if ('bytes' in fetched) return fetched.bytes;
         attempts.push(`${origin}: ${'status' in fetched ? `HTTP ${fetched.status}` : fetched.failure}`);
       } catch (error) {

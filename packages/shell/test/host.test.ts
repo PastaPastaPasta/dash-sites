@@ -461,6 +461,12 @@ describe('external npm assets', () => {
     expect(body(reply)).not.toMatch(/fingerprint/);
   });
 
+  it('says the file is gone when every CDN answers 404', async () => {
+    const { h } = await setup(() => 404);
+    const reply = await h.get('/sdk.wasm', { navigation: false });
+    expect(body(reply)).toMatch(/no longer have it/);
+  });
+
   it('does not trust a kept copy that was changed', async () => {
     const { h, fetched } = await setup(() => wasm);
     await h.get('/sdk.wasm', { navigation: false });

@@ -99,6 +99,39 @@ describe('publishing checks', () => {
   });
 });
 
+describe('stalled CDNs', () => {
+  it('falls through to the next CDN when one never answers or stops sending', async () => {
+    const { manifest } = buildSite(FILES, { external: EXT });
+    const hang = cdnSource(
+      async (url) => (String(url).includes('jsdelivr') ? new Promise<Response>(() => {}) : new Response(big)),
+      { headersMs: 20, idleMs: 20 },
+    );
+    expect((await readFile(manifest, '/b.bin', noChunks, hang)).bytes).toEqual(big);
+    const trickle = cdnSource(
+      async (url) =>
+        String(url).includes('jsdelivr')
+          ? new Response(new ReadableStream({ start: (c) => c.enqueue(big.subarray(0, 10)) }))
+          : new Response(big),
+      { headersMs: 20, idleMs: 20 },
+    );
+    expect((await readFile(manifest, '/b.bin', noChunks, trickle)).bytes).toEqual(big);
+  });
+
+  it('says when every CDN no longer has the file', async () => {
+    const { manifest } = buildSite(FILES, { external: EXT });
+    const gone = cdnSource(async () => new Response(null, { status: 404 }));
+    const error = await readFile(manifest, '/b.bin', noChunks, gone).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ExternalAssetError);
+    expect((error as ExternalAssetError).missing).toBe(true);
+    expect((error as ExternalAssetError).mismatch).toBe(false);
+  });
+
+  it('keeps the v1 content URI prefix for a version 2 manifest, which older collectors parse', () => {
+    expect(buildSite(FILES, { external: EXT }).contentUri.startsWith('dash-manifest:v1:')).toBe(true);
+    expect(buildSite(FILES, { brotli }).contentUri.startsWith('dash-manifest:v1:')).toBe(true);
+  });
+});
+
 describe('reading', () => {
   it('decodes brotli files and refuses output larger than the declared size', async () => {
     const bundle = buildSite(FILES, { brotli });

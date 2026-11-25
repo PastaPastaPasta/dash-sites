@@ -327,14 +327,21 @@ export class SiteHost {
       if (error instanceof ExternalAssetError) {
         this.options.log?.({ event: 'external-refused', asset: `${error.asset.npm}@${error.asset.version}/${error.asset.path}`, attempts: error.attempts });
         const name = escapeHtml(`${error.asset.npm}@${error.asset.version}`);
-        return this.page(
-          502,
-          'Not loaded',
-          error.mismatch ? 'Part of this site could not be checked' : 'Part of this site could not be downloaded',
-          error.mismatch
-            ? `This site uses a file from the npm package <code>${name}</code>. Your browser fetched it from public npm mirrors, and no copy matched the fingerprint its owner published on Dash Platform, so it was not used. Nothing from it ran. Reload in a little while; if it keeps happening, tell the site's owner.`
-            : `This site uses a file from the npm package <code>${name}</code>, which your browser could not download from the public npm mirrors (cdn.jsdelivr.net, unpkg.com). Nothing from it ran. Check your connection, or whether something blocks those addresses, and reload.`,
-        );
+        const [title, detail] = error.mismatch
+          ? [
+              'Part of this site could not be checked',
+              `This site uses a file from the npm package <code>${name}</code>. Your browser fetched it from public npm mirrors, and no copy matched the fingerprint its owner published on Dash Platform, so it was not used. Nothing from it ran. Reload in a little while; if it keeps happening, tell the site's owner.`,
+            ]
+          : error.missing
+            ? [
+                'Part of this site is no longer available',
+                `This site uses a file from the npm package <code>${name}</code>, and the public npm mirrors (cdn.jsdelivr.net, unpkg.com) no longer have it. Nothing from it ran. Tell the site's owner: the site needs to be published again.`,
+              ]
+            : [
+                'Part of this site could not be downloaded',
+                `This site uses a file from the npm package <code>${name}</code>, which your browser could not download from the public npm mirrors (cdn.jsdelivr.net, unpkg.com). Nothing from it ran. Check your connection, or whether something blocks those addresses, and reload.`,
+              ];
+        return this.page(502, 'Not loaded', title, detail);
       }
       if (!(error instanceof ContentError)) throw error;
       return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');
