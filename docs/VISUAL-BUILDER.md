@@ -36,9 +36,9 @@ username, polls with one vote per username.
    testnet builder: no widgets, no contract, nothing on mainnet.
 
 Widgets need the SDK in the page, and it is too large to store in every site.
-That makes the SDK-from-npm idea a prerequisite for widgets, and the one
-addition to the shell this proposal asks for (see
-[§5.4](#54-the-sdk-by-hash-from-npm)).
+A site now takes it from npm by hash instead (see
+[§5.4](#54-the-sdk-by-hash-from-npm)), which was the one addition to the
+shell this plan needed.
 
 ## 1. What a builder must satisfy here
 
@@ -272,35 +272,30 @@ that can publish or replace a site.
 
 Both parts of a widget run the SDK in a page: the script that shows comments
 needs it to check proofs, and the write site needs it to sign. The shell's
-worker has its own copy, but a page cannot use it. There are three ways to
+worker has its own copy, but a page cannot use it. There were three ways to
 give a page the SDK:
 
 | | Committed on Platform | Cost | Shell |
 | --- | --- | --- | --- |
-| **Name the npm file and its hash in the site's manifest**; the browser fetches it from an npm mirror and the shell checks it (`feat/external-assets`, manifest version 2) | The hash is. The bytes come from jsDelivr, then unpkg | Nothing stored | One addition: a manifest entry may name a file by hash |
+| **List the npm file's addresses and its hash in the site's manifest**; the browser fetches it from an npm mirror and the shell checks it | The hash is. The bytes come from jsDelivr, then unpkg | Nothing stored | One addition: a manifest entry may say where a file is kept |
 | Store the SDK in each site | Fully | About 1.7 DASH per site | Unchanged |
 | Load it from jsDelivr by address, as the showcase site does today | No: the mirror decides what runs | Nothing | Unchanged |
 
-Recommended: the first. It is the idea already on the table, it is written
-on the branch, and it is general: it says nothing about widgets. It is still
-a change to how the shell reads a site, the only one here, so it is listed as
-a decision in §8. Storing the SDK per site prices ordinary sites out of
-widgets, and loading by address commits to nothing.
+The first is now built, as the general mechanism for keeping any large file
+outside Platform ([BULK-STORAGE.md](BULK-STORAGE.md)): a file's entry lists
+places, and the shell serves only bytes that match the proved hash. It says
+nothing about widgets. For the SDK the places are two HTTPS addresses.
 
-Things to settle on the branch before widgets rely on it:
+Measured on testnet, through the shell in Chromium: a site listing
+`@dashevo/wasm-sdk@5.0.3/dist/raw/wasm_sdk_bg.wasm` (26.7 MB) at jsDelivr and
+unpkg stores nothing for it on Platform, and the file is fetched and checked
+in under 2 seconds. It does not count against the 50 MB a site may store.
 
-- The files are `@dashevo/wasm-sdk`'s `dist/raw/wasm_sdk_bg.wasm` (26.7 MB)
-  and its 1.5 MB loader. Measured for 5.0.3: jsDelivr sends the WebAssembly
-  as 7.5 MB; unpkg, the second mirror, sends all 26.7 MB uncompressed.
-- On the branch a named file counts toward a site's 50 MB limit, and the
-  SDK takes 28 MB of it.
-- The same mechanism, made general, is how a site keeps large files off
-  Platform ([BULK-STORAGE.md](BULK-STORAGE.md)). That proposal replaces the
-  branch's npm-specific entry with a list of places, so the shell is changed
-  once for both.
-- Visitors' browsers contact jsDelivr or unpkg, which today's sites never do
-  (`e2e/shell.mjs` asserts the list of hosts). With widgets that becomes
-  normal for any site that has one.
+Still true for widgets:
+
+- Visitors' browsers contact jsDelivr or unpkg, which a site with every file
+  on Platform never does. With widgets that becomes normal for any site that
+  has one.
 - A page with a widget runs a second copy of the SDK beside the worker's.
   The shell keeps the checked file for each site, so a returning visitor
   does not fetch it again.
@@ -374,7 +369,7 @@ Each milestone ends on testnet and is usable on its own.
 | | What ships | Done when |
 | --- | --- | --- |
 | **M1: Blocks** | Puck in the testnet builder with the eight blocks and three themes of §5.1, the image step, the cost meter, drafts, and reopening a published site for editing. No widgets, no contract, nothing on mainnet | The reference page is built and published on a phone and on a desktop, costs at most 0.002 DASH, and reopens for editing on another device. The builder's policy is unchanged and it makes no request to another host. The existing end-to-end tests pass |
-| **M2: Comments** | Manifest version 2 in the shell (`feat/external-assets`). The social contract on testnet (all four types, rehearsed). The script that shows comments, and the write site under a testnet name: signing in, posting, deleting, and hiding by the owner. A Comments block | A comment posted from DashPay on one testnet site appears there, cannot be posted under a name the author does not own, and can be hidden by the owner. The shell has no widget code in it. Measured costs per comment and per site are in the docs |
+| **M2: Comments** | The social contract on testnet (all four types, rehearsed). The script that shows comments, and the write site under a testnet name: signing in, posting, deleting, and hiding by the owner. A Comments block | A comment posted from DashPay on one testnet site appears there, cannot be posted under a name the author does not own, and can be hidden by the owner. The shell has no widget code in it. Measured costs per comment and per site are in the docs |
 | **M3: Polls** | Opening a poll from the builder, voting, proved tallies, closing. A Poll block | A second vote from the same identity is refused by Platform, and a vote after closing is refused |
 | **M4: Mainnet** | The builder at `dash.site/new`, the write site under its mainnet name, the social contract on mainnet | After PR #14's contract is on mainnet and Pasta approves the registration, with its cost quoted from testnet |
 | Later | Several pages and a blog list, a template gallery, web fonts, more widgets (guestbook, reactions, a "pay alice.dash" button), a Publii guide, posting inside the page | |
@@ -391,10 +386,8 @@ they like without writing code.
 3. **Should the social contract have moderators** who can delete any comment,
    or none, as `dash-sites` has? It cannot be added after registration.
    Recommended: none; owners hide.
-4. **Add manifest version 2 to the shell**, so a site can name the SDK by
-   hash and have it fetched from npm mirrors (§5.4)? It is the one change to
-   the shell here, and widgets cannot be had cheaply without it.
-   Recommended: yes, once, and nothing widget-specific after it.
+4. ~~Add manifest version 2 to the shell~~ Decided and built: a manifest
+   entry may list where a file is kept (§5.4).
 5. **The widget name, and the identity that owns it.** A name of fewer than
    20 characters with no digit from 2 to 9, such as `widgets`, goes to a
    masternode vote; a longer one, or one with such a digit, registers at
