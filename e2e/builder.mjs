@@ -118,6 +118,16 @@ try {
   }
   check(body.includes(stamp), `${url} shows the page that was just published, read from Dash Platform by the browser`);
   if (shots) await live.screenshot({ path: join(shots, 'builder-live.png') });
+
+  const fresh = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await fresh.goto(builderUrl ?? `http://127.0.0.1:${server.address().port}/`);
+  await fresh.click('#reopen summary');
+  await fresh.fill('#reopen-name', `${label}.dash`);
+  await fresh.click('#reopen-form button');
+  await fresh.waitForFunction(() => /^(Opened|.*(not|no|cannot))/.test(document.getElementById('reopen-status')?.textContent ?? '') && !/^Reading/.test(document.getElementById('reopen-status').textContent), undefined, { timeout: 180000 });
+  check(/^Opened the page published at/.test(await fresh.textContent('#reopen-status')), `another browser, not signed in, opens the published page for editing: ${await fresh.textContent('#reopen-status')}`);
+  check((await fresh.textContent('#page-summary')) === (await page.textContent('#page-summary')) && (await fresh.textContent('#themes button[aria-checked=true]')) === 'Night', `with its blocks and its look: ${await fresh.textContent('#page-summary')}`);
+  await fresh.context().close();
   if (withWallet) {
     await page.click('#signout');
     check(await page.isVisible('#wallet-button'), 'signing out returns to the sign-in choice');

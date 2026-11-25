@@ -105,11 +105,12 @@ const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP builde
 const violations = [];
 const outside = [];
 const requested = [];
-async function open({ phone = false, dark = false, draft } = {}) {
+async function open({ phone = false, dark = false, draft, stubs = {} } = {}) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 800 }, colorScheme: dark ? 'dark' : 'light', hasTouch: phone, isMobile: phone });
   await context.route('**/*', (route) => {
     const url = new URL(route.request().url());
-    if (url.host === host || url.protocol === 'data:') return route.continue();
+    if (url.host === host || url.protocol === 'data:' || url.protocol === 'blob:') return route.continue();
+    if (stubs[url.host]) return stubs[url.host](route, url);
     outside.push(route.request().url());
     return route.abort();
   });
@@ -132,6 +133,7 @@ const ABOUT =
 try {
   const page = await open();
   check(!requested.some((url) => /\/c\/editor-/.test(url)), 'the builder loads without the editor');
+  check((await page.textContent('#themes button[aria-checked=true]')) === 'Auto', 'a new page starts on the look that follows the visitor’s light or dark setting');
 
   await openEditor(page);
   check(requested.some((url) => /\/c\/editor-/.test(url)), 'opening the page editor loads it');
@@ -197,16 +199,27 @@ try {
   const modelFile = Buffer.from(files.find((f) => f.path === '/dash-site.json').bytes);
   console.log(`     page model /dash-site.json: ${modelFile.length} bytes, ${gzip(modelFile)} gzip; picture ${images[0].bytes.length} bytes`);
 
+  const published = (theme) =>
+    Buffer.from(renderSite({ ...model, theme }, 'alice.dash', images).find((f) => f.path === '/index.html').bytes)
+      .toString()
+      .replace(/src="(\/images\/[^"]+)"/g, (_, path) => `src="data:image/webp;base64,${Buffer.from(images.find((i) => i.path === path).bytes).toString('base64')}"`);
   if (shots) {
     for (const theme of ['paper', 'night', 'signal']) {
       const view = await browser.newPage({ viewport: { width: 900, height: 1000 } });
-      const themed = renderSite({ ...model, theme }, 'alice.dash', images).find((f) => f.path === '/index.html');
-      const inline = Buffer.from(themed.bytes).toString().replace(/src="(\/images\/[^"]+)"/g, (_, path) => `src="data:image/webp;base64,${Buffer.from(images.find((i) => i.path === path).bytes).toString('base64')}"`);
-      await view.setContent(inline);
+      await view.setContent(published(theme));
       await view.screenshot({ path: join(shots, `page-${theme}.png`), fullPage: true });
       await view.close();
     }
   }
+  const grounds = [];
+  for (const colorScheme of ['light', 'dark']) {
+    const view = await browser.newPage({ viewport: { width: 900, height: 1000 }, colorScheme });
+    await view.setContent(published('auto'));
+    grounds.push(await view.evaluate(() => `${getComputedStyle(document.body).backgroundColor} ${getComputedStyle(document.body).color}`));
+    if (shots) await view.screenshot({ path: join(shots, `page-auto-${colorScheme}.png`), fullPage: true });
+    await view.close();
+  }
+  check(grounds[0] === 'rgb(246, 247, 249) rgb(20, 26, 34)' && grounds[1] === 'rgb(13, 20, 32) rgb(233, 238, 246)', `a page with the Auto look is light for a visitor on light and dark for one on dark: ${grounds.join(' | ')}`);
 
   await page.reload();
   await page.waitForSelector('#edit-page');
@@ -251,6 +264,102 @@ try {
   await darkDesktop.waitForTimeout(500);
   if (shots) await darkDesktop.screenshot({ path: join(shots, 'editor-desktop-dark.png') });
   await darkDesktop.context().close();
+
+  // Large files kept outside Platform: every host is a stand-in, so nothing leaves this machine.
+  let picture;
+  const cors = { 'access-control-allow-origin': '*' };
+  const bucket = new Map();
+  const sent = { put: undefined, pin: undefined };
+  const stubs = {
+    'media.example.com': (route, url) => route.fulfill({ status: 200, headers: cors, body: url.pathname === '/alice.webp' ? picture : Buffer.from('another file') }),
+    'bucket.example.com': (route, url) => {
+      sent.put = { method: route.request().method(), path: url.pathname, auth: route.request().headers().authorization ?? '' };
+      bucket.set(url.pathname.replace(/^\/media/, ''), route.request().postDataBuffer());
+      return route.fulfill({ status: 200, headers: cors, body: '' });
+    },
+    'cdn.example.com': (route, url) => (bucket.has(url.pathname) ? route.fulfill({ status: 200, headers: cors, body: bucket.get(url.pathname) }) : route.fulfill({ status: 404, headers: cors, body: '' })),
+    'uploads.pinata.cloud': (route) => {
+      sent.pin = { method: route.request().method(), auth: route.request().headers().authorization ?? '' };
+      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ data: { cid: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' } }) });
+    },
+    'cdn.jsdelivr.net': (route) => route.abort(),
+    'unpkg.com': (route) => route.abort(),
+  };
+  const draft = { 'dash-sites.page': stored.model, 'dash-sites.page-images': stored.images };
+  const panel = await open({ draft, stubs });
+  // Expected here: requests the stand-ins refuse, and the test clock being kept out of the sandboxed preview.
+  const offline = [];
+  panel.on('console', (m) => m.type() === 'error' && /ERR_FAILED|Failed to load resource|frame is sandboxed/.test(m.text()) && offline.push(m.text()));
+  await openEditor(panel);
+  await panel.locator('.dsp .tx').click();
+  await panel.selectOption('.ed-add', 'image');
+  await panel.setInputFiles('.ed-image:visible input[type=file]', photo);
+  await panel.waitForSelector('.dsp figure img[src^="data:image/"]', { timeout: 30000 });
+  await closeEditor(panel);
+  const photoPath = await panel.evaluate(() => JSON.parse(localStorage.getItem('dash-sites.page')).pages['/'].find((block) => block.type === 'image').props.src);
+  picture = Buffer.from(await panel.evaluate((path) => JSON.parse(localStorage.getItem('dash-sites.page-images'))[path], photoPath), 'base64');
+  draft['dash-sites.page'] = await panel.evaluate(() => localStorage.getItem('dash-sites.page'));
+  draft['dash-sites.page-images'] = await panel.evaluate(() => localStorage.getItem('dash-sites.page-images'));
+  const listed = panel.locator(`#page-images li:has-text("${photoPath}")`);
+  await panel.click('#outside summary');
+  const row = panel.locator('.outside-files li');
+  check((await row.count()) === 1 && /KB, about 0\.\d{5} DASH on Platform/.test(await row.textContent()), `the builder offers to move the one large file: ${(await row.textContent()).replace(/\s+/g, ' ')}`);
+  const before = await panel.textContent('#page-cost');
+  await row.locator('input').fill('https://media.example.com/other.webp');
+  await row.locator('button:has-text("Check and keep outside")').click();
+  await row.locator('.error').waitFor();
+  check(/not the file that was published/.test(await row.locator('.error').textContent()), `an address that serves something else is refused: ${await row.locator('.error').textContent()}`);
+  await row.locator('input').fill('https://media.example.com/alice.webp');
+  await row.locator('button:has-text("Check and keep outside")').click();
+  await row.locator('.outside-places').waitFor();
+  check((await row.locator('.outside-places').textContent()) === 'Kept at media.example.com', 'an address that serves the file is kept as its place');
+  const after = await panel.textContent('#page-cost');
+  const total = (text) => Number(/about ([\d.]+) DASH/.exec(text)[1]);
+  check(/one image \([\d.]+ KB\) about 0\.\d{5} DASH\. One image is kept outside Platform/.test(after) && total(after) < total(before) / 2, `and the page costs less: ${after}`);
+  check(/outside Platform$/.test(await listed.textContent()), 'the image is listed as kept outside');
+  if (shots) await panel.locator('#step-content').screenshot({ path: join(shots, 'outside-address-light.png') });
+
+  await row.locator('button:has-text("Store on Platform instead")').click();
+  await panel.waitForFunction((text) => document.getElementById('page-cost').textContent === text, before);
+  check((await row.locator('.outside-places').count()) === 0, 'it can be put back on Platform');
+
+  await panel.click('#outside-panel .chips button:has-text("Upload to a bucket")');
+  const fields = panel.locator('.outside-fields:visible input');
+  for (const [i, value] of ['https://bucket.example.com', 'media', 'auto', 'AKIAEXAMPLE', 'secret', 'https://cdn.example.com', 'site/'].entries()) await fields.nth(i).fill(value);
+  await row.locator('button:has-text("Upload and keep outside")').click();
+  await row.locator('.outside-places').waitFor();
+  const key = [...bucket.keys()][0] ?? '';
+  check(sent.put?.method === 'PUT' && /^AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE\//.test(sent.put.auth) && /^\/site\/[0-9a-f]{64}\.(webp|jpg)$/.test(key) && picture.equals(bucket.get(key)), `a bucket upload is one signed PUT, named by the file’s hash: ${sent.put?.path}`);
+  check((await row.locator('.outside-places').textContent()) === 'Kept at cdn.example.com', 'and the file is kept outside once the bucket serves it back');
+  if (shots) await panel.locator('#step-content').screenshot({ path: join(shots, 'outside-bucket-light.png') });
+
+  await panel.clock.install();
+  await panel.click('#outside-panel .chips button:has-text("Pin on IPFS with Pinata")');
+  await panel.locator('.outside-fields:visible input').fill('pinata-jwt');
+  await row.locator('button:has-text("Also pin here")').click();
+  await row.locator('.status:has-text("Waiting for IPFS")').waitFor();
+  for (let i = 0; i < 15 && (await row.locator('.error').count()) === 0; i++) {
+    await panel.clock.fastForward(10_000);
+    await panel.waitForTimeout(200);
+  }
+  check(sent.pin?.method === 'POST' && sent.pin.auth === 'Bearer pinata-jwt', 'pinning is one upload to Pinata with the owner’s key');
+  check(/It was uploaded, but IPFS bafybeigdy… did not serve it back/.test(await row.locator('.error').textContent()), 'a pin that IPFS cannot serve yet is not counted as a place');
+  await row.locator('button:has-text("Keep it outside anyway")').click();
+  await panel.waitForFunction(() => /IPFS/.test(document.querySelector('.outside-places')?.textContent ?? ''));
+  check((await row.locator('.outside-places').textContent()) === 'Kept at cdn.example.com and IPFS bafybeigdy…', 'unless the owner says to keep it');
+
+  const remembered = await panel.evaluate(() => localStorage.getItem('dash-sites.outside'));
+  check(Object.values(JSON.parse(remembered))[0]?.length === 2, 'the places are remembered in this browser, by the file’s hash');
+  await panel.context().close();
+  for (const dark of [false, true]) {
+    const again = await open({ dark, draft: { ...draft, 'dash-sites.outside': remembered }, stubs });
+    await again.click('#outside summary');
+    check((await again.locator('#page-images li:has-text("outside Platform")').count()) === 1 && (await again.locator('.outside-places').count()) === 1, `a reload${dark ? ' in dark mode' : ''} keeps the file outside`);
+    if (shots) await again.locator('#step-content').screenshot({ path: join(shots, `outside-panel-${dark ? 'dark' : 'light'}.png`) });
+    if (shots) await again.screenshot({ path: join(shots, `builder-${dark ? 'dark' : 'light'}.png`), fullPage: true });
+    await again.context().close();
+  }
+  violations.splice(0, violations.length, ...violations.filter((text) => !offline.includes(text)));
 
   check(violations.length === 0, `no policy violations or page errors${violations.length ? `: ${[...new Set(violations)].join(' | ')}` : ''}`);
   check(outside.length === 0, `no request to any other host${outside.length ? `: ${[...new Set(outside)].join(' ')}` : ''}`);
