@@ -120,7 +120,9 @@ arguments for every command.
 A site can read its own proved record at `/.well-known/dash/site.json` and
 its file list at `/.well-known/dash/manifest.json`, whoever serves it. Sites
 are static: requests other than GET and HEAD are refused, and a site cannot
-register a service worker of its own.
+register a service worker of its own. A browser fetches a worker script
+from the host, which answers every path with the static page, so the
+registration fails.
 
 ## Install the extension
 
