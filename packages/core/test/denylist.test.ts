@@ -13,6 +13,7 @@ import {
   utf8,
 } from '../src/index.js';
 import { MemoryPlatform } from '../src/memory.js';
+import type { Network } from '../src/config.js';
 
 describe('denylist', () => {
   it('parses names, owners and contents, ignoring comments and blank lines', () => {
@@ -79,10 +80,12 @@ describe('denylist', () => {
 
 describe('networks without a dash-sites contract', () => {
   it('gives readers a config with no contract instead of throwing', () => {
-    expect(DEPLOYMENTS.mainnet).toBeUndefined();
-    expect(() => networkConfig('mainnet')).toThrow(/no contract on mainnet/);
-    expect(readerConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '' });
+    const devnet = 'devnet' as Network;
+    expect(DEPLOYMENTS[devnet]).toBeUndefined();
+    expect(() => networkConfig(devnet)).toThrow(/no contract on devnet/);
+    expect(readerConfig(devnet)).toEqual({ network: devnet, contractId: '' });
     expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
+    expect(networkConfig('mainnet').contractId).toBe('GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3');
     expect(readerConfig('testnet').contractId).toBe(networkConfig('testnet').contractId);
   });
 });
