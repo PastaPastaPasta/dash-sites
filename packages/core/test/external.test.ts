@@ -12,6 +12,7 @@ import {
   isExternalAsset,
   PackError,
   readFile,
+  checkExternalAssets,
   utf8,
   validateManifest,
   type SiteFile,
@@ -53,10 +54,12 @@ describe('manifest versions', () => {
   it('pins exact versions and safe paths only', () => {
     const base = { npm: 'pkg', version: '1.2.3', path: 'dist/a.wasm', integrity: integrityOf(big) };
     expect(isExternalAsset(base)).toBe(true);
-    for (const version of ['^1.2.3', '~1.2.3', 'latest', '1.2', '1.2.x', '>=1.0.0', '1.2.3 || 2.0.0', '1.2.3+build']) {
+    expect(isExternalAsset({ ...base, version: '5.0.0-rc.8' })).toBe(true);
+    for (const version of ['^1.2.3', '~1.2.3', 'latest', '1.2', '1.2.x', '>=1.0.0', '1.2.3 || 2.0.0', '1.2.3+build', '1.0.0-01', '01.2.3']) {
       expect(isExternalAsset({ ...base, version })).toBe(false);
     }
-    for (const path of ['../x', '/abs', 'a/../b', 'a//b', 'a?b', 'a#b', 'a%2e']) expect(isExternalAsset({ ...base, path })).toBe(false);
+    for (const path of ['../x', '/abs', 'a/../b', 'a//b', 'a?b', 'a#b', 'a%2e', '+esm', 'dist/+esm']) expect(isExternalAsset({ ...base, path })).toBe(false);
+    expect(isExternalAsset({ ...base, path: 'dist/a+b.js' })).toBe(true);
     for (const npm of ['Upper', '../x', '@scope', 'a b']) expect(isExternalAsset({ ...base, npm })).toBe(false);
     expect(isExternalAsset({ ...base, integrity: 'sha256-abc' })).toBe(false);
     expect(isExternalAsset({ ...base, extra: 1 })).toBe(false);
@@ -70,6 +73,29 @@ describe('manifest versions', () => {
       'https://cdn.jsdelivr.net/npm/@dashevo/wasm-sdk@5.0.0-rc.8/dist/raw/wasm_sdk_bg.wasm',
       'https://unpkg.com/@dashevo/wasm-sdk@5.0.0-rc.8/dist/raw/wasm_sdk_bg.wasm',
     ]);
+  });
+});
+
+describe('manifest checks', () => {
+  it('rejects an external file that also has stored parts or an encoding', () => {
+    const { manifest } = buildSite(FILES, { external: EXT });
+    const entry = manifest.files['/b.bin']!;
+    expect(() => validateManifest({ ...manifest, files: { ...manifest.files, '/b.bin': { ...entry, parts: [[0, 0, 1]] } } })).toThrow(/ext with stored parts/);
+    expect(() => validateManifest({ ...manifest, files: { ...manifest.files, '/b.bin': { ...entry, enc: 'gzip' } } })).toThrow(/ext with stored parts/);
+  });
+});
+
+describe('publishing checks', () => {
+  it('requires every CDN to serve each external file with its hash', async () => {
+    const { manifest } = buildSite(FILES, { external: EXT });
+    const ok = await checkExternalAssets(manifest.files, async () => new Response(big));
+    expect(ok.map((r) => r.result)).toEqual(['ok', 'ok']);
+    const generated = await checkExternalAssets(manifest.files, async (url) => (String(url).includes('unpkg') ? new Response(null, { status: 404 }) : new Response(big)));
+    expect(generated.map((r) => r.result)).toEqual(['ok', 'mismatch']);
+    const down = await checkExternalAssets(manifest.files, async () => {
+      throw new TypeError('fetch failed');
+    });
+    expect(down.map((r) => r.result)).toEqual(['unreachable', 'unreachable']);
   });
 });
 
@@ -91,6 +117,9 @@ describe('reading', () => {
     await expect(readFile(manifest, '/b.bin', noChunks, serving(tampered))).rejects.toThrow(ExternalAssetError);
     await expect(readFile(manifest, '/b.bin', noChunks, serving(big, 404))).rejects.toThrow(/HTTP 404/);
     await expect(readFile(manifest, '/b.bin', noChunks, serving(new Uint8Array([...big, 1])))).rejects.toThrow(/wrong size/);
+    // A compressed transfer reports its compressed length; only the decoded bytes are counted.
+    const encoded = cdnSource(async () => new Response(big, { headers: { 'content-length': '7', 'content-encoding': 'br' } }));
+    expect((await readFile(manifest, '/b.bin', noChunks, encoded)).bytes).toEqual(big);
     // An external source that skips the check is caught by the reader.
     await expect(readFile(manifest, '/b.bin', noChunks, async () => tampered)).rejects.toThrow(ContentError);
   });

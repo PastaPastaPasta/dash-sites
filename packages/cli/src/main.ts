@@ -4,8 +4,7 @@ import { parseArgs } from 'node:util';
 import { brotliCompressSync, constants as zlib } from 'node:zlib';
 import {
   buildSite,
-  externalUrls,
-  integrityOf,
+  checkExternalAssets,
   type BuildOptions,
   collectGarbage,
   estimateCredits,
@@ -119,19 +118,12 @@ function buildOptions(): BuildOptions {
   return { spa: values.spa, ...(values.brotli ? { brotli } : {}), ...(external ? { external } : {}) };
 }
 
-/** Fetches every external asset from each CDN and refuses the site unless at least one copy matches the local file. */
+/** Refuses the site unless every npm CDN serves each external file with its integrity. */
 async function checkExternal(bundle: ReturnType<typeof buildSite>): Promise<void> {
-  for (const [path, file] of Object.entries(bundle.manifest.files)) {
-    if (!file.ext) continue;
-    let matched = 0;
-    for (const url of externalUrls(file.ext)) {
-      const response = await fetch(url, { redirect: 'error' }).catch((error: unknown) => error as Error);
-      const ok = response instanceof Response && response.ok && integrityOf(new Uint8Array(await response.arrayBuffer())) === file.ext.integrity;
-      console.error(`${ok ? 'ok      ' : 'MISMATCH'} ${path} <- ${url}${response instanceof Response ? '' : ` (${response.message})`}`);
-      if (ok) matched += 1;
-    }
-    if (matched === 0) fail(`${path} is not byte-identical to ${file.ext.npm}@${file.ext.version}/${file.ext.path} on any npm CDN`);
-  }
+  const results = await checkExternalAssets(bundle.manifest.files);
+  for (const r of results) console.error(`${r.result.padEnd(11)} ${r.path} <- ${r.url}${r.detail ? ` (${r.detail})` : ''}`);
+  if (results.some((r) => r.result === 'mismatch')) fail('an external file is not byte-identical to the npm package file on every CDN; store it instead');
+  if (results.some((r) => r.result === 'unreachable')) fail('an npm CDN could not be reached; try again');
 }
 
 const print = (value: unknown): void => console.log(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v), 2));

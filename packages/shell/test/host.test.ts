@@ -453,6 +453,14 @@ describe('external npm assets', () => {
     expect(body(reply)).toMatch(/Nothing from it ran/);
   });
 
+  it('says the file could not be downloaded when no CDN answers', async () => {
+    const { h } = await setup(() => 503);
+    const reply = await h.get('/sdk.wasm', { navigation: false });
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toMatch(/could not be downloaded/);
+    expect(body(reply)).not.toMatch(/fingerprint/);
+  });
+
   it('does not trust a kept copy that was changed', async () => {
     const { h, fetched } = await setup(() => wasm);
     await h.get('/sdk.wasm', { navigation: false });

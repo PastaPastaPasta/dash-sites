@@ -1,6 +1,6 @@
 import { decompress as brotliDecompress } from 'brotli/decompress';
 import { concat, sha256Hex } from './bytes.js';
-import { cdnSource, integrityOf, type ExternalSource } from './external.js';
+import { cdnSource, integrityOfAsync, type ExternalSource } from './external.js';
 import type { ContentRef } from './content.js';
 import { gunzip } from './gzip.js';
 import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_MANIFEST_BYTES, type Limits } from './limits.js';
@@ -55,13 +55,19 @@ export interface FileContent {
 
 const defaultExternal = cdnSource();
 
+async function sha256HexAsync(bytes: Uint8Array): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return sha256Hex(bytes);
+  return [...new Uint8Array(await subtle.digest('SHA-256', bytes as BufferSource))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /** Reads one file of a manifest and checks it against the manifest's size and hash. */
 export async function readFile(manifest: Manifest, path: string, source: ChunkSource, external: ExternalSource = defaultExternal): Promise<FileContent> {
   const file = manifest.files[path];
   if (!file) throw new ContentError(`no such file: ${path}`);
   if (file.ext) {
     const bytes = await external(file.ext, file.size);
-    if (bytes.length !== file.size || integrityOf(bytes) !== file.ext.integrity || sha256Hex(bytes) !== file.sha256) {
+    if (bytes.length !== file.size || (await integrityOfAsync(bytes)) !== file.ext.integrity || (await sha256HexAsync(bytes)) !== file.sha256) {
       throw new ContentError(`${path} does not match its hash`);
     }
     return { file, bytes, stored: bytes };

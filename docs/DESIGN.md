@@ -232,6 +232,47 @@ Limits a reader enforces: manifest ≤ 30 chunks (441 KB compressed) and ≤ 4 M
 decoded, ≤ 5,000 files, site ≤ 50 MB decoded, path ≤ 512 bytes. Decompression
 stops at the declared size. The gateway sets lower limits (25 MB per site).
 
+### Manifest version 2: external npm assets and brotli
+
+Storing a byte on Platform costs about 0.27 DASH per MB, once. A site that ships
+an unmodified file of a published npm package (a 26 MB SDK wasm, say) can name
+it instead of storing it:
+
+```json
+"/_next/static/wasm/wasm_sdk_bg.e9693c35d34d68e7.wasm": {
+  "type": "application/wasm", "size": 26513399, "sha256": "<hex>", "parts": [],
+  "ext": { "npm": "@dashevo/wasm-sdk", "version": "5.0.0-rc.8",
+           "path": "dist/raw/wasm_sdk_bg.wasm",
+           "integrity": "sha384-w5Q3Aw54F8HwCjSPF/bX+BQwWEP0e6bea4S63gs3+d/R7kbQQI9OpZPvHj4wCbVG" } }
+```
+
+and a file may be stored as brotli (`"enc": "br"`), which is a third smaller
+than gzip for JavaScript and HTML.
+
+**Trust model.** The SHA-384 (and the SHA-256 beside it) sit in the manifest,
+which is fixed by the site record, which a Platform proof fixes: that hash is
+the root of trust, exactly as for stored chunks. The npm CDNs are transport
+only. A reader fetches `https://cdn.jsdelivr.net/npm/<pkg>@<version>/<path>`,
+then `https://unpkg.com/<pkg>@<version>/<path>`, refuses redirects, reads at
+most `size` bytes, and serves the file only if both hashes match; otherwise it
+tries the next CDN, and with none left it serves an error page instead of the
+file, so nothing from it runs. A CDN can withhold the file (the site then
+cannot load that file) but cannot change it. Versions are exact (no ranges or
+tags), so what a name resolves to never changes without a new site record. The
+shell keeps a verified copy in Cache Storage and checks it again on every read,
+since site code can write there. The CDNs are the only hosts contacted for an
+external asset; the worker's own requests to Platform nodes go to their IP
+addresses, so a header CSP on the worker could not be narrower than `https:`,
+and the allowlist is enforced in code instead.
+
+**Compatibility.** A manifest that uses neither feature stays version 1 and
+byte-identical to before. One that uses either is version 2. Readers that only
+know version 1 (older shells, gateways and extensions) reject version 2 whole,
+showing their "cannot be shown" page, and the older `gc` stops with an error
+instead of deleting chunks it cannot account for. `dash-sites publish
+--external <map>` checks each named file against the local copy and against the
+CDNs before publishing, and `--brotli` is opt-in.
+
 ## 4. Resolution
 
 Input: a name, e.g. `Alice.dash` (or a gateway host label).

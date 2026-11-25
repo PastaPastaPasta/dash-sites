@@ -5,6 +5,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildSite, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { createGateway, emptyDenylist, parseDenylist, parseDomain, RefreshingCache, type GatewayConfig } from '../src/index.js';
+import type { GatewayOptions } from '../src/server.js';
+import { brotliCompressSync } from 'node:zlib';
+import { cdnSource } from '@dash-sites/core';
 
 const text = (s: string) => utf8.encode(s);
 const SITE: SiteFile[] = [
@@ -47,6 +50,7 @@ class Harness {
   reads = 0;
   failReads = false;
   config = config();
+  external?: GatewayOptions['external'];
   private server?: Server;
   private port = 0;
 
@@ -63,7 +67,7 @@ class Harness {
       getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
     };
     this.config = config(overrides);
-    this.server = createServer(createGateway({ reader, config: this.config, now: () => this.clock }));
+    this.server = createServer(createGateway({ reader, config: this.config, now: () => this.clock, external: this.external }));
     await new Promise<void>((resolve) => this.server?.listen(0, '127.0.0.1', resolve));
     this.port = (this.server.address() as AddressInfo).port;
     return this;
@@ -356,5 +360,57 @@ describe('RefreshingCache', () => {
     expect((await cache.get('k')).value.height).toBe(5);
     clock += 100;
     expect((await cache.get('k')).value.height).toBe(9);
+  });
+});
+
+describe('gateway: version 2 sites', () => {
+  const lib = text('export const value = 42;\n'.repeat(400));
+  const sdk = new Uint8Array(30_000).map((_, i) => (i * 13) % 251);
+  const brotli = (d: Uint8Array) => new Uint8Array(brotliCompressSync(d));
+  let served = sdk;
+  let fetches = 0;
+  const h = new Harness();
+
+  beforeAll(async () => {
+    h.external = cdnSource(async () => {
+      fetches += 1;
+      return new Response(served);
+    });
+    h.platform.registerName('alice', 'alice-id');
+    h.platform.registerName('bob', 'bob-id');
+    const ext = { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' } };
+    await publishSite(h.platform.as('alice-id'), 'alice', buildSite([{ path: '/index.html', bytes: text('a') }, { path: '/lib.js', bytes: lib }, { path: '/sdk.wasm', bytes: sdk }], { brotli, external: ext }));
+    await publishSite(h.platform.as('bob-id'), 'bob', buildSite([{ path: '/index.html', bytes: text('b') }, { path: '/lib.js', bytes: lib }, { path: '/sdk.wasm', bytes: sdk }]));
+    await h.start();
+  });
+  afterAll(() => h.stop());
+
+  it('never labels brotli or external bytes as gzip when another site stores the same file as gzip', async () => {
+    const a = await h.get('alice.id.example.org', '/lib.js', { 'accept-encoding': 'gzip' });
+    expect(a.status).toBe(200);
+    expect(a.headers['content-encoding']).toBeUndefined();
+    expect(new Uint8Array(a.body)).toEqual(lib);
+    const b = await h.get('bob.id.example.org', '/lib.js', { 'accept-encoding': 'gzip' });
+    expect(b.headers['content-encoding']).toBe('gzip');
+    expect(new Uint8Array(gunzipSync(b.body))).toEqual(lib);
+    const wa = await h.get('alice.id.example.org', '/sdk.wasm', { 'accept-encoding': 'gzip' });
+    expect(new Uint8Array(wa.body)).toEqual(sdk);
+    const wb = await h.get('bob.id.example.org', '/sdk.wasm', { 'accept-encoding': 'gzip' });
+    const bobBytes = wb.headers['content-encoding'] === 'gzip' ? gunzipSync(wb.body) : wb.body;
+    expect(new Uint8Array(bobBytes)).toEqual(sdk);
+  });
+
+  it('refuses an external file no CDN serves with its hash, and does not refetch it on every request', async () => {
+    h.platform.registerName('carol', 'carol-id');
+    const other = sdk.slice();
+    other[5] ^= 1;
+    await publishSite(h.platform.as('carol-id'), 'carol', buildSite([{ path: '/index.html', bytes: text('c') }, { path: '/x.wasm', bytes: other }], { external: { '/x.wasm': { npm: 'pkg', version: '1.0.0', path: 'x.wasm' } } }));
+    served = sdk;
+    const before = fetches;
+    const first = await h.get('carol.id.example.org', '/x.wasm');
+    expect(first.status).toBe(502);
+    expect(first.body.toString()).toContain('no npm mirror served it with the hash');
+    expect((await h.get('carol.id.example.org', '/x.wasm')).status).toBe(502);
+    expect(fetches - before).toBe(2);
   });
 });

@@ -2,7 +2,7 @@ import {
   ContentError,
   ExternalAssetError,
   cdnSource,
-  integrityOf,
+  integrityOfAsync,
   type ExternalSource,
   HOST_API,
   ManifestError,
@@ -230,7 +230,7 @@ export class SiteHost {
     return async (asset, size) => {
       const key = `ext/${asset.integrity}`;
       const kept = await this.options.store.getChunk(key).catch(() => undefined);
-      if (kept && kept.length === size && integrityOf(kept) === asset.integrity) return kept;
+      if (kept && kept.length === size && (await integrityOfAsync(kept)) === asset.integrity) return kept;
       const bytes = await fetchExternal(asset, size);
       void this.options.store.putChunk(key, bytes).catch(() => undefined);
       return bytes;
@@ -330,8 +330,10 @@ export class SiteHost {
         return this.page(
           502,
           'Not loaded',
-          'Part of this site could not be checked',
-          `This site uses a file from the npm package <code>${name}</code>. Your browser fetched it from public npm mirrors, and no copy matched the fingerprint its owner published on Dash Platform, so it was not used. Nothing from it ran. This is usually a network or mirror problem: reload in a little while.`,
+          error.mismatch ? 'Part of this site could not be checked' : 'Part of this site could not be downloaded',
+          error.mismatch
+            ? `This site uses a file from the npm package <code>${name}</code>. Your browser fetched it from public npm mirrors, and no copy matched the fingerprint its owner published on Dash Platform, so it was not used. Nothing from it ran. Reload in a little while; if it keeps happening, tell the site's owner.`
+            : `This site uses a file from the npm package <code>${name}</code>, which your browser could not download from the public npm mirrors (cdn.jsdelivr.net, unpkg.com). Nothing from it ran. Check your connection, or whether something blocks those addresses, and reload.`,
         );
       }
       if (!(error instanceof ContentError)) throw error;
