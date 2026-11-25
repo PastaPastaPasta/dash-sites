@@ -1,4 +1,5 @@
 import { parseContentUri } from './content.js';
+import { isNewer } from './formats.js';
 import { estimateCredits, formatDash } from './cost.js';
 import { parseName } from './names.js';
 import type { SiteBundle } from './pack.js';
@@ -226,6 +227,7 @@ async function referenced(writer: PlatformWriter, sites: SiteRecord[]): Promise<
   for (const site of sites) {
     const keep = out.get(site.id) ?? new Set<string>();
     out.set(site.id, keep);
+    if (isNewer('site', site.v)) throw new PruneError(`site record ${site.id} is in format ${site.v}, newer than this version reads; nothing is deleted`);
     if (site.content === undefined) continue;
     if (!showing.has(site.id)) showing.set(site.id, await shown(writer, site));
     if (!showing.get(site.id)) continue;

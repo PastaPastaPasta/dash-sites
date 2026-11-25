@@ -103,7 +103,7 @@ describe('reading a name', () => {
   };
   const read = {
     domain: { id: DOMAIN_ID, ownerId: IDENTITY, label: 'Alice', normalizedLabel: 'a11ce', transferredAt: 3 },
-    site: { id: SITE_ID, ownerId: IDENTITY, normalizedLabel: 'a11ce', content: 'ipfs://x', revision: 2, updatedAt: 5 },
+    site: { id: SITE_ID, ownerId: IDENTITY, normalizedLabel: 'a11ce', v: 1, content: 'ipfs://x', revision: 2, updatedAt: 5 },
   };
   const bytes = [new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])];
   const hashes = bytes.map(sha256Hex);

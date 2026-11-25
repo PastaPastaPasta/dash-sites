@@ -132,7 +132,7 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
 
 ### The `dash-sites` contract
 
-Two document types ([`contract/dash-sites.v2.json`](../contract/dash-sites.v2.json)).
+Two document types ([`contract/dash-sites.v2.json`](../contract/dash-sites.v2.json)). Each carries a format version `v`; how formats and the contract change later is in [VERSIONING.md](VERSIONING.md).
 
 ```
 site      mutable, never deleted, not transferable

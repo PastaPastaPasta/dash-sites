@@ -1,4 +1,5 @@
 import { sha256Hex } from './bytes.js';
+import { FORMATS, isNewer, NewerFormatError } from './formats.js';
 import { normalizeLabel } from './names.js';
 import type { DomainRecord, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
 
@@ -6,7 +7,7 @@ import type { DomainRecord, PlatformWriter, ProofMeta, Proved, SiteRecord, Store
 export class MemoryPlatform {
   readonly domains = new Map<string, DomainRecord>();
   readonly sites = new Map<string, SiteRecord>();
-  readonly chunks = new Map<string, { id: string; ownerId: string; siteId: string; hash: string; data: Uint8Array }>();
+  readonly chunks = new Map<string, { id: string; ownerId: string; siteId: string; hash: string; data: Uint8Array; v: number }>();
   height = 1;
   funds = 10n ** 12n;
   now: () => number = Date.now;
@@ -56,6 +57,7 @@ export class MemoryPlatform {
         const out = new Map<string, Uint8Array>();
         for (const hash of hashes) {
           const chunk = this.chunks.get(chunkKey(siteId, hash));
+          if (chunk && isNewer('chunk', chunk.v)) throw new NewerFormatError('chunk', chunk.v);
           if (chunk) out.set(hash, chunk.data);
         }
         return out;
@@ -69,7 +71,7 @@ export class MemoryPlatform {
         if (!ownSite(siteId)) throw new Error(`${identityId} did not write site record ${siteId}`);
         const key = chunkKey(siteId, hash);
         if (this.chunks.has(key)) throw new Error('duplicate chunk');
-        this.chunks.set(key, { id: `chunk-${this.nextId++}`, ownerId: identityId, siteId, hash, data });
+        this.chunks.set(key, { id: `chunk-${this.nextId++}`, ownerId: identityId, siteId, hash, data, v: FORMATS.chunk });
         this.height += 1;
       },
       putSite: async (domain, content) => {
@@ -79,6 +81,7 @@ export class MemoryPlatform {
           id: existing?.id ?? `site-${this.nextId++}`,
           ownerId: identityId,
           normalizedLabel: domain.normalizedLabel,
+          v: FORMATS.site,
           ...(content === undefined ? {} : { content }),
           revision: (existing?.revision ?? 0) + 1,
           updatedAt: this.tick(),

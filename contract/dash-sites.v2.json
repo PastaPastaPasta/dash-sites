@@ -27,6 +27,13 @@
         "maxLength": 2048,
         "position": 2,
         "description": "Content URI: dash-manifest:v1:<hex>[,<hex>...] or ipfs://<cid>. A record without one says the name has no site."
+      },
+      "v": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535,
+        "position": 3,
+        "description": "Format version of this site record. A reader refuses a version newer than it reads, rather than misreading it. docs/VERSIONING.md lists the versions."
       }
     },
     "indices": [
@@ -72,6 +79,7 @@
     "required": [
       "normalizedParentDomainName",
       "normalizedLabel",
+      "v",
       "$createdAt",
       "$updatedAt"
     ],
@@ -129,6 +137,13 @@
         "minItems": 1,
         "maxItems": 4900,
         "position": 4
+      },
+      "v": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535,
+        "position": 5,
+        "description": "Format version of this chunk. A reader refuses a version newer than it reads, rather than misreading it. docs/VERSIONING.md lists the versions."
       }
     },
     "indices": [
@@ -148,7 +163,8 @@
     "required": [
       "site",
       "hash",
-      "d0"
+      "d0",
+      "v"
     ],
     "additionalProperties": false,
     "transferable": 0,

@@ -220,6 +220,7 @@ const host = new SiteHost({
   store: new BrowserStore(VERIFIER_URLS),
   builderUrl: __BUILDER_URL__,
   onOwnerChange: () => void resetClients(),
+  onNewerFormat: () => void self.registration.update().catch(() => undefined),
   denied: hostedDenied,
   log: (entry) => console.warn('dash-sites', entry),
 });

@@ -11,6 +11,7 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { base58 } from '@scure/base';
 import { concat, fromHex, sha256, toHex } from './bytes.js';
 import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
+import { FORMATS, formatVersion, isNewer, NewerFormatError } from './formats.js';
 import { KNOWN_CONTRACTS } from './known-contracts.js';
 import { CHUNK_FIELD_SIZE, CHUNK_SIZE, PRELOAD_CHUNKS } from './limits.js';
 import { DASH_TLD, isValidLabel, normalizeLabel } from './names.js';
@@ -55,6 +56,7 @@ function toSite(id: string, document: Document): SiteRecord {
     id,
     ownerId: document.ownerId.toBase58(),
     normalizedLabel: String(object.normalizedLabel),
+    v: formatVersion(object.v),
     ...(typeof object.content === 'string' ? { content: object.content } : {}),
     revision: Number(document.revision ?? 1),
     updatedAt: Number(document.updatedAt ?? 0),
@@ -68,6 +70,8 @@ const dashName = (normalizedLabel: string): Where[] => [
 
 function toChunk(document: Document): [hash: string, data: Uint8Array] {
   const object = document.toObject() as Record<string, unknown>;
+  const version = formatVersion(object.v);
+  if (isNewer('chunk', version)) throw new NewerFormatError('chunk', version);
   const fields = [object.d0, object.d1, object.d2].filter((field): field is Uint8Array => field instanceof Uint8Array);
   return [toHex(object.hash as Uint8Array), concat(fields)];
 }
@@ -471,7 +475,7 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
 
   async createChunk(siteId: string, hash: string, data: Uint8Array): Promise<void> {
     if (data.length === 0 || data.length > CHUNK_SIZE) throw new Error('chunk size out of range');
-    const properties: Record<string, unknown> = { site: base58.decode(siteId), hash: fromHex(hash) };
+    const properties: Record<string, unknown> = { site: base58.decode(siteId), hash: fromHex(hash), v: FORMATS.chunk };
     for (const index of [0, 1, 2]) {
       const part = field(data, index);
       if (part) properties[`d${index}`] = part;
@@ -502,7 +506,7 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
       () => this.ownSite(normalizedLabel),
       (own) => Number(own?.[1].revision ?? 0) >= known,
     );
-    const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, ...(content === undefined ? {} : { content }) };
+    const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, v: FORMATS.site, ...(content === undefined ? {} : { content }) };
     const revision = existing ? Number(existing[1].revision ?? 1) + 1 : 1;
     if (existing) {
       const next = { ...(existing[1].toObject() as Record<string, unknown>), ...properties, $revision: BigInt(revision) };

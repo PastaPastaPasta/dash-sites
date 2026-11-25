@@ -1,4 +1,5 @@
 import { parseContentUri, type ContentRef } from './content.js';
+import { isNewer } from './formats.js';
 import { parseName } from './names.js';
 import type { DomainRecord, PlatformReader, ProofMeta, PublishedSite, SiteRecord } from './platform.js';
 
@@ -19,7 +20,8 @@ export type Resolution =
   | { status: 'invalid' }
   | ({ status: 'unregistered' } & Named)
   | ({ status: 'no-site' } & Owned)
-  | ({ status: 'unsupported'; site: PublishedSite } & Owned)
+  /** `newer`: a later version of this code reads it. `unknown`: content this project does not define. */
+  | ({ status: 'unsupported'; reason: 'newer' | 'unknown'; site: PublishedSite } & Owned)
   | ({ status: 'ok'; site: PublishedSite; content: ContentRef } & Owned);
 
 /** Whether `site` is the record a name shows: its owner's, written since the name came to that owner. */
@@ -43,11 +45,19 @@ export async function resolveName(reader: PlatformReader, input: string, options
   if (domain.normalizedLabel !== normalized) throw new Error('DPNS answered with a different name');
   if (site && (site.normalizedLabel !== normalized || site.ownerId !== domain.ownerId)) throw new Error('Platform answered with a different site');
   const base = { normalized, domain, canonicalLabel: domain.label.toLowerCase(), ownerId: domain.ownerId, meta };
-  if (!site || !isCurrent(domain, site) || site.content === undefined) return { status: 'no-site', ...base };
+  if (!site || !isCurrent(domain, site)) return { status: 'no-site', ...base };
+  if (isNewer('site', site.v)) return { status: 'unsupported', reason: 'newer', ...base, site: { ...site, content: site.content ?? '' } };
+  if (site.content === undefined) return { status: 'no-site', ...base };
   const published = { ...site, content: site.content };
   const content = parseContentUri(site.content);
-  if (!content) return { status: 'unsupported', ...base, site: published };
+  if (!content) return { status: 'unsupported', reason: contentUriIsNewer(site.content) ? 'newer' : 'unknown', ...base, site: published };
   return { status: 'ok', ...base, site: published, content };
+}
+
+/** Whether a content URI is a `dash-manifest` form of a later version than this code reads. */
+function contentUriIsNewer(uri: string): boolean {
+  const version = /^dash-manifest:v([1-9][0-9]{0,8}):/.exec(uri)?.[1];
+  return version !== undefined && isNewer('contentUri', Number(version));
 }
 
 /**
@@ -74,6 +84,7 @@ export function describeResolution(resolution: Resolution, network: string): Rec
   out.domainId = resolution.domain.id;
   out.transferredAt = resolution.domain.transferredAt;
   if (resolution.status === 'no-site') return out;
+  if (resolution.status === 'unsupported') out.reason = resolution.reason;
   out.site = { id: resolution.site.id, revision: resolution.site.revision, updatedAt: resolution.site.updatedAt, content: resolution.site.content };
   return out;
 }

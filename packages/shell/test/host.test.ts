@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildSite, cdnSource, integrityOf, normalizeLabel, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, cdnSource, formatContentUri, gzip, integrityOf, normalizeLabel, publishSite, sha256Hex, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
+import { FIXTURES, fixtureExternal, readFixture, storeFixture } from '../../core/test/fixtures/formats/load.js';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
 const text = (s: string) => utf8.encode(s);
@@ -34,6 +35,7 @@ class Harness {
   chunkReads = 0;
   down = false;
   ownerChanges = 0;
+  newerFormats = 0;
   nonces = 0;
   background: Promise<unknown>[] = [];
   denied?: HostOptions['denied'];
@@ -67,6 +69,7 @@ class Harness {
       builderUrl: 'https://builder.example/',
       now: () => this.clock,
       onOwnerChange: () => void (this.ownerChanges += 1),
+      onNewerFormat: () => void (this.newerFormats += 1),
       nonce: () => `nonce-${++this.nonces}`,
       denied: this.denied,
       external: this.external,
@@ -492,5 +495,49 @@ describe('external npm assets', () => {
     kept[0] ^= 1;
     expect((await h.get('/sdk.wasm', { navigation: false })).body).toEqual(wasm);
     expect(fetched.length).toBe(2);
+  });
+});
+
+describe('stored formats', () => {
+  for (const name of FIXTURES) {
+    it(`serves ${name}, a site stored by an earlier version, file for file`, async () => {
+      const fixture = readFixture(name);
+      const h = new Harness();
+      h.external = fixtureExternal(fixture);
+      h.start();
+      await storeFixture(h.platform, fixture, 'alice', 'alice-id');
+      await h.open();
+      for (const [path, sha256] of Object.entries(fixture.files)) {
+        const reply = await h.get(path, { navigation: false });
+        expect(reply.status).toBe(200);
+        expect(sha256Hex(typeof reply.body === 'string' ? utf8.encode(reply.body) : (reply.body as Uint8Array))).toBe(sha256);
+      }
+      expect(h.newerFormats).toBe(0);
+    });
+  }
+
+  it('asks for a newer worker and says so when a site is stored in a newer format', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    site.v += 1;
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
+  });
+
+  it('asks for a newer worker when a manifest is of a newer version', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    const piece = gzip(utf8.encode(JSON.stringify({ v: 99, chunks: [], files: {} })));
+    const hash = sha256Hex(piece);
+    await h.platform.as('alice-id').createChunk(site.id, hash, piece);
+    site.content = formatContentUri({ scheme: 'dash-manifest', chunks: [hash] });
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
   });
 });

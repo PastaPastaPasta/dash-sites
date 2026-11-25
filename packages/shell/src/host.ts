@@ -6,6 +6,7 @@ import {
   type ExternalSource,
   HOST_API,
   ManifestError,
+  NewerFormatError,
   DENIED_TITLE,
   dashHeaders,
   deniedDetail,
@@ -88,6 +89,8 @@ export interface HostOptions {
   log?: (entry: Record<string, unknown>) => void;
   /** Where external npm assets are fetched from; defaults to the npm CDNs. Bytes are checked either way. */
   external?: ExternalSource;
+  /** The site is stored in a format newer than this worker reads: look for a newer worker. */
+  onNewerFormat?: () => void;
 }
 
 type Ok = Extract<Resolution, { status: 'ok' }>;
@@ -250,6 +253,17 @@ export class SiteHost {
     return manifest;
   }
 
+  /** A site stored in a format this worker does not read yet. A newer worker may, so one is looked for. */
+  private newer(dashName: string): Reply {
+    this.options.onNewerFormat?.();
+    return this.page(
+      502,
+      'Update needed',
+      `${dashName} needs a newer version of this page`,
+      'Its owner published it in a newer format than this copy of the page reads. Reload to get the latest version. If this keeps showing, the format is not supported here yet.',
+    );
+  }
+
   private page(status: number, label: string, title: string, detail: string): Reply {
     return {
       status,
@@ -304,14 +318,16 @@ export class SiteHost {
     if (resolution.status === 'no-site') {
       return this.page(404, 'No site', `${dashName} has no site yet`, `The name is registered, and its owner has not published a site. If it is yours, <a href="${escapeHtml(this.options.builderUrl)}">publish one</a>.`);
     }
+    if (resolution.status === 'unsupported' && resolution.reason === 'newer') return this.newer(dashName);
     if (resolution.status === 'unsupported' || resolution.content.scheme !== 'dash-manifest') {
-      return this.page(502, 'Unsupported', `${dashName} cannot be shown here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this gateway does not load.`);
+      return this.page(502, 'Unsupported', `${dashName} cannot be shown here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this page does not load.`);
     }
 
     let manifest: Manifest;
     try {
       manifest = await this.manifestFor(resolution);
     } catch (error) {
+      if (error instanceof NewerFormatError) return this.newer(dashName);
       if (!(error instanceof ContentError) && !(error instanceof ManifestError)) throw error;
       return this.page(502, 'Unavailable', `${dashName} cannot be shown`, 'Its published content is incomplete or does not match the hashes its owner published.');
     }
@@ -343,6 +359,7 @@ export class SiteHost {
               ];
         return this.page(502, 'Not loaded', title, detail);
       }
+      if (error instanceof NewerFormatError) return this.newer(dashName);
       if (!(error instanceof ContentError)) throw error;
       return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');
     }

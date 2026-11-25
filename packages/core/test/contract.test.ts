@@ -66,13 +66,13 @@ describe('the contract to register', () => {
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
-        required: ['normalizedParentDomainName', 'normalizedLabel', '$createdAt', '$updatedAt'],
+        required: ['normalizedParentDomainName', 'normalizedLabel', 'v', '$createdAt', '$updatedAt'],
         indices: [
           { name: 'nameAndOwner', properties: [{ normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }, { $ownerId: 'asc' }], unique: true },
           { name: 'ownerAndName', properties: [{ $ownerId: 'asc' }, { normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }], unique: true },
           { name: 'updated', properties: [{ $updatedAt: 'asc' }] },
         ],
-        positions: { normalizedParentDomainName: 0, normalizedLabel: 1, content: 2 },
+        positions: { normalizedParentDomainName: 0, normalizedLabel: 1, content: 2, v: 3 },
       },
       chunk: {
         type: 'object',
@@ -81,20 +81,32 @@ describe('the contract to register', () => {
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
-        required: ['site', 'hash', 'd0'],
+        required: ['site', 'hash', 'd0', 'v'],
         indices: [{ name: 'siteAndHash', properties: [{ site: 'asc' }, { hash: 'asc' }], unique: true }],
-        positions: { site: 0, hash: 1, d0: 2, d1: 3, d2: 4 },
+        positions: { site: 0, hash: 1, d0: 2, d1: 3, d2: 4, v: 5 },
       },
     });
   });
 
   it('is the schema its cost was measured on', () => {
-    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('53e32381605ef6108324bba58aaf22d3a88ccc4a3edc849cc304ea15772a8cba');
+    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('04044d0466fdda9db34795364e6871078c85454f16ac25da9b9fe50b8f54a7ec');
   });
 
-  it('is the contract registered on testnet', () => {
+  it('is the contract registered on testnet, but for the `v` fields: register it again before this ships', () => {
     const { bytes } = KNOWN_CONTRACTS.testnet?.[DEPLOYMENTS.testnet?.contractId as string] as { bytes: string };
-    expect((knownContract(bytes).toJSON() as { documentSchemas: unknown }).documentSchemas).toEqual(schemas());
+    const withoutVersions = schemas();
+    for (const type of Object.values(withoutVersions)) {
+      delete type.properties.v;
+      type.required = (type.required as string[] | undefined)?.filter((key) => key !== 'v');
+    }
+    expect((knownContract(bytes).toJSON() as { documentSchemas: unknown }).documentSchemas).toEqual(withoutVersions);
+  });
+
+  it('gives every document type a required format version', () => {
+    for (const type of Object.values(schemas())) {
+      expect(type.properties.v).toMatchObject({ type: 'integer', minimum: 1, maximum: 65535 });
+      expect(type.required).toContain('v');
+    }
   });
 
   it('refers to nothing outside itself, so no change to DPNS can stop its writes', () => {

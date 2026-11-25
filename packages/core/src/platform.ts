@@ -26,6 +26,8 @@ export interface SiteRecord {
   /** The identity that wrote the record. Platform does not check that it owns the name; readers do. */
   ownerId: string;
   normalizedLabel: string;
+  /** Format version of the record (`FORMATS.site`); 1 for records from before the field existed. */
+  v: number;
   /** Absent once the writer has taken the site down: site records are never deleted. */
   content?: string;
   revision: number;

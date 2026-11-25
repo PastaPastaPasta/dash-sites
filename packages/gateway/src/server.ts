@@ -16,6 +16,7 @@ import {
   isDenied,
   loadManifest,
   ManifestError,
+  NewerFormatError,
   matchHost,
   messagePage,
   nameFromPath,
@@ -260,7 +261,9 @@ export function createGateway(options: GatewayOptions): RequestListener {
     if (resolution.status === 'no-site') {
       return html(404, messagePage('No site', `${dashName} has no site yet`, `The name is registered, and its owner has not published a site. If it is yours, <a href="${escapeHtml(config.builderUrl)}">publish one</a>.`, config), domain);
     }
+    const newer = () => html(502, messagePage('Update needed', `${dashName} needs a newer gateway`, 'Its owner published it in a newer format than this gateway reads. It will load here once the gateway is updated.', config), domain);
     const unsupported = () => html(502, messagePage('Unsupported', `${dashName} cannot be served here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this gateway does not serve.`, config), domain);
+    if (resolution.status === 'unsupported' && resolution.reason === 'newer') return newer();
     if (resolution.status === 'unsupported' || resolution.content.scheme !== 'dash-manifest') return unsupported();
 
     const headers: Record<string, string> = {
@@ -286,6 +289,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
     try {
       manifest = await manifestFor(resolution, resolution.content);
     } catch (error) {
+      if (error instanceof NewerFormatError) return newer();
       if (!(error instanceof ContentError) && !(error instanceof ManifestError)) throw error;
       log({ event: 'bad-manifest', name: normalized, error: error.message });
       return html(502, messagePage('Unavailable', `${dashName} cannot be served`, 'Its published content is incomplete or does not match the hashes its owner published.', config), domain);
@@ -322,6 +326,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
           log({ event: 'external-refused', name: normalized, path: decision.path, error: error.message });
           return html(502, messagePage('Unavailable', 'This file cannot be served', `It is a file of the npm package ${escapeHtml(`${error.asset.npm}@${error.asset.version}`)}, and no npm mirror served it with the hash its owner published.`, config), domain);
         }
+        if (error instanceof NewerFormatError) return newer();
         if (!(error instanceof ContentError)) throw error;
         if (entry.ext) badExternalFiles.set(badKey, now() + 5 * 60 * SECOND);
         log({ event: 'bad-file', name: normalized, path: decision.path, error: error.message });
