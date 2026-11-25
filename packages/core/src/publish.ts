@@ -200,6 +200,7 @@ async function referenced(writer: PlatformWriter, sites: Iterable<{ name?: strin
     } catch (error) {
       throw new PruneError(`the manifest of site record ${site.id} cannot be read (${String((error as Error)?.message ?? error)}); nothing is deleted`);
     }
+    if (manifest.partial) throw new PruneError(`the manifest of site record ${site.id} holds something this version does not know; nothing is deleted`);
     for (const hash of referencedChunks(ref, manifest)) out.add(hash);
   }
   return out;

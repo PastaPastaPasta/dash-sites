@@ -47,6 +47,8 @@ export interface Manifest {
   chunks: string[];
   files: Record<string, ManifestFile>;
   spa?: boolean;
+  /** Set by a reader when the manifest holds something this version does not know: an ignored key or an entry it cannot serve. Never written. */
+  partial?: true;
 }
 
 export class ManifestError extends Error {
@@ -99,7 +101,7 @@ const ENCODINGS = ['gzip', 'br'];
 const UNREAD_PLACES = 'lists where it is stored in a form this version cannot read';
 const UNREAD_BOTH = 'is stored in more than one way at once, which this version cannot read';
 const UNREAD_SIZE = 'is empty, or larger than this version loads from outside Platform';
-const UNREAD_PARTS = 'is stored in a form this version cannot read';
+const UNREAD_FORM = 'is stored in a form this version cannot read';
 
 function placesProblem(file: Record<string, unknown>): string | undefined {
   const src = file.src;
@@ -171,9 +173,10 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
       parts.push([index, offset, length]);
       stored += length;
     }
-    if (file.enc === undefined && file.ext === undefined && stored !== file.size) {
+    const unknownEncoding = file.enc !== undefined && !ENCODINGS.includes(file.enc as string);
+    if (unknownEncoding || (file.enc === undefined && file.ext === undefined && stored !== file.size)) {
       if (strict) throw new ManifestError(`size mismatch in ${path}`);
-      out[path] = { ...entry, unread: UNREAD_PARTS };
+      out[path] = { ...entry, unread: UNREAD_FORM };
       continue;
     }
     if (stored > limits.maxSiteBytes) throw new ManifestError(`file too large: ${path}`);
@@ -187,9 +190,9 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
       ...(ext ? { ext: { npm: ext.npm, version: ext.version, path: ext.path, integrity: ext.integrity } } : {}),
     };
   }
-  const known = Object.values(out).every((file) => !file.unread && (file.enc === undefined || ENCODINGS.includes(file.enc)));
-  if (!strict && !later && known && !usesVersion2(out)) throw new ManifestError('version 2 without a version 2 feature');
-  return { v: raw.v, chunks: chunks as string[], files: out, ...(raw.spa ? { spa: true } : {}) };
+  const partial = later || Object.values(out).some((file) => file.unread);
+  if (!strict && !partial && !usesVersion2(out)) throw new ManifestError('version 2 without a version 2 feature');
+  return { v: raw.v, chunks: chunks as string[], files: out, ...(raw.spa ? { spa: true } : {}), ...(partial ? { partial: true } : {}) };
 }
 
 /** Canonical form: keys sorted, no whitespace, UTF-8. */
@@ -198,8 +201,8 @@ export function encodeManifest(manifest: Manifest): Uint8Array {
   for (const [path, file] of Object.entries(valid.files)) {
     const unread = manifest.files[path]?.unread ?? file.unread;
     if (unread) throw new ManifestError(`${path} ${unread}`);
-    if (file.enc !== undefined && !ENCODINGS.includes(file.enc)) throw new ManifestError(`bad enc in ${path}`);
   }
+  if (valid.partial) throw new ManifestError('holds something this version does not write');
   return utf8.encode(JSON.stringify(sortKeys(valid)));
 }
 

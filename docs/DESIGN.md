@@ -345,6 +345,12 @@ names an npm file in a form this version does not accept makes the whole
 manifest invalid, as before. A writer only emits what its own version reads,
 and refuses to write an entry it would refuse to read.
 
+Two rules keep deleting safe across versions. Every chunk a manifest uses on
+Platform is listed in its `chunks`, whatever is added later. And `gc` and
+`--prune` delete nothing for an identity while one of its manifests holds
+something they do not know (a key they ignored, a file they cannot read), so
+an older collector never deletes what a newer manifest may still need.
+
 ## 4. Resolution
 
 Input: a name, e.g. `Alice.dash` (or a gateway host label).

@@ -135,6 +135,11 @@ describe('forward compatibility', () => {
   it('reads a version 2 manifest that carries things added later', async () => {
     const manifest = decodeManifest(canonical(later));
     expect(manifest).not.toHaveProperty('theme');
+    expect(manifest.partial).toBe(true);
+    expect(bundle.manifest.partial).toBeUndefined();
+    expect(decodeManifest(encodeManifest(bundle.manifest)).partial).toBeUndefined();
+    expect(() => encodeManifest(manifest)).toThrow(ManifestError);
+    expect(() => encodeManifest({ ...buildSite(FILES).manifest, v: 2, extra: 1 } as Manifest)).toThrow(ManifestError);
     expect(manifest.files['/a.js']).toEqual(bundle.manifest.files['/a.js']);
     expect(manifest.files['/b.bin']?.src).toEqual(['ar://kZ9', 'blossom:abc', HTTPS]);
     expect((await readFile(manifest, '/a.js', chunksOf(bundle))).bytes).toEqual(FILES[1]?.bytes);

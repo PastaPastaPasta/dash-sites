@@ -27,7 +27,7 @@ export interface SiteBundle {
   contentUri: string;
   /** Every chunk to store, manifest chunks included, by hash. */
   chunks: Map<string, Uint8Array>;
-  /** `bytes` and `storedBytes` count the files stored on Platform; `elsewhere` counts the rest. */
+  /** `bytes` counts every file but those kept at places, which `elsewhere` counts; `storedBytes` is what goes on Platform. */
   stats: { files: number; bytes: number; storedBytes: number; chunks: number; elsewhere: { files: number; bytes: number } };
 }
 
