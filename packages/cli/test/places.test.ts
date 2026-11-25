@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cliPlaces } from '../src/places.js';
+import { cliPlaces, fromIpfsClient } from '../src/places.js';
 
 const ORIGIN = 'https://alice.dash.site';
 const bytes = new Uint8Array(2000).map((_, i) => i % 251);
@@ -60,5 +60,14 @@ describe('an HTTPS place, asked the way a browser asks', () => {
     expect(await read('https://a.example/same')).toEqual(bytes);
     await expect(read('https://a.example/down')).rejects.toThrow(/redirects to http:/);
     await expect(read('https://a.example/loop')).rejects.toThrow(/too many times/);
+  });
+});
+
+describe('an error from the IPFS client', () => {
+  it('is told from any other by where it was thrown', () => {
+    const stray = Object.assign(new Error('Invalid state: Controller is already closed'), { stack: 'TypeError: Invalid state\n    at AbortSignal.t (eval at startIpfs (file:///x/packages/core/dist/ipfs.js:36:5), <anonymous>:5:52130)' });
+    expect(fromIpfsClient(stray)).toBe(true);
+    expect(fromIpfsClient(new Error('eval at startIpfs'))).toBe(false);
+    expect(fromIpfsClient(undefined)).toBe(false);
   });
 });

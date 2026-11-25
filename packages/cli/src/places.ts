@@ -40,6 +40,23 @@ async function ipfsModule(): Promise<Uint8Array> {
   return source;
 }
 
+/** Whether an error was thrown by the IPFS client's own code, which `startIpfs` builds from the pinned module. */
+export const fromIpfsClient = (error: unknown): boolean => /\n\s+at [^\n]*\(eval at startIpfs \(/.test(String((error as Error)?.stack));
+
+/**
+ * The IPFS client can throw from its own timers and listeners after a file was read. Nothing it
+ * returns is used unchecked, so such an error must not end a publish or a check half way.
+ */
+function outliveIpfsClient(): void {
+  for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
+    process.on(event, (error: unknown) => {
+      if (fromIpfsClient(error)) return;
+      console.error(error);
+      process.exit(1);
+    });
+  }
+}
+
 export interface CliPlaces {
   fetchers: PlaceFetchers;
   /** Whether the IPFS client was started; it keeps connections open, so the process must be ended. */
@@ -82,7 +99,13 @@ export function cliPlaces(origin: string): CliPlaces {
   return {
     fetchers: {
       https,
-      ipfs: ipfsFetcher(() => (ipfs ??= ipfsModule().then((source) => startIpfs(source)))),
+      ipfs: ipfsFetcher(
+        () =>
+          (ipfs ??= ipfsModule().then((source) => {
+            outliveIpfsClient();
+            return startIpfs(source);
+          })),
+      ),
     },
     ipfsStarted: () => ipfs !== undefined,
   };

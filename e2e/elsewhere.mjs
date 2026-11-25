@@ -47,18 +47,32 @@ try {
   await page.waitForFunction(() => [...document.images].every((image) => image.complete), null, { timeout: 120000 });
   console.log(`     first visit took ${((Date.now() - started) / 1000).toFixed(1)} s`);
 
-  const manifest = await page.evaluate(async () => (await fetch('/.well-known/dash/manifest.json')).json());
+  // A first visit can end in one more page load, when the worker starts the name's storage afresh.
+  const loaded = () => page.waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 120000 });
+  const settled = async (run) => {
+    for (let tries = 0; ; tries++) {
+      try {
+        return await run();
+      } catch (error) {
+        if (tries === 3 || !/Execution context was destroyed/.test(String(error))) throw error;
+        await loaded();
+      }
+    }
+  };
+  const manifest = await settled(() => page.evaluate(async () => (await fetch('/.well-known/dash/manifest.json')).json()));
   const outside = Object.entries(manifest.files).filter(([, file]) => file.src);
   check(manifest.v === 3 && outside.length > 0, `the manifest is version ${manifest.v} and keeps ${outside.length} files outside Platform`);
   check(fromPage.size === 0, `the page itself asked no other host for anything ${[...fromPage].join(' ')}`);
 
   for (const [path, file] of outside) {
     const began = Date.now();
-    const served = await page.evaluate(async (at) => {
-      const response = await fetch(at, { cache: 'no-store' });
-      const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
-      return { status: response.status, type: response.headers.get('content-type'), sha256: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
-    }, path);
+    const served = await settled(() =>
+      page.evaluate(async (at) => {
+        const response = await fetch(at, { cache: 'no-store' });
+        const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
+        return { status: response.status, type: response.headers.get('content-type'), sha256: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
+      }, path),
+    );
     const took = `${((Date.now() - began) / 1000).toFixed(1)} s`;
     check(served.status === 200 && served.sha256 === file.sha256 && served.type === file.type, `${path} (${file.size} bytes, from ${file.src.map((uri) => uri.split(':')[0]).join(', ')}) is served with the published hash, in ${took}`);
   }
