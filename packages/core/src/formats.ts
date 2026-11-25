@@ -12,7 +12,7 @@ export const FORMATS = {
   /** `N` in a `dash-manifest:vN:` content URI. */
   contentUri: 1,
   /** `v` of a manifest. */
-  manifest: 2,
+  manifest: 3,
 } as const;
 
 export type FormatName = keyof typeof FORMATS;

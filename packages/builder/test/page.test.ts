@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
-import { buildSite, publishSite, sha256Hex, utf8, type PlaceFetchers } from '@dash-sites/core';
+import { buildSite, FORMATS, gzip, publishSite, sha256Hex, utf8, type PlaceFetchers } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { cleanRichText, plainText, toHtml, h } from '../src/page/markup.js';
 import { BLOCKS } from '../src/page/blocks.js';
@@ -382,5 +382,18 @@ describe('reopening a published page', () => {
     const platform = await published(renderSite(reference, 'alice.dash', []));
     await expect(readPublishedPage(platform.as('visitor'), 'bob.dash')).rejects.toThrow(/bob\.dash is not registered/);
     await expect(readPublishedPage(platform.as('visitor'), 'not a name')).rejects.toThrow(ReopenError);
+  });
+
+  it('asks for a newer builder when the site is stored in a newer format', async () => {
+    const platform = await published(renderSite(reference, 'alice.dash', []));
+    const [site] = [...platform.sites.values()];
+    const piece = gzip(utf8.encode(JSON.stringify({ v: FORMATS.manifest + 1, chunks: [], files: {} })));
+    await platform.as('owner1').createChunk(site!.id, sha256Hex(piece), piece);
+    const content = site!.content;
+    site!.content = `dash-manifest:v1:${sha256Hex(piece)}`;
+    await expect(readPublishedPage(platform.as('visitor'), 'alice.dash')).rejects.toThrow(/newer builder than this one\. Reload/);
+    site!.content = content;
+    site!.v = FORMATS.site + 1;
+    await expect(readPublishedPage(platform.as('visitor'), 'alice.dash')).rejects.toThrow(/newer builder than this one\. Reload/);
   });
 });

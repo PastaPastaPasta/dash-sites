@@ -1,4 +1,4 @@
-import { contentTypeFor, ElsewhereError, loadManifest, parsePlace, readElsewhere, readFile, resolveName, siteChunks, utf8, type ManifestFile, type PlaceFetchers, type PlatformReader } from '@dash-sites/core';
+import { contentTypeFor, ElsewhereError, loadManifest, NewerFormatError, parsePlace, readElsewhere, readFile, resolveName, siteChunks, utf8, type ManifestFile, type PlaceFetchers, type PlatformReader } from '@dash-sites/core';
 import type { SiteAsset } from '../assets.js';
 import { imagePaths, PAGE_MODEL_PATH, readPageModel, type PageModel } from './model.js';
 
@@ -41,9 +41,13 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
   if (resolution.status === 'unregistered') throw new ReopenError(`${input} is not registered.`);
   const name = `${resolution.canonicalLabel}.dash`;
   if (resolution.status === 'no-site') throw new ReopenError(`${name} has no site.`);
+  const newer = new ReopenError(`The site at ${name} was published with a newer builder than this one. Reload to get the latest.`);
+  if (resolution.status === 'unsupported' && resolution.reason === 'newer') throw newer;
   if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') throw new ReopenError(`The site at ${name} is not stored in a way this builder can read.`);
   const chunks = siteChunks(reader, resolution);
-  const manifest = await loadManifest(resolution.content, chunks);
+  const manifest = await loadManifest(resolution.content, chunks).catch((error: unknown) => {
+    throw error instanceof NewerFormatError ? newer : error;
+  });
   if (!manifest.files[PAGE_MODEL_PATH]) throw new ReopenError(`The site at ${name} was not made with the page editor, so there is nothing to open. Upload its files instead.`);
   const outsidePlatform = { elsewhere: (at: string, file: ManifestFile) => readElsewhere(at, file, places) };
   let parsed: unknown;

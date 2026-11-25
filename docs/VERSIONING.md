@@ -10,7 +10,7 @@ change. It also lists every format version that has been written.
 
 1. **Every stored object says which version of its format it is.** The site
    record and each chunk carry `v`, the content URI carries `vN`, and the
-   manifest carries `v`. The page model a builder saves (#16) carries its
+   manifest carries `v`. The page model a builder saves carries its
    own `v`.
 2. **A version number is taken in the table below, in the same PR that first
    writes it.** No two changes may use the same number. A reader that only
@@ -28,7 +28,8 @@ change. It also lists every format version that has been written.
    change the meaning of fields an older reader would otherwise misread.
 6. **Any change to a format raises its version**, including adding an
    optional key. Version 1 and 2 manifests reject unknown keys, so this rule
-   is what makes rule 5 safe.
+   is what makes rule 5 safe. Manifest version 3 is the one exception, see
+   [the open manifest](#manifest-version-3-is-open).
 7. **A new chunk format also raises the manifest or content URI version.**
    Readers meet chunks one file at a time, so a newer chunk alone would be
    refused file by file, after other files were served. A newer manifest is
@@ -41,19 +42,53 @@ change. It also lists every format version that has been written.
 | Site record | `v` in the `site` document | 1 | The `content` URI, or no `content` for a site taken down | `FORMATS.site` in `packages/core/src/formats.ts` |
 | Chunk | `v` in the `chunk` document | 1 | The bytes are `d0` then `d1` then `d2`; `hash` is their SHA-256 | `FORMATS.chunk` |
 | Content URI | `dash-manifest:vN:` | 1 | A gzip-compressed manifest split over the listed chunks of the same site record. (`ipfs://<cid>` is a pointer form with no version.) | `FORMATS.contentUri` |
-| Manifest | `v` in the manifest | 1, 2 | 1: files stored in chunks, plain or gzip. 2: adds `enc: "br"` (brotli) and `ext` (a file of a published npm package that the site does not store), from #25 | `FORMATS.manifest` |
-| Page model | `v` in `/dash-site.json` | 1, proposed in #16 | The builder's block list | `PAGE_MODEL_VERSION` in #16 |
-| Widgets | `v` attribute on each tag, proposed in #16 | none yet | | |
+| Manifest | `v` in the manifest | 1, 2, 3 | 1: files stored in chunks, plain or gzip. 2: adds `enc: "br"` (brotli) and `ext` (a file of a published npm package that the site does not store), from #25. 3: adds `src` (a file kept at places outside Platform, as `https://` and `ipfs://` URIs), from #16, and is [open](#manifest-version-3-is-open) | `FORMATS.manifest` |
+| Page model | `v` in `/dash-site.json` | 1 | The builder's block list | `PAGE_MODEL_VERSION` in `packages/builder/src/page/model.ts` |
+| Widgets | `v` attribute on each tag, proposed in [VISUAL-BUILDER.md](VISUAL-BUILDER.md) §5.2 | none yet | | |
 
-Taken and not yet written:
-
-- **Manifest 3:** for #16's files kept outside Platform (`src`). #16 currently
-  calls this version 2, which #25 already uses on `main`, so #16 has to move
-  to 3 before it merges.
+Taken and not yet written: none.
 
 A document without `v` counts as version 1. No contract that is read holds
 any: the testnet contract `zVqSAuc1…`, registered before `v` existed, was
 replaced by `5BS87xCm…` from this schema on 2026-11-25.
+
+## Manifest version 3 is open
+
+Versions 1 and 2 are closed: a reader refuses a manifest with a key it does
+not know. Version 3 is open, so that an addition does not need a new reader
+before a site that uses it loads at all. This is the one exception to rules 5
+and 6, and it has limits.
+
+A version 3 reader:
+
+- ignores a key it does not know, in the manifest and in a file entry;
+- skips a place whose kind it does not know (a URI scheme other than
+  `https://` and `ipfs://`) and uses the places it does know;
+- refuses a file it cannot read, on its own, and serves the rest of the site.
+  That is a file whose `enc` it does not know, whose `src` is in a form it
+  does not know, or whose parts do not add up to its size, which is how a
+  file stored under a key added later looks to it.
+
+What stays as in every other format:
+
+- **A manifest whose `v` is above the reader's is refused as a whole** (rule
+  5). Version 3 is open to additions, not to later versions.
+- **A change an older reader must not ignore raises the version.** An
+  addition may stay in version 3 only if a reader that ignores it still
+  serves correct bytes or refuses the file: another kind of place, an
+  optional hint, another encoding. Anything that changes what an existing
+  key means is version 4.
+- **A new chunk format raises the manifest or content URI version** (rule 7).
+  It is not something a version 3 reader may refuse file by file.
+- **`ext` is strict in every version.** An entry that names an npm file in a
+  form the reader does not accept makes the whole manifest invalid.
+- **Writers write the lowest version** (rule 4): 1, then 2 for brotli or npm
+  files, then 3 only when a file has `src`.
+
+A reader that ignored something marks the manifest as partial. A partial
+manifest is never written back, and `gc` and `publish --prune` delete nothing
+for an identity while one of its manifests is partial. The builder warns
+before a page it reopened would be published without places it did not know.
 
 ## What a reader does with each version
 
@@ -63,6 +98,8 @@ replaced by `5BS87xCm…` from this schema on 2026-11-25.
 | A newer version (`reason: 'newer'`, or `NewerFormatError`) | "*name* needs a newer version of this page", HTTP 502. It asks the browser to check for a newer worker (`registration.update()`); a reload then gets it | "needs a newer gateway", HTTP 502 | `resolve` answers `unsupported` with `reason: "newer"`. `fetch` stops with "unsupported: a newer format than this version reads" for a record or content URI, and "format N is newer than this version reads" for a manifest or chunk |
 | A content URI this project never defined (`reason: 'unknown'`) | "cannot be shown here" | "cannot be served here" | `unsupported` with `reason: "unknown"`; `fetch` says "content this project does not define" |
 | A malformed object at a known version | "incomplete or does not match the hashes its owner published" | Same | An "invalid manifest" or content error |
+| A version 3 manifest with a file it cannot read | Serves the site; that file answers 502, "stored in a form this version of the page does not read yet" | Serves the site; that file answers 502 | `check` lists the file and exits 1; `fetch` of that file fails |
+| A file kept outside Platform (`src`) | Fetches it from its places and serves it only if it matches the manifest's size and SHA-256 | 502: it serves only what is stored on Platform | `fetch` reads it from its places; `check` asks every place |
 
 The extension shows no site content itself. It compares the record the page
 claims with its own proved read, so it needs no format support beyond the
@@ -175,7 +212,7 @@ the live `https://dash.site/shell.json` before a rollback.
 
 ## What the builder saves
 
-The builder (#16) stores what it needs to open a page again in the site
+The builder stores what it needs to open a page again in the site
 itself, as `/dash-site.json`, with its own `v` (the page model version):
 
 - A builder opens every version up to its own and saves in its own.
@@ -184,8 +221,8 @@ itself, as `/dash-site.json`, with its own `v` (the page model version):
 - Widgets a site embeds carry a version on each tag. The write endpoint keeps
   answering every widget version it ever shipped.
 
-#16 has the details (its §5.1.1). Its versions go in the registry above like
-any other format.
+[VISUAL-BUILDER.md](VISUAL-BUILDER.md) §5.1.1 has the details. Its versions
+go in the registry above like any other format.
 
 ## Tests
 
@@ -194,6 +231,8 @@ format version, with the chunk bytes as they were written:
 
 - `site-v1.json` is a version 1 manifest.
 - `site-v2.json` is a version 2 manifest with brotli and an npm file.
+- `site-v3.json` is a version 3 manifest with a file kept at two places, the
+  first of which does not answer, next to brotli and an npm file.
 
 The fixture tests:
 

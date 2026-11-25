@@ -212,6 +212,18 @@ async function serve(reader: PlatformReader, announce?: string): Promise<never> 
   return new Promise(() => {});
 }
 
+/** The site a name shows, with its manifest, or the reason it has none that this version reads. */
+async function storedSite(name: string) {
+  const reader = await EvoReader.connect(network(true));
+  const resolution = await resolveName(reader, name, { preload: true });
+  if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
+    const why = resolution.status === 'unsupported' ? `${resolution.status}: ${resolution.reason === 'newer' ? 'a newer format than this version reads' : 'content this project does not define'}` : resolution.status;
+    return fail(`${name} does not resolve to a site stored on Platform (${why})`);
+  }
+  const source = siteChunks(reader, resolution);
+  return { resolution, source, manifest: await loadManifest(resolution.content, source) };
+}
+
 const commands: Record<string, () => Promise<void>> = {
   async publish() {
     const dir = positionals[1] ?? fail('publish needs a directory');
@@ -301,15 +313,7 @@ const commands: Record<string, () => Promise<void>> = {
   },
 
   async fetch() {
-    const name = positionals[1] ?? fail('fetch needs a name');
-    const reader = await EvoReader.connect(network(true));
-    const resolution = await resolveName(reader, name, { preload: true });
-    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
-      const why = resolution.status === 'unsupported' ? `${resolution.status}: ${resolution.reason === 'newer' ? 'a newer format than this version reads' : 'content this project does not define'}` : resolution.status;
-      fail(`${name} does not resolve to a site stored on Platform (${why})`);
-    }
-    const source = siteChunks(reader, resolution);
-    const manifest = await loadManifest(resolution.content, source);
+    const { resolution, source, manifest } = await storedSite(positionals[1] ?? fail('fetch needs a name'));
     const decision = decide(manifest, positionals[2] ?? '/');
     if (decision.kind !== 'file') fail(`no file at ${positionals[2] ?? '/'}`);
     const { fetchers } = outside(resolution.canonicalLabel);
@@ -319,11 +323,7 @@ const commands: Record<string, () => Promise<void>> = {
   },
 
   async check() {
-    const name = positionals[1] ?? fail('check needs a name');
-    const reader = await EvoReader.connect(network());
-    const resolution = await resolveName(reader, name);
-    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
-    const manifest = await loadManifest(resolution.content, siteChunks(reader, resolution));
+    const { resolution, manifest } = await storedSite(positionals[1] ?? fail('check needs a name'));
     const unread = Object.entries(manifest.files).filter(([, file]) => file.unread);
     for (const [path, file] of unread) console.log(`FAIL ${path}  ${file.unread}`);
     if (unread.length > 0) process.exitCode = 1;

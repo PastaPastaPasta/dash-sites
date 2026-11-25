@@ -1,4 +1,4 @@
-import { formatDash, networkConfig, parseName, type Network, type PlaceFetchers, type SiteFile } from '@dash-sites/core';
+import { formatDash, parseName, readerConfig, type Network, type PlaceFetchers, type SiteFile } from '@dash-sites/core';
 import type { EvoReader } from '@dash-sites/core/evo';
 import { onSiteAssetsChange, setSiteAssets, siteAssets } from './assets.js';
 import { keepOutside, onOutsideChange, outsidePlaces, rememberOutside } from './outside.js';
@@ -155,7 +155,7 @@ async function reopen(input: string): Promise<void> {
   const started = revision;
   status.textContent = `Reading ${name.label}.dash from Dash Platform…`;
   try {
-    reader ??= import('@dash-sites/core/evo').then((evo) => evo.EvoReader.connect(networkConfig(options.network)));
+    reader ??= import('@dash-sites/core/evo').then((evo) => evo.EvoReader.connect(readerConfig(options.network)));
     const connected = await reader.catch((error: unknown) => {
       reader = undefined;
       throw error;
