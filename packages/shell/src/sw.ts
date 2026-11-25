@@ -332,6 +332,10 @@ function toResponse(reply: Reply, request: Request): Response {
 }
 
 self.addEventListener('install', (event) => {
+  if (self.registration.active) {
+    event.waitUntil(load().then(() => self.skipWaiting()));
+    return;
+  }
   void load().catch(() => undefined);
   event.waitUntil(self.skipWaiting());
 });
@@ -346,7 +350,7 @@ self.addEventListener('fetch', (event) => {
   }
   if (request.mode === 'navigate' && request.destination === 'document' && !host.proved) {
     event.respondWith(new Response(__BOOT_PAGE__, { headers: BOOT_HEADERS }));
-    event.waitUntil(Promise.all([host.prove().catch(() => undefined), flushWrites()]));
+    event.waitUntil(host.prove().catch(() => undefined).then(flushWrites));
     return;
   }
   const reply = host

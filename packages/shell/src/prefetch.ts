@@ -338,9 +338,12 @@ export class PlatformPrefetch {
 
       const watchWinner = () => {
         if (settled) return;
-        if (this.answered.length > 0 && !tried.has(this.answered[0] as string)) {
+        if (inFlight === 0) {
+          if (!launchAnswered() && this.probesDone) finish(undefined);
+        } else if (this.answered.length > 0 && !tried.has(this.answered[0] as string)) {
           launch(this.answered[0] as string);
-        } else if (!this.probesDone) {
+        }
+        if (!settled && !this.probesDone) {
           this.waiters.push(watchWinner);
         }
       };
@@ -406,7 +409,7 @@ export class PlatformPrefetch {
       if (method === 'POST') {
         const pathname = new URL(url, 'https://local/').pathname;
         if (pathname === GET_EPOCHS_INFO_PATH || pathname === GET_DOCUMENTS_PATH) {
-          const req = input instanceof Request ? input : new Request(input, init);
+          const req = init !== undefined || !(input instanceof Request) ? new Request(input, init) : input;
           const reqBytes = new Uint8Array(await req.clone().arrayBuffer());
           const key = `${pathname}:${toHex(reqBytes)}`;
           const pending = this.postCache.get(key);

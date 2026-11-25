@@ -32,6 +32,7 @@ createServer((req, res) => {
     'Content-Length': body.length,
     'Cache-Control': file.startsWith('dash-sites-verifier-') ? 'public, max-age=31536000, immutable' : file === 'sw.js' ? 'no-cache' : 'no-cache, no-transform',
     'X-Content-Type-Options': 'nosniff',
+    ...(entry.br ? { Vary: 'Accept-Encoding' } : {}),
     ...(useBr ? { 'Content-Encoding': 'br' } : {}),
   };
   res.writeHead(200, headers);

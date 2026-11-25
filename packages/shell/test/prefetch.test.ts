@@ -155,4 +155,112 @@ describe('PlatformPrefetch', () => {
     const addresses = await prefetch.takeAddresses(60, 2);
     expect(addresses).toEqual(['https://1.1.1.1:443']);
   });
+
+  it('retries document prefetch on newly answered nodes after all initial document probes fail', async () => {
+    const epochBytes = grpcOk(new Uint8Array([1, 2, 3]));
+    const docBytes = grpcOk(new Uint8Array([7, 8, 9]));
+    const initialHosts = new Set<string>();
+    const docAttempts: string[] = [];
+
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === `${QUORUMS}/quorums` || url === `${QUORUMS}/previous`) return new Response('{}', { status: 200 });
+      if (url === `${QUORUMS}/masternodes`) {
+        return new Response(
+          JSON.stringify({
+            data: ['1.1.1.1:443', '2.2.2.2:443', '3.3.3.3:443', '4.4.4.4:443', '5.5.5.5:443'].map((host) => ({
+              status: 'ENABLED',
+              versionCheck: 'success',
+              addresses: { platform_https: [host] },
+            })),
+          }),
+        );
+      }
+      const origin = new URL(url).origin;
+      if (url.endsWith(GET_DOCUMENTS_PATH)) {
+        docAttempts.push(origin);
+        if (docAttempts.length <= 4) {
+          initialHosts.add(origin);
+          return new Response(null, { status: 503 });
+        }
+        return new Response(docBytes as BodyInit, { status: 200 });
+      }
+      if (url.endsWith(GET_EPOCHS_INFO_PATH)) {
+        await new Promise((r) => setTimeout(r, 15));
+        if (initialHosts.has(origin)) return new Response(epochBytes as BodyInit, { status: 200 });
+        await new Promise((r) => setTimeout(r, 40));
+        return new Response(epochBytes as BodyInit, { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const prefetch = new PlatformPrefetch({
+      quorumUrl: QUORUMS,
+      fetch: mockFetch,
+      contractId: MAINNET.contractId,
+      normalizedLabel: 'd4shhq',
+      preload: true,
+      tries: 5,
+      keep: 5,
+    });
+    prefetch.start();
+
+    const wrapped = prefetch.wrapFetch((async () => new Response('live')) as typeof fetch);
+    const docQuery = encodeCompositeNameQuery(MAINNET.contractId, 'd4shhq', true);
+    const docRes = await wrapped(`https://1.1.1.1:443${GET_DOCUMENTS_PATH}`, { method: 'POST', body: docQuery });
+    expect(new Uint8Array(await docRes.arrayBuffer())).toEqual(docBytes);
+    expect(docAttempts.length).toBe(5);
+  });
+
+  it('applies init overrides when wrapFetch receives a Request input', async () => {
+    const docBytes = grpcOk(new Uint8Array([4, 5, 6]));
+    const docQuery = encodeCompositeNameQuery(MAINNET.contractId, 'd4shhq', true);
+
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === `${QUORUMS}/quorums` || url === `${QUORUMS}/previous`) return new Response('{}', { status: 200 });
+      if (url === `${QUORUMS}/masternodes`) {
+        return new Response(
+          JSON.stringify({
+            data: [{ status: 'ENABLED', versionCheck: 'success', addresses: { platform_https: ['1.1.1.1:443'] } }],
+          }),
+        );
+      }
+      if (url.endsWith(GET_EPOCHS_INFO_PATH)) return new Response(grpcOk() as BodyInit, { status: 200 });
+      if (url.endsWith(GET_DOCUMENTS_PATH)) return new Response(docBytes as BodyInit, { status: 200 });
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
+
+    const prefetch = new PlatformPrefetch({
+      quorumUrl: QUORUMS,
+      fetch: mockFetch,
+      contractId: MAINNET.contractId,
+      normalizedLabel: 'd4shhq',
+      preload: true,
+    });
+    prefetch.start();
+
+    let forwardedMethod: string | undefined;
+    let forwardedBody: Uint8Array | undefined;
+    const wrapped = prefetch.wrapFetch((async (input: RequestInfo | URL) => {
+      const req = input as Request;
+      forwardedMethod = req.method;
+      forwardedBody = new Uint8Array(await req.arrayBuffer());
+      return new Response('live');
+    }) as typeof fetch);
+
+    const hit = await wrapped(new Request(`https://1.1.1.1:443${GET_DOCUMENTS_PATH}`), {
+      method: 'POST',
+      body: docQuery,
+    });
+    expect(new Uint8Array(await hit.arrayBuffer())).toEqual(docBytes);
+
+    const miss = await wrapped(new Request(`https://1.1.1.1:443${GET_DOCUMENTS_PATH}`), {
+      method: 'POST',
+      body: docQuery,
+    });
+    expect(await miss.text()).toBe('live');
+    expect(forwardedMethod).toBe('POST');
+    expect(forwardedBody).toEqual(docQuery);
+  });
 });
