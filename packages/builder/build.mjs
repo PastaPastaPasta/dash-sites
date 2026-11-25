@@ -27,7 +27,10 @@ const result = await build({
   minify: true,
   legalComments: 'none',
   chunkNames: 'c/[name]-[hash]',
+  jsx: 'automatic',
+  loader: { '.css': 'text' },
   define: {
+    'process.env.NODE_ENV': '"production"',
     __GATEWAY_DOMAIN__: JSON.stringify(process.env.GATEWAY_DOMAIN ?? 'id.dashhq.org'),
     __NETWORK__: JSON.stringify(process.env.NETWORK ?? 'testnet'),
     __REMEMBER_WALLET__: JSON.stringify(!site),

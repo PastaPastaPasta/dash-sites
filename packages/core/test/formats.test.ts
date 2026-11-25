@@ -6,6 +6,7 @@ import {
   NewerFormatError,
   publishPointer,
   publishSite,
+  readElsewhere,
   readFile,
   resolveName,
   sha256Hex,
@@ -14,7 +15,7 @@ import {
   type Resolution,
 } from '../src/index.js';
 import { MemoryPlatform } from '../src/memory.js';
-import { FIXTURES, fixtureExternal, readFixture, storeFixture, storeManifestVersion } from './fixtures/formats/load.js';
+import { FIXTURES, fixtureExternal, fixturePlaces, readFixture, storeFixture, storeManifestVersion } from './fixtures/formats/load.js';
 
 const ok = (resolution: Resolution) => {
   if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') throw new Error(`expected a stored site, got ${resolution.status}`);
@@ -32,16 +33,16 @@ describe('stored formats', () => {
       const source = (hashes: string[]) => platform.as('anyone').getChunks(resolution.site.id, hashes);
       const manifest = await loadManifest(resolution.content, source);
       expect(manifest.v).toBe(fixture.manifestVersion);
-      expect(Object.keys(manifest.files).sort()).toEqual(Object.keys(fixture.files).sort());
-      for (const [path, sha256] of Object.entries(fixture.files)) {
-        const file = await readFile(manifest, path, source, fixtureExternal(fixture));
-        expect(sha256Hex(file.bytes)).toBe(sha256);
-      }
+      expect(Object.keys(manifest.files).sort()).toEqual([...Object.keys(fixture.files), ...(fixture.unread ?? [])].sort());
+      expect(manifest.partial ?? false).toBe(fixture.unread !== undefined);
+      const read = (path: string) => readFile(manifest, path, source, { external: fixtureExternal(fixture), elsewhere: (at, entry) => readElsewhere(at, entry, fixturePlaces(fixture)) });
+      for (const [path, sha256] of Object.entries(fixture.files)) expect(sha256Hex((await read(path)).bytes)).toBe(sha256);
+      for (const path of fixture.unread ?? []) await expect(read(path), path).rejects.toThrow();
     });
   }
 
   it('reads every format up to the versions it claims', () => {
-    expect(FORMATS).toEqual({ site: 1, chunk: 1, contentUri: 1, manifest: 2 });
+    expect(FORMATS).toEqual({ site: 1, chunk: 1, contentUri: 1, manifest: 3 });
     const versions = FIXTURES.map((name) => readFixture(name).manifestVersion);
     for (let v = 1; v <= FORMATS.manifest; v++) expect(versions).toContain(v);
   });

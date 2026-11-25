@@ -310,8 +310,9 @@ export function createGateway(options: GatewayOptions): RequestListener {
     if (decision.status === 200 && !epochChanged && etagMatches(req.headers['if-none-match'], etag)) return { status: 304, headers };
 
     // The same file can be stored differently by different sites (gzip, brotli, plain, external):
-    // the stored bytes are only reused for an entry stored the same way.
-    const fileKey = `${entry.sha256}:${entry.ext ? 'ext' : (entry.enc ?? 'plain')}`;
+    // the stored bytes are only reused for an entry stored the same way, and never for one this
+    // gateway does not read.
+    const fileKey = `${entry.sha256}:${entry.unread ? 'unread' : entry.src ? 'src' : entry.ext ? 'ext' : (entry.enc ?? 'plain')}`;
     let content = files.get(fileKey);
     const badKey = entry.ext ? `${externalKey(entry.ext, entry.size)}#${entry.sha256}` : '';
     if (!content && entry.ext && (badExternalFiles.get(badKey) ?? 0) > now()) {
@@ -319,7 +320,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
     }
     if (!content) {
       try {
-        const read = await readFile(manifest, decision.path, chunkSource(resolution.site.id), external);
+        const read = await readFile(manifest, decision.path, chunkSource(resolution.site.id), { external });
         content = { bytes: read.bytes, stored: read.stored };
       } catch (error) {
         if (error instanceof ExternalAssetError) {
@@ -330,7 +331,12 @@ export function createGateway(options: GatewayOptions): RequestListener {
         if (!(error instanceof ContentError)) throw error;
         if (entry.ext) badExternalFiles.set(badKey, now() + 5 * 60 * SECOND);
         log({ event: 'bad-file', name: normalized, path: decision.path, error: error.message });
-        return html(502, messagePage('Unavailable', 'This file cannot be served', 'Its stored content is incomplete or does not match the hash its owner published.', config), domain);
+        const detail = entry.unread
+          ? 'It is stored in a form this gateway does not read.'
+          : entry.src
+            ? 'Its owner keeps it outside Dash Platform, and this gateway serves only what is stored on Platform.'
+            : 'Its stored content is incomplete or does not match the hash its owner published.';
+        return html(502, messagePage('Unavailable', 'This file cannot be served', detail, config), domain);
       }
       files.set(fileKey, content);
     }

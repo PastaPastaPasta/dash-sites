@@ -481,3 +481,27 @@ describe('gateway: version 2 sites', () => {
     expect(fetches - before).toBe(2);
   });
 });
+
+describe('gateway: files kept outside Platform', () => {
+  const photo = crypto.getRandomValues(new Uint8Array(20_000));
+  const h = new Harness();
+
+  beforeAll(async () => {
+    h.platform.registerName('carol', 'carol-id');
+    h.platform.registerName('dave', 'dave-id');
+    await publishSite(h.platform.as('carol-id'), 'carol', buildSite([{ path: '/index.html', bytes: text('c') }, { path: '/photo.bin', bytes: photo, src: ['https://media.example.com/photo.bin'] }]));
+    await publishSite(h.platform.as('dave-id'), 'dave', buildSite([{ path: '/index.html', bytes: text('d') }, { path: '/photo.bin', bytes: photo }]));
+    await h.start();
+  });
+  afterAll(() => h.stop());
+
+  it('does not serve one from the copy another site stores on Platform', async () => {
+    const stored = await h.get('dave.id.example.org', '/photo.bin');
+    expect(stored.status).toBe(200);
+    expect(new Uint8Array(stored.body)).toEqual(photo);
+    const outside = await h.get('carol.id.example.org', '/photo.bin');
+    expect(outside.status).toBe(502);
+    expect(outside.body.toString()).toContain('outside Dash Platform');
+    expect((await h.get('carol.id.example.org', '/')).status).toBe(200);
+  });
+});

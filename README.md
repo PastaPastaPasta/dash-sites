@@ -166,6 +166,19 @@ extension 0.1.0, the latest release, were older builds that refuse it. An
 external file counts toward the site size limit like a stored one (50 MB in the
 shell and extension, 25 MB in the gateway process).
 
+Files that are not on npm can stay off Platform too. `publish --elsewhere places.json` takes a map
+of site paths to the places that hold them, each an `https://` address or an
+`ipfs://` CID. Platform then stores only the file's size and hash, and a
+visitor's browser fetches the file from the first place that serves exactly
+those bytes. `dash-sites check alice` asks every such place of a published
+site. A site with such a file has a version 3 manifest, which needs a shell,
+gateway or CLI from this change on. See
+[the design doc](docs/DESIGN.md#manifest-version-3-files-kept-at-places).
+
+```json
+{ "/img/hero.webp": ["ipfs://bafy…", "https://media.example.com/hero.webp"] }
+```
+
 A site can read its own proved record at `/.well-known/dash/site.json` and
 its file list at `/.well-known/dash/manifest.json`, whoever serves it. Sites
 are static: requests other than GET and HEAD are refused, and a site cannot
@@ -222,6 +235,8 @@ npm run e2e:shell -- d4shhq dash.site  # a mainnet name through dash.site
 npm run e2e:extension
 npm run e2e:builder -- identity.json <label>  # a name the identity owns; publishes on testnet (spends testnet credits)
 ```
+
+`E2E_COLOR_SCHEME=dark` runs `e2e:builder` in the dark theme, for its screenshots.
 
 **dash.site on your machine.** Build both Workers' files the way
 `deploy/cloudflare/deploy.sh` does. The subshell keeps these settings out of

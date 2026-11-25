@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildSite, cdnSource, FORMATS, integrityOf, normalizeLabel, publishSite, sha256Hex, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
-import { FIXTURES, fixtureExternal, readFixture, storeFixture, storeManifestVersion } from '../../core/test/fixtures/formats/load.js';
+import { FIXTURES, fixtureExternal, fixturePlaces, readFixture, storeFixture, storeManifestVersion } from '../../core/test/fixtures/formats/load.js';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
 const text = (s: string) => utf8.encode(s);
@@ -40,6 +40,7 @@ class Harness {
   background: Promise<unknown>[] = [];
   denied?: HostOptions['denied'];
   external?: HostOptions['external'];
+  places?: HostOptions['places'];
   host = this.start();
 
   constructor() {
@@ -73,6 +74,7 @@ class Harness {
       nonce: () => `nonce-${++this.nonces}`,
       denied: this.denied,
       external: this.external,
+      places: this.places,
     });
     return this.host;
   }
@@ -512,6 +514,7 @@ describe('stored formats', () => {
       const fixture = readFixture(name);
       const h = new Harness();
       h.external = fixtureExternal(fixture);
+      h.places = fixturePlaces(fixture);
       h.start();
       await storeFixture(h.platform, fixture, 'alice', 'alice-id');
       await h.open();
@@ -520,6 +523,7 @@ describe('stored formats', () => {
         expect(reply.status).toBe(200);
         expect(sha256Hex(typeof reply.body === 'string' ? utf8.encode(reply.body) : (reply.body as Uint8Array))).toBe(sha256);
       }
+      for (const path of fixture.unread ?? []) expect((await h.get(path, { navigation: false })).status, path).toBe(502);
       expect(h.newerFormats).toBe(0);
     });
   }

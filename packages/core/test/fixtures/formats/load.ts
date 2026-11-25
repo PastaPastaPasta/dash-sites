@@ -4,6 +4,7 @@ import { formatContentUri } from '../../../src/content.js';
 import type { ExternalSource } from '../../../src/external.js';
 import { gzip } from '../../../src/gzip.js';
 import type { MemoryPlatform } from '../../../src/memory.js';
+import type { PlaceFetchers } from '../../../src/places.js';
 import type { SiteRecord } from '../../../src/platform.js';
 
 export interface FormatFixture {
@@ -12,13 +13,17 @@ export interface FormatFixture {
   manifestVersion: number;
   /** sha256 of every file the site serves, by path. */
   files: Record<string, string>;
+  /** Paths the manifest lists that a reader of this version refuses one by one, which also makes the manifest partial. */
+  unread?: string[];
   /** Stored chunks, base64, by hash. */
   chunks: Record<string, string>;
   /** Files of npm packages the site names but does not store, base64, by `package@version/path`. */
   external?: Record<string, string>;
+  /** What the places of files kept outside Platform serve, base64, by place. A place not listed does not answer. */
+  places?: Record<string, string>;
 }
 
-export const FIXTURES = ['site-v1', 'site-v2'] as const;
+export const FIXTURES = ['site-v1', 'site-v2', 'site-v3', 'site-v3-later'] as const;
 
 const fromBase64 = (data: string): Uint8Array => Uint8Array.from(Buffer.from(data, 'base64'));
 
@@ -46,6 +51,16 @@ export const fixtureExternal =
     if (!data) throw new Error(`no such npm file: ${key}`);
     return fromBase64(data);
   };
+
+/** Serves a fixture's files kept outside Platform the way their places would. */
+export function fixturePlaces(fixture: FormatFixture): PlaceFetchers {
+  const serve = async (uri: string): Promise<Uint8Array> => {
+    const data = fixture.places?.[uri];
+    if (!data) throw new Error(`no such place: ${uri}`);
+    return fromBase64(data);
+  };
+  return { https: serve, ipfs: serve };
+}
 
 /** Points `site` at a manifest of format `version`, stored as its owner would store one. */
 export async function storeManifestVersion(platform: MemoryPlatform, site: SiteRecord, version: number): Promise<void> {

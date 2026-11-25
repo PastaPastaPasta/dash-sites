@@ -2,6 +2,7 @@ import { parseContentUri, type ContentRef } from './content.js';
 import { isNewer } from './formats.js';
 import { parseName } from './names.js';
 import type { DomainRecord, PlatformReader, ProofMeta, PublishedSite, SiteRecord } from './platform.js';
+import type { ChunkSource } from './reader.js';
 
 interface Named {
   normalized: string;
@@ -53,6 +54,9 @@ export async function resolveName(reader: PlatformReader, input: string, options
   if (!content) return { status: 'unsupported', reason: contentUriIsNewer(site.content) ? 'newer' : 'unknown', ...base, site: published };
   return { status: 'ok', ...base, site: published, content };
 }
+
+/** Where the chunks of a resolved site are read from. */
+export const siteChunks = (reader: PlatformReader, resolution: Extract<Resolution, { status: 'ok' }>): ChunkSource => (hashes) => reader.getChunks(resolution.site.id, hashes);
 
 /** Whether a content URI is a `dash-manifest` form of a later version than this code reads. */
 function contentUriIsNewer(uri: string): boolean {

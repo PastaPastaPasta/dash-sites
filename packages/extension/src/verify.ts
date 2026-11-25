@@ -22,7 +22,8 @@ export async function auditFile(resolution: Resolution, pathname: string, served
   const manifest = await loadManifest(resolution.content, source);
   const decision = decide(manifest, pathname);
   if (decision.kind !== 'file') return { ok: false, reason: 'The published site has no file at this address.' };
-  const expected = (await readFile(manifest, decision.path, source)).file.sha256;
+  const entry = manifest.files[decision.path];
+  const expected = entry?.src ? entry.sha256 : (await readFile(manifest, decision.path, source)).file.sha256;
   if (servedSha256 !== expected) return { ok: false, reason: `This page was served different bytes for ${decision.path} than the owner published.` };
   return { ok: true, path: decision.path };
 }

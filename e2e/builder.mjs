@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { closeEditor, fillItems, openEditor, typeInPlace } from './page-editor-steps.mjs';
 
 const args = process.argv.slice(2);
 const flags = args.filter((arg) => arg.startsWith('--'));
@@ -33,13 +34,14 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 // E2E_HOST_MAP=127.0.0.1:8787 sends the gateway domain to a local `wrangler dev --local-protocol https`.
 const hostMap = process.env.E2E_HOST_MAP ? [`--host-resolver-rules=MAP ${gateway} ${process.env.E2E_HOST_MAP}, MAP *.${gateway} ${process.env.E2E_HOST_MAP}`, '--ignore-certificate-errors'] : [];
 const browser = await chromium.launch({ args: hostMap });
+const scheme = process.env.E2E_COLOR_SCHEME === 'dark' ? { colorScheme: 'dark' } : {};
 const grantedKeys = [];
 const signedIn = async (page) => {
   await page.waitForSelector('#step-signin .done:not([hidden])', { timeout: 90000 });
   await page.waitForFunction(() => document.getElementById('balance')?.textContent !== '', undefined, { timeout: 60000 });
 };
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, ...scheme });
   const problems = [];
   page.on('console', (m) => m.type() === 'error' && problems.push(m.text()));
   page.on('pageerror', (e) => problems.push(e.message));
@@ -88,17 +90,17 @@ try {
   check((await page.textContent('#addr-label')) === label, `the address shows ${label}.dash`);
 
   const stamp = new Date().toISOString();
-  await page.fill('#title', 'Made with the Dash Sites builder');
-  await page.fill('#tagline', 'A page written in a browser and stored on Dash Platform.');
-  await page.fill('#body', `## What this is\n\nThis page was published from the web builder by its end-to-end test.\n\nBuild stamp: \`${stamp}\``);
-  await page.click('#add-link');
-  await page.fill('#links input[aria-label="Link label"]', 'Source code');
-  await page.fill('#links input[aria-label="Link address"]', 'github.com/PastaPastaPasta/dash-sites');
-  await page.click('#themes button:has-text("Night")');
+  await openEditor(page);
+  await typeInPlace(page, '.dsp h1', 'Made with the Dash Sites builder');
+  await typeInPlace(page, '.dsp .tagline', 'A page written in a browser and stored on Dash Platform.');
+  await typeInPlace(page, '.dsp .tx', `This page was published from the web builder by its end-to-end test. Build stamp: ${stamp}`);
+  await fillItems(page, '.links', [{ label: 'Source code', url: 'github.com/PastaPastaPasta/dash-sites' }]);
+  await page.click('.ed-themes button:has-text("Night")');
+  await closeEditor(page);
   await page.waitForTimeout(400);
   const preview = await page.frameLocator('#frame').locator('h1').textContent();
   check(preview === 'Made with the Dash Sites builder', `the preview shows the page: ${preview}`);
-  check(/costs at most about/.test(await page.textContent('#cost')), `cost: ${await page.textContent('#cost')}`);
+  check(/costs about/.test(await page.textContent('#cost')), `cost: ${await page.textContent('#cost')}`);
   if (shots) await page.screenshot({ path: join(shots, 'builder-ready.png') });
 
   await page.click('#publish');
@@ -109,7 +111,7 @@ try {
   check(problems.length === 0, `no page errors${problems.length ? `: ${problems.join(' | ')}` : ''}`);
 
   const url = `https://${label}.${gateway}/`;
-  const live = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+  const live = await browser.newPage({ viewport: { width: 1100, height: 700 }, ...scheme });
   let body = '';
   for (let i = 0; i < 20 && !body.includes(stamp); i++) {
     await live.goto(url, { waitUntil: 'domcontentloaded' });
@@ -119,6 +121,19 @@ try {
   }
   check(body.includes(stamp), `${url} shows the page that was just published, read from Dash Platform by the browser`);
   if (shots) await live.screenshot({ path: join(shots, 'builder-live.png') });
+
+  const fresh = await (await browser.newContext({ viewport: { width: 1280, height: 900 }, ...scheme })).newPage();
+  await fresh.goto(builderUrl ?? `http://127.0.0.1:${server.address().port}/`);
+  await fresh.click('#reopen summary');
+  await fresh.fill('#reopen-name', `${label}.dash`);
+  await fresh.click('#reopen-form button');
+  await fresh.waitForFunction(() => /^(Opened|.*(not|no|cannot))/.test(document.getElementById('reopen-status')?.textContent ?? '') && !/^Reading/.test(document.getElementById('reopen-status').textContent), undefined, { timeout: 180000 });
+  check(/^Opened the page published at/.test(await fresh.textContent('#reopen-status')), `another browser, not signed in, opens the published page for editing: ${await fresh.textContent('#reopen-status')}`);
+  check((await fresh.textContent('#page-summary')) === (await page.textContent('#page-summary')) && (await fresh.textContent('#themes button[aria-checked=true]')) === 'Night', `with its blocks and its look: ${await fresh.textContent('#page-summary')}`);
+  const shown = fresh.frameLocator('#frame').locator('p', { hasText: stamp });
+  check(await shown.waitFor({ timeout: 5000 }).then(() => true, () => false), 'and shows it in the preview');
+  if (shots) await fresh.screenshot({ path: join(shots, 'builder-reopened.png'), fullPage: true });
+  await fresh.context().close();
   if (withWallet) {
     await page.click('#signout');
     check(await page.isVisible('#wallet-button'), 'signing out returns to the sign-in choice');

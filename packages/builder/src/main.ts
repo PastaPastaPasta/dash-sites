@@ -1,7 +1,6 @@
 import {
   buildSite,
   collectGarbage,
-  contentTypeFor,
   DEPLOYMENTS,
   estimateCredits,
   formatDash,
@@ -21,8 +20,12 @@ import {
 import type { EvoWriter } from '@dash-sites/core/evo';
 import { AutoSignOut, type SignOutReason } from './sign-out.js';
 import { allowanceText, clearSession, connectionId, countdown, loadSession, qrShape, quietly, saveSession, type KeyValue } from './wallet.js';
-import { dataUrl, normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
-import { EMPTY_DRAFT, isBlank, renderPage, THEMES, type PageDraft, type Theme } from './template.js';
+import { normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
+import { browserFetchers } from './elsewhere.js';
+import { keepOutside, loadOutside, onOutsideChange } from './outside.js';
+import { mountOutsidePanel } from './outside-panel.js';
+import { platformPrice, sizeText } from './page/cost.js';
+import { mountPageTab, pageFiles, suggestReopen } from './page-tab.js';
 
 declare const __GATEWAY_DOMAIN__: string;
 declare const __NETWORK__: string;
@@ -32,8 +35,6 @@ const GATEWAY = __GATEWAY_DOMAIN__;
 const NETWORK = __NETWORK__ as Network;
 const OPEN = DEPLOYMENTS[NETWORK] !== undefined;
 const CLOSED = `Publishing on ${NETWORK} is not open yet.`;
-const DRAFT_KEY = 'dash-sites.draft';
-const PICTURE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 const message = (error: unknown): string => String((error as Error)?.message ?? error);
@@ -62,7 +63,6 @@ let chosen: DomainRecord | undefined;
 let session = 0;
 let walletRequest: AbortController | undefined;
 let mode: 'write' | 'upload' = 'write';
-const draft: PageDraft = loadDraft();
 let upload: SiteFile[] = [];
 let bundle: SiteBundle | undefined;
 let publishing = false;
@@ -71,30 +71,12 @@ let working = 0;
 let leftSignedIn = false;
 const autoSignOut = new AutoSignOut({ idleMs: IDLE_SIGN_OUT_MS, signOut: (reason) => signOut(SIGNED_OUT[reason]), busy: () => publishing || working > 0 });
 
-function loadDraft(): PageDraft {
-  try {
-    const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? 'null') as Partial<PageDraft> | null;
-    if (saved) return { ...EMPTY_DRAFT, ...saved, links: Array.isArray(saved.links) ? saved.links : [], theme: saved.theme && saved.theme in THEMES ? saved.theme : 'paper', picture: undefined };
-  } catch {
-    // an unreadable draft is dropped
-  }
-  return { ...EMPTY_DRAFT, links: [] };
-}
-
-function saveDraft(): void {
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...draft, picture: undefined }));
-  } catch {
-    // the draft still lives in this tab
-  }
-}
-
 const label = (): string => chosen?.label.toLowerCase() ?? 'yourname';
 
-function files(): SiteFile[] {
-  if (mode === 'upload') return upload;
-  return isBlank(draft) ? [] : renderPage(draft, `${label()}.dash`);
-}
+let outsidePanel: ReturnType<typeof mountOutsidePanel> | undefined;
+
+/** The site as made, before any of its files are marked as kept outside Platform. */
+const madeFiles = (): SiteFile[] => (mode === 'upload' ? upload : pageFiles(`${label()}.dash`));
 
 function setLocked(id: string, locked: boolean): void {
   $(id).toggleAttribute('inert', locked);
@@ -114,7 +96,9 @@ function refresh(): void {
   // record points at them, and a publish during a delete could reuse a file being deleted.
   for (const id of ['gc', 'unpublish']) $<HTMLButtonElement>(id).disabled = publishing || working > 0;
 
-  const current = files();
+  const made = madeFiles();
+  outsidePanel?.show(made);
+  const current = keepOutside(made);
   bundle = undefined;
   $('content-error').textContent = '';
   if (current.length > 0) {
@@ -126,13 +110,15 @@ function refresh(): void {
   }
   const cost = $('cost');
   if (!bundle) {
-    cost.textContent = mode === 'write' ? 'Write something in step 3 first.' : 'Add your site in step 3 first.';
+    cost.textContent = mode === 'write' ? 'Build a page in step 3 first.' : 'Add your site in step 3 first.';
   } else if (!writer || !chosen) {
     cost.textContent = writer ? 'Pick a name in step 2 to publish this.' : 'Sign in and pick a name to publish this. Your draft is kept.';
   } else {
     const kb = Math.max(1, Math.round(bundle.stats.storedBytes / 1024));
     const noIndex = bundle.manifest.files['/index.html'] ? '' : ' There is no index.html at the top, so the home page will be empty.';
-    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs at most about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${noIndex}`;
+    const { elsewhere } = bundle.stats;
+    const outside = elsewhere.files === 0 ? '' : ` ${elsewhere.files === 1 ? 'One file' : `${elsewhere.files} files`} (${sizeText(elsewhere.bytes)}) ${elsewhere.files === 1 ? 'is' : 'are'} kept outside Platform.`;
+    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${outside}${noIndex}`;
   }
   const button = $<HTMLButtonElement>('publish');
   button.disabled = !bundle || !chosen || publishing || working > 0;
@@ -144,14 +130,7 @@ function refresh(): void {
 
 function renderPreview(): void {
   const frame = $<HTMLIFrameElement>('frame');
-  let html: string | undefined;
-  if (mode === 'write') {
-    const picture = draft.picture ? dataUrl(draft.picture.bytes, contentTypeFor(`x.${draft.picture.ext}`)) : undefined;
-    const page = renderPage(draft, `${label()}.dash`, picture)[0] as SiteFile;
-    html = new TextDecoder().decode(page.bytes);
-  } else {
-    html = previewHtml(upload);
-  }
+  const html = previewHtml(keepOutside(madeFiles()));
   frame.srcdoc = html ?? '<body style="color-scheme:light dark;background:Canvas;color:GrayText;color:color-mix(in srgb,CanvasText 62%,Canvas);font:15px system-ui;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body>';
 }
 
@@ -186,6 +165,7 @@ function renderNames(): void {
 async function choose(domain: DomainRecord): Promise<void> {
   if (!names.some((known) => known.id === domain.id)) names.push(domain);
   chosen = domain;
+  suggestReopen(label());
   $('result').hidden = true;
   $('site-status').textContent = '';
   renderNames();
@@ -450,6 +430,7 @@ function signOut(reason = ''): void {
   clearSession(storage('sessionStorage'), NETWORK);
   writer?.forget();
   writer = undefined;
+  outsidePanel?.forget();
   names = [];
   chosen = undefined;
   autoSignOut.signedOut();
@@ -490,54 +471,6 @@ async function withName(action: (writer: EvoWriter) => Promise<DomainRecord>, bu
     button.textContent = text;
     refresh();
   }
-}
-
-function renderLinks(): void {
-  $('links').replaceChildren(
-    ...draft.links.map((link, index) => {
-      const row = document.createElement('div');
-      row.className = 'linkrow';
-      const name = Object.assign(document.createElement('input'), { type: 'text', value: link.label, placeholder: 'Label' });
-      name.setAttribute('aria-label', 'Link label');
-      const url = Object.assign(document.createElement('input'), { type: 'text', value: link.url, placeholder: 'https://…' });
-      url.setAttribute('aria-label', 'Link address');
-      const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'quiet', textContent: 'Remove' });
-      const update = (): void => {
-        draft.links[index] = { label: name.value, url: url.value };
-        saveDraft();
-        refresh();
-      };
-      name.addEventListener('input', update);
-      url.addEventListener('input', update);
-      remove.addEventListener('click', () => {
-        draft.links.splice(index, 1);
-        saveDraft();
-        renderLinks();
-        refresh();
-      });
-      row.append(name, url, remove);
-      return row;
-    }),
-  );
-}
-
-function renderThemes(): void {
-  $('themes').replaceChildren(
-    ...(Object.keys(THEMES) as Theme[]).map((theme) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.setAttribute('role', 'radio');
-      button.setAttribute('aria-checked', String(draft.theme === theme));
-      button.textContent = THEMES[theme].label;
-      button.addEventListener('click', () => {
-        draft.theme = theme;
-        saveDraft();
-        renderThemes();
-        refresh();
-      });
-      return button;
-    }),
-  );
 }
 
 function setMode(next: 'write' | 'upload'): void {
@@ -703,11 +636,15 @@ function start(): void {
   $('net').textContent = NETWORK;
   $('net-note').textContent = OPEN ? `This builder publishes on ${NETWORK}.` : CLOSED;
   for (const id of ['signin-button', 'wallet-button']) $<HTMLButtonElement>(id).disabled = !OPEN;
-  $<HTMLInputElement>('title').value = draft.title;
-  $<HTMLInputElement>('tagline').value = draft.tagline;
-  $<HTMLTextAreaElement>('body').value = draft.body;
-  renderLinks();
-  renderThemes();
+  const places = browserFetchers();
+  loadOutside(storage('localStorage'));
+  mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, identity: () => writer?.identityId, places, onChange: refresh });
+  const price = (file: SiteFile): string | undefined => {
+    const costs = platformPrice(file);
+    return costs && `about ${costs} on Platform`;
+  };
+  outsidePanel = mountOutsidePanel($('outside-panel'), { origin: location.origin, price, size: sizeText, fetchers: places });
+  onOutsideChange(refresh);
 
   $<HTMLFormElement>('signin').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -775,33 +712,6 @@ function start(): void {
 
   $('tab-write').addEventListener('click', () => setMode('write'));
   $('tab-upload').addEventListener('click', () => setMode('upload'));
-  for (const field of ['title', 'tagline', 'body'] as const) {
-    $<HTMLInputElement>(field).addEventListener('input', (event) => {
-      draft[field] = (event.target as HTMLInputElement).value;
-      saveDraft();
-      refresh();
-    });
-  }
-  $('add-link').addEventListener('click', () => {
-    draft.links.push({ label: '', url: '' });
-    renderLinks();
-  });
-  $<HTMLInputElement>('picture').addEventListener('change', (event) => {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    const ext = file ? PICTURE_TYPES[file.type] : undefined;
-    if (!file || !ext) return;
-    void readFile(file).then((bytes) => {
-      draft.picture = { bytes, ext };
-      $('picture-remove').hidden = false;
-      refresh();
-    });
-  });
-  $('picture-remove').addEventListener('click', () => {
-    draft.picture = undefined;
-    $<HTMLInputElement>('picture').value = '';
-    $('picture-remove').hidden = true;
-    refresh();
-  });
 
   const drop = $('drop');
   drop.addEventListener('dragover', (event) => {

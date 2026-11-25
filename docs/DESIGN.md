@@ -390,6 +390,76 @@ instead of deleting chunks it cannot account for. `dash-sites publish
 --external <map>` checks each named file against the local copy and against the
 CDNs before publishing, and `--brotli` is opt-in.
 
+### Manifest version 3: files kept at places
+
+A file that is not on npm (a photo, a video, a script of the site's own) can
+also stay off Platform. Its entry says where the file is instead of holding
+it:
+
+```json
+"/img/hero.webp": { "type": "image/webp", "size": 184211, "sha256": "<hex>",
+                    "parts": [],
+                    "src": ["ipfs://bafy…", "https://media.example.com/hero.webp"] }
+```
+
+- `src` lists places as URIs, tried in order. Two kinds are fetched today: an
+  `https://` address and an `ipfs://` CID (with an optional path). The entry
+  has no parts and no `enc`. A manifest with any such file has `"v": 3`; one
+  without stays at version 1 or 2, so older readers still open it. A file of
+  an npm package uses `ext` above instead, so there is one way to keep each
+  kind of file, and a version 3 manifest may hold both.
+- The manifest is still proved, so `size` and `sha256` are the owner's. The
+  shell serves the file only when a place returns exactly those bytes. A place
+  is relied on to answer, never trusted for content, and the site's address
+  for the file does not change.
+- **HTTPS**: a plain GET with no cookies and no referrer, following redirects,
+  reading at most `size` bytes. The host must let other sites read the file
+  (`Access-Control-Allow-Origin: *`).
+- **IPFS**: through Helia's `@helia/verified-fetch` with recursive gateways
+  turned off, so blocks come from the providers that hold them and are checked
+  against the CID before the whole file is checked against `sha256`. Finding
+  the providers uses a delegated routing service (`delegated-ipfs.dev` unless
+  the shell is built with `IPFS_ROUTERS`).
+- The IPFS client is not a file of the shell's host. Its exact npm version and
+  SHA-256 are constants in `packages/core/src/ipfs.ts`. The worker downloads it
+  from jsDelivr or unpkg the first time a site asks for a file at an IPFS
+  place, runs it only if the hash matches, and keeps it in Cache Storage,
+  checking it again on every read. A site with no IPFS place never fetches it.
+- Verified files are kept in the origin's Cache Storage under their hash and
+  checked again on every read. If no place serves the file, that request gets
+  a 502 and the rest of the site is unaffected.
+- A file kept outside is read whole before any of it is served, so it is
+  capped at 64 MiB, with at most 8 places. It does not count against the 50 MB
+  a site may store on Platform.
+
+**Staying compatible.** Versions 1 and 2 are closed: a key a reader does not
+know makes the manifest invalid. Version 3 is open. Its reader ignores keys it
+does not know (in the manifest and in a file entry) and skips places whose
+kind it does not know. It refuses only the files it cannot read, each with a
+502 of its own:
+
+- a file whose `enc` it does not know;
+- a file whose `src` is in a form it does not know: not a list of 1 to 8
+  different URIs, given together with parts, an `enc` or an `ext`, or for a
+  file that is empty or larger than 64 MiB;
+- a file whose parts do not add up to its size, which is how a file stored
+  under a key added later looks to it.
+
+So a later shell can add a kind of place, a hash per piece for streaming,
+another encoding, or another way to store a file, and an older shell keeps
+serving everything it still understands. A change that older readers must not
+ignore raises `v`, and a reader refuses a version above its own as a whole.
+`ext` stays strict in every version: an entry that
+names an npm file in a form this version does not accept makes the whole
+manifest invalid, as before. A writer only emits what its own version reads,
+and refuses to write an entry it would refuse to read.
+
+Two rules keep deleting safe across versions. Every chunk a manifest uses on
+Platform is listed in its `chunks`, whatever is added later. And `gc` and
+`--prune` delete nothing for an identity while one of its manifests holds
+something they do not know (a key they ignored, a file they cannot read), so
+an older collector never deletes what a newer manifest may still need.
+
 ## 4. Resolution
 
 Input: a name, e.g. `Alice.dash` (or a gateway host label).
@@ -569,8 +639,14 @@ queries for browsers.
   evonodes (`<ip>:443`, from the masternode list of the quorum key service);
   the quorum key service `quorums.<network>.networks.dash.org` (see §6); and,
   only for a site whose manifest names external npm files (§3),
-  `cdn.jsdelivr.net`, and `unpkg.com` if jsDelivr fails. Nothing else. `e2e/shell.mjs` asserts
-  this list in Chromium for a site without external files.
+  `cdn.jsdelivr.net`, and `unpkg.com` if jsDelivr fails. For a site that keeps
+  files at places (§3) it also contacts those places: the HTTPS hosts the
+  manifest lists and, for a file at an IPFS place, the npm CDNs for the IPFS
+  client, the routing service and the providers that hold the file. Nothing
+  else. `e2e/shell.mjs` asserts this list in Chromium for a site without
+  external files; `e2e/elsewhere.mjs` prints the hosts the worker contacted
+  for a site that keeps files at places and asserts that no recursive IPFS
+  gateway is among them.
 - **Choosing nodes**: while the verifier downloads, the worker reads that
   masternode list (enabled nodes that passed the service's version check),
   sends an empty request to 10 random ones, and gives the SDK the first 4 to
@@ -750,6 +826,40 @@ queries for browsers.
 - **Stored chunks are not trusted**: site code can write to the origin's
   Cache Storage, so the worker re-hashes every chunk it reads from there. A
   poisoned entry is a cache miss.
+- **Files kept outside Platform**: the storage host can withhold a file, and
+  cannot change it: only bytes matching the proved size and SHA-256 are
+  served, and the browser's kept copy is checked again on every read. Visitors'
+  browsers contact the hosts the owner listed (and, for IPFS, the routing
+  service and the providers), which see the visitor's address. That is no more
+  than a page linking to those hosts directly would cause, and requests carry
+  no cookies and no referrer. The IPFS client is code the worker downloads, so
+  it is run only when its SHA-256 matches the constant the worker was built
+  with; an npm mirror can refuse to serve it, which costs IPFS places and
+  nothing else.
+- **The IPFS client runs inside the worker**: it is about 1.2 MB of
+  third-party code (Helia and libp2p), far more than the rest of the worker,
+  and it runs with the worker's own authority, in the same place that decides
+  which bytes are served. Its output is still checked against the proved
+  SHA-256, so a wrong answer from it is refused. A flaw in it that lets a
+  hostile provider or routing service run code, though, would run as the
+  worker of that one name: it could serve that name's visitors bytes the
+  owner never published until the worker is replaced, and it could change
+  what the worker keeps in that browser for the name (the marker of who owns
+  it, the saved denylist), which lasts longer. Three things bound
+  this. The worker loads the client only for a site that lists an IPFS place,
+  so a site without one never runs it. Each name is its own origin with its
+  own worker, so other names are out of reach. And the client is pinned by
+  hash, so it changes only when the shell does.
+
+  The shell keeps the client all the same. What it returns is never trusted,
+  so the risk left is code execution from data inside a JavaScript library.
+  The worker already takes that kind of risk with the Platform SDK, and
+  handles it the same way: an exact version, pinned by hash. The pinned build
+  has no `eval` and builds no code from what it downloads. Leaving IPFS out
+  would also mean changing the shell for the first site that wants an IPFS
+  place, and until then every file kept outside would depend on one HTTPS
+  host staying up. An owner who wants none of this lists HTTPS places only,
+  and the client is never loaded for that site.
 - **Origin isolation**: one site per subdomain, so `localStorage`, IndexedDB,
   and permissions are per name. The canonical-host redirect keeps a name from
   having several origins.

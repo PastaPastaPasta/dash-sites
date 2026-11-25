@@ -1,5 +1,6 @@
 import {
   ContentError,
+  ElsewhereError,
   ExternalAssetError,
   cdnSource,
   integrityOfAsync,
@@ -15,14 +16,18 @@ import {
   escapeHtml,
   hostPage,
   loadManifest,
+  matchesFile,
   messagePage,
   nameFromPath,
+  readElsewhere,
   readFile,
   ownerEpoch,
   resolveName,
   sha256Hex,
   type ChunkSource,
   type Manifest,
+  type ManifestFile,
+  type PlaceFetchers,
   type PlatformReader,
   type Resolution,
 } from '@dash-sites/core';
@@ -79,6 +84,8 @@ export interface HostOptions {
   network: string;
   reader: () => Promise<PlatformReader>;
   store: Store;
+  /** How files kept outside Platform are fetched, by kind of place. None by default. */
+  places?: PlaceFetchers;
   builderUrl: string;
   now?: () => number;
   /** The name changed owner while this worker was serving it: open pages show the previous owner's site. */
@@ -123,6 +130,7 @@ export class SiteHost {
   private refreshing?: Promise<Resolution>;
   private resetNonce?: string;
   private readonly manifests = new Map<string, Promise<Manifest>>();
+  private readonly fetching = new Map<string, Promise<Uint8Array>>();
 
   constructor(private readonly options: HostOptions) {
     this.now = options.now ?? Date.now;
@@ -227,6 +235,25 @@ export class SiteHost {
     };
   }
 
+  /**
+   * A file kept outside Platform: the browser's copy when it still matches, else a download from
+   * the places the manifest lists, shared by the requests that want the same file until it is kept.
+   */
+  private readonly elsewhere = async (path: string, file: ManifestFile): Promise<Uint8Array> => {
+    const kept = await this.options.store.getChunk(file.sha256).catch(() => undefined);
+    if (kept && (await matchesFile(kept, file))) return kept;
+    const key = JSON.stringify([file.sha256, file.src]);
+    let download = this.fetching.get(key);
+    if (!download) {
+      download = readElsewhere(path, file, this.options.places ?? {});
+      this.fetching.set(key, download);
+      void download
+        .then((bytes) => this.options.store.putChunk(file.sha256, bytes))
+        .catch(() => undefined)
+        .finally(() => this.fetching.delete(key));
+    }
+    return download;
+  };
   /** External npm assets, kept in the origin's storage once verified and checked again whenever they are read back. */
   private external(): ExternalSource {
     const fetchExternal = this.options.external ?? cdnSource();
@@ -338,7 +365,7 @@ export class SiteHost {
     if (decision.kind === 'not-found') return this.page(404, '404', 'Page not found', `<code>${dashName}</code> has no page at this address.`);
     let file: Awaited<ReturnType<typeof readFile>>;
     try {
-      file = await readFile(manifest, decision.path, this.chunks(resolution.site.id), this.external());
+      file = await readFile(manifest, decision.path, this.chunks(resolution.site.id), { external: this.external(), elsewhere: this.elsewhere });
     } catch (error) {
       if (error instanceof ExternalAssetError) {
         this.options.log?.({ event: 'external-refused', asset: `${error.asset.npm}@${error.asset.version}/${error.asset.path}`, attempts: error.attempts });
@@ -361,7 +388,12 @@ export class SiteHost {
       }
       if (error instanceof NewerFormatError) return this.newer(dashName);
       if (!(error instanceof ContentError)) throw error;
-      return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');
+      if (error instanceof ElsewhereError) {
+        this.options.log?.({ event: 'elsewhere-failed', path: error.path, attempts: error.attempts });
+        return this.page(502, 'Unavailable', 'This file cannot be shown', `<code>${dashName}</code> keeps this file outside Dash Platform, and none of the places its owner listed served the file that was published.`);
+      }
+      const unread = manifest.files[decision.path]?.unread;
+      return this.page(502, 'Unavailable', 'This file cannot be shown', unread ? 'It is stored in a form this version of the page does not read yet.' : 'Its stored content is incomplete or does not match the hash its owner published.');
     }
     const headers: Record<string, string> = {
       'Content-Type': file.file.type,

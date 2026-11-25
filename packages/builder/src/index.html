@@ -111,26 +111,31 @@
   <section class="step" id="step-content">
     <h2><span class="n">3</span>Make the site</h2>
     <div class="tabs" role="tablist">
-      <button type="button" role="tab" id="tab-write" aria-selected="true" aria-controls="panel-write">Write a page</button>
+      <button type="button" role="tab" id="tab-write" aria-selected="true" aria-controls="panel-write">Build a page</button>
       <button type="button" role="tab" id="tab-upload" aria-selected="false" aria-controls="panel-upload">Upload a site</button>
     </div>
     <div id="panel-write" role="tabpanel" aria-labelledby="tab-write">
-      <label for="title">Title</label>
-      <input id="title" type="text" maxlength="120" placeholder="Your name or project">
-      <label for="tagline">One line about it</label>
-      <input id="tagline" type="text" maxlength="200">
-      <label for="body">Text <span class="soft">Markdown works: ## heading, *emphasis*, [link](https://…)</span></label>
-      <textarea id="body" rows="9"></textarea>
-      <label>Links</label>
-      <div id="links"></div>
-      <button type="button" class="quiet" id="add-link">Add a link</button>
+      <p class="hint">Stack blocks such as a header, text, links and pictures, and type straight into the page. What you publish is plain HTML with no scripts.</p>
+      <div class="actions">
+        <button type="button" id="edit-page">Start a page</button>
+        <button type="button" class="quiet" id="clear-page" hidden>Start over</button>
+      </div>
+      <p class="status" id="page-summary"></p>
       <label>Look</label>
       <div id="themes" class="chips" role="radiogroup" aria-label="Look"></div>
-      <label for="picture">Picture <span class="soft">optional, shown round at the top</span></label>
-      <div class="actions">
-        <label class="filepick">Choose a picture<input id="picture" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"></label>
-        <button type="button" class="quiet" id="picture-remove" hidden>Remove picture</button>
-      </div>
+      <ul id="page-images" class="files" aria-label="Images and what storing each costs"></ul>
+      <p class="status" id="page-cost"></p>
+      <p class="hint" id="page-draft"></p>
+      <p class="error" id="page-error" role="alert"></p>
+      <details id="reopen">
+        <summary>Edit a site you built here before</summary>
+        <form id="reopen-form" class="inline">
+          <input id="reopen-name" type="text" placeholder="name.dash" spellcheck="false" autocapitalize="none" aria-label="Name of the site">
+          <button class="second">Open</button>
+        </form>
+        <p class="hint">Opens the page as it was published, with its images, from any device. Nothing is changed until you publish.</p>
+        <p class="status" id="reopen-status" aria-live="polite"></p>
+      </details>
     </div>
     <div id="panel-upload" role="tabpanel" aria-labelledby="tab-upload" hidden>
       <div id="drop" class="drop">
@@ -145,6 +150,10 @@
       <ul id="upload-files" class="files"></ul>
     </div>
     <p class="error" id="content-error" role="alert"></p>
+    <details id="outside">
+      <summary>Keep large files outside Dash Platform</summary>
+      <div id="outside-panel"></div>
+    </details>
   </section>
 
   <section class="step" id="step-publish" inert>

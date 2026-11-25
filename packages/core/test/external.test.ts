@@ -106,7 +106,7 @@ describe('stalled CDNs', () => {
       async (url) => (String(url).includes('jsdelivr') ? new Promise<Response>(() => {}) : new Response(big)),
       { headersMs: 20, idleMs: 20 },
     );
-    expect((await readFile(manifest, '/b.bin', noChunks, hang)).bytes).toEqual(big);
+    expect((await readFile(manifest, '/b.bin', noChunks, { external: hang })).bytes).toEqual(big);
     const trickle = cdnSource(
       async (url) =>
         String(url).includes('jsdelivr')
@@ -114,13 +114,13 @@ describe('stalled CDNs', () => {
           : new Response(big),
       { headersMs: 20, idleMs: 20 },
     );
-    expect((await readFile(manifest, '/b.bin', noChunks, trickle)).bytes).toEqual(big);
+    expect((await readFile(manifest, '/b.bin', noChunks, { external: trickle })).bytes).toEqual(big);
   });
 
   it('says when every CDN no longer has the file', async () => {
     const { manifest } = buildSite(FILES, { external: EXT });
     const gone = cdnSource(async () => new Response(null, { status: 404 }));
-    const error = await readFile(manifest, '/b.bin', noChunks, gone).catch((e: unknown) => e);
+    const error = await readFile(manifest, '/b.bin', noChunks, { external: gone }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ExternalAssetError);
     expect((error as ExternalAssetError).missing).toBe(true);
     expect((error as ExternalAssetError).mismatch).toBe(false);
@@ -144,17 +144,17 @@ describe('reading', () => {
   it('serves an external file only with the published hash', async () => {
     const { manifest } = buildSite(FILES, { external: EXT });
     const serving = (bytes: Uint8Array, status = 200) => cdnSource(async () => new Response(status === 200 ? bytes : null, { status }));
-    expect((await readFile(manifest, '/b.bin', noChunks, serving(big))).bytes).toEqual(big);
+    expect((await readFile(manifest, '/b.bin', noChunks, { external: serving(big) })).bytes).toEqual(big);
     const tampered = big.slice();
     tampered[9] ^= 0x80;
-    await expect(readFile(manifest, '/b.bin', noChunks, serving(tampered))).rejects.toThrow(ExternalAssetError);
-    await expect(readFile(manifest, '/b.bin', noChunks, serving(big, 404))).rejects.toThrow(/HTTP 404/);
-    await expect(readFile(manifest, '/b.bin', noChunks, serving(new Uint8Array([...big, 1])))).rejects.toThrow(/wrong size/);
+    await expect(readFile(manifest, '/b.bin', noChunks, { external: serving(tampered) })).rejects.toThrow(ExternalAssetError);
+    await expect(readFile(manifest, '/b.bin', noChunks, { external: serving(big, 404) })).rejects.toThrow(/HTTP 404/);
+    await expect(readFile(manifest, '/b.bin', noChunks, { external: serving(new Uint8Array([...big, 1])) })).rejects.toThrow(/wrong size/);
     // A compressed transfer reports its compressed length; only the decoded bytes are counted.
     const encoded = cdnSource(async () => new Response(big, { headers: { 'content-length': '7', 'content-encoding': 'br' } }));
-    expect((await readFile(manifest, '/b.bin', noChunks, encoded)).bytes).toEqual(big);
+    expect((await readFile(manifest, '/b.bin', noChunks, { external: encoded })).bytes).toEqual(big);
     // An external source that skips the check is caught by the reader.
-    await expect(readFile(manifest, '/b.bin', noChunks, async () => tampered)).rejects.toThrow(ContentError);
+    await expect(readFile(manifest, '/b.bin', noChunks, { external: async () => tampered })).rejects.toThrow(ContentError);
   });
 
   it('never follows a redirect away from the CDN', async () => {
@@ -164,7 +164,7 @@ describe('reading', () => {
       inits.push(init ?? {});
       throw new TypeError('redirect refused');
     });
-    await expect(readFile(manifest, '/b.bin', noChunks, source)).rejects.toThrow(ExternalAssetError);
+    await expect(readFile(manifest, '/b.bin', noChunks, { external: source })).rejects.toThrow(ExternalAssetError);
     expect(inits.every((init) => init.redirect === 'error' && init.credentials === 'omit')).toBe(true);
   });
 });

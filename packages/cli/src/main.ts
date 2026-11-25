@@ -19,10 +19,12 @@ import {
   type PrunePlan,
   publishPointer,
   publishSite,
+  readElsewhere,
   readFile,
   readerConfig,
   decide,
   resolveName,
+  siteChunks,
   unpublishSite,
   type Network,
   type NetworkConfig,
@@ -33,11 +35,13 @@ import { MemoryPlatform } from '@dash-sites/core/memory';
 import { EvoReader, EvoWriter, registerContract, type Credentials } from '@dash-sites/core/evo';
 import { createGateway, emptyDenylist, parseDomain } from '@dash-sites/gateway';
 import { readSiteDirectory } from './files.js';
+import { checkPlaces, cliPlaces, parsePlaceMap, storeElsewhere, type CliPlaces } from './places.js';
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
-  dash-sites publish <dir> --name <name> [--spa] [--prune] [--brotli] [--external <file>] [--dry-run]
+  dash-sites publish <dir> --name <name> [--spa] [--prune] [--brotli] [--external <file>] [--elsewhere <file>] [--dry-run]
                                                                publish a folder as <name>.dash
+  dash-sites check <name>                                      ask every outside place of a site for its file
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
   dash-sites unpublish --name <name>                           take the site down
   dash-sites gc [--dry-run]                                    delete stored chunks no site uses
@@ -62,6 +66,14 @@ Options
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity
+
+Files kept outside Platform
+  --elsewhere takes a JSON file that maps site paths to the places holding them, each an
+  https:// address or an ipfs:// CID:  { "/img/hero.webp": ["ipfs://bafy...", "https://media.example.com/hero.webp"] }
+  Platform then stores only the file's size, its hash and that list. Visitors' browsers fetch the
+  file from the first place that serves those exact bytes. Upload the file with your provider's own
+  tools first: publish asks every place and stops if one does not serve it. A file that is not in
+  the folder is taken from its first place. An https:// place must allow reading from other sites.
 `;
 
 interface IdentityFile {
@@ -87,6 +99,7 @@ const { values, positionals } = parseArgs({
     port: { type: 'string', default: '8080' },
     domain: { type: 'string', default: 'localhost' },
     output: { type: 'string', short: 'o' },
+    elsewhere: { type: 'string' },
     spa: { type: 'boolean', default: false },
     prune: { type: 'boolean', default: false },
     grace: { type: 'string', default: String(DEFAULT_PRUNE_GRACE_MS / 3_600_000) },
@@ -120,6 +133,9 @@ function requireName(): string {
   return values.name;
 }
 
+let places: CliPlaces | undefined;
+/** The origin a site is served on decides nothing here; it only makes storage hosts answer as they would a browser. */
+const outside = (label = 'site'): CliPlaces => (places ??= cliPlaces(`https://${label.toLowerCase()}.dash.site`));
 function graceMs(): number {
   const text = String(values.grace ?? '').trim();
   const hours = Number(text);
@@ -196,13 +212,32 @@ async function serve(reader: PlatformReader, announce?: string): Promise<never> 
   return new Promise(() => {});
 }
 
+/** The site a name shows, with its manifest, or the reason it has none that this version reads. */
+async function storedSite(name: string) {
+  const reader = await EvoReader.connect(network(true));
+  const resolution = await resolveName(reader, name, { preload: true });
+  if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
+    const why = resolution.status === 'unsupported' ? `${resolution.status}: ${resolution.reason === 'newer' ? 'a newer format than this version reads' : 'content this project does not define'}` : resolution.status;
+    return fail(`${name} does not resolve to a site stored on Platform (${why})`);
+  }
+  const source = siteChunks(reader, resolution);
+  return { resolution, source, manifest: await loadManifest(resolution.content, source) };
+}
+
 const commands: Record<string, () => Promise<void>> = {
   async publish() {
     const dir = positionals[1] ?? fail('publish needs a directory');
     const name = requireName();
-    const bundle = buildSite(await readSiteDirectory(dir), buildOptions());
+    let files = await readSiteDirectory(dir);
+    if (values.elsewhere) {
+      const map = parsePlaceMap(JSON.parse(readFileSync(values.elsewhere, 'utf8')));
+      files = await storeElsewhere(files, map, outside(parseName(name)?.label).fetchers, (line) => console.error(line));
+    }
+    const bundle = buildSite(files, buildOptions());
     await checkExternal(bundle);
-    console.error(`${bundle.stats.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
+    const { elsewhere } = bundle.stats;
+    console.error(`${bundle.stats.files - elsewhere.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
+    if (elsewhere.files > 0) console.error(`${elsewhere.files} files, ${elsewhere.bytes} bytes kept outside Platform`);
     if (!bundle.manifest.files['/index.html']) console.error('warning: the site has no /index.html');
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
@@ -278,20 +313,25 @@ const commands: Record<string, () => Promise<void>> = {
   },
 
   async fetch() {
-    const name = positionals[1] ?? fail('fetch needs a name');
-    const reader = await EvoReader.connect(network(true));
-    const resolution = await resolveName(reader, name, { preload: true });
-    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
-      const why = resolution.status === 'unsupported' ? `${resolution.status}: ${resolution.reason === 'newer' ? 'a newer format than this version reads' : 'content this project does not define'}` : resolution.status;
-      fail(`${name} does not resolve to a site stored on Platform (${why})`);
-    }
-    const source = (hashes: string[]) => reader.getChunks(resolution.site.id, hashes);
-    const manifest = await loadManifest(resolution.content, source);
+    const { resolution, source, manifest } = await storedSite(positionals[1] ?? fail('fetch needs a name'));
     const decision = decide(manifest, positionals[2] ?? '/');
     if (decision.kind !== 'file') fail(`no file at ${positionals[2] ?? '/'}`);
-    const { bytes } = await readFile(manifest, decision.path, source);
+    const { fetchers } = outside(resolution.canonicalLabel);
+    const { bytes } = await readFile(manifest, decision.path, source, { elsewhere: (path, file) => readElsewhere(path, file, fetchers) });
     if (values.output) writeFileSync(values.output, bytes);
-    else process.stdout.write(bytes);
+    else await new Promise<void>((resolve, reject) => process.stdout.write(bytes, (error) => (error ? reject(error) : resolve())));
+  },
+
+  async check() {
+    const { resolution, manifest } = await storedSite(positionals[1] ?? fail('check needs a name'));
+    const unread = Object.entries(manifest.files).filter(([, file]) => file.unread);
+    for (const [path, file] of unread) console.log(`FAIL ${path}  ${file.unread}`);
+    if (unread.length > 0) process.exitCode = 1;
+    const count = Object.values(manifest.files).filter((file) => file.src).length;
+    if (count === 0) return console.log(unread.length > 0 ? 'some files are stored in a form this version cannot read' : `${resolution.canonicalLabel}.dash keeps every file on Platform`);
+    const good = await checkPlaces(manifest.files, outside(resolution.canonicalLabel).fetchers, (line) => console.log(line));
+    console.log(good ? `every one of the ${count} files kept outside Platform can be loaded` : 'some files cannot be loaded from any place they list');
+    if (!good) process.exitCode = 1;
   },
 
   async gateway() {
@@ -321,4 +361,11 @@ if (values.help || !command) {
   console.log(USAGE);
   process.exit(values.help || positionals.length === 0 ? 0 : 1);
 }
-command().catch((error: unknown) => fail(String((error as Error)?.message ?? error)));
+command().then(
+  async () => {
+    if (!places?.ipfsStarted()) return;
+    for (const stream of [process.stdout, process.stderr]) await new Promise((written) => stream.write('', written));
+    process.exit(process.exitCode ?? 0);
+  },
+  (error: unknown) => fail(String((error as Error)?.message ?? error)),
+);

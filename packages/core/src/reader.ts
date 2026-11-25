@@ -1,10 +1,10 @@
-import { decompress as brotliDecompress } from 'brotli/decompress';
-import { concat, sha256Hex, toHex } from './bytes.js';
+import { concat, sha256Hex } from './bytes.js';
 import { cdnSource, integrityOfAsync, type ExternalSource } from './external.js';
 import type { ContentRef } from './content.js';
 import { gunzip } from './gzip.js';
 import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_MANIFEST_BYTES, type Limits } from './limits.js';
 import { decodeManifest, type Manifest, type ManifestFile } from './manifest.js';
+import { matchesFile, tryPlace, type PlaceAttempt, type PlaceFetchers } from './places.js';
 
 /** Returns chunks by hash. Results are untrusted: the reader hashes every chunk. */
 export type ChunkSource = (hashes: string[]) => Promise<Map<string, Uint8Array>>;
@@ -14,6 +14,28 @@ export class ContentError extends Error {
     super(message);
     this.name = 'ContentError';
   }
+}
+
+/** No place a file lists served the bytes its owner published. The rest of the site is unaffected. */
+export class ElsewhereError extends ContentError {
+  constructor(
+    readonly path: string,
+    readonly attempts: PlaceAttempt[],
+  ) {
+    super(`${path} could not be loaded from where it is stored: ${attempts.map(({ place, problem }) => `${place}: ${problem}`).join('; ')}`);
+    this.name = 'ElsewhereError';
+  }
+}
+
+/** Fetches a file kept outside Platform from the first of its places that serves the published bytes. */
+export async function readElsewhere(path: string, file: ManifestFile, fetchers: PlaceFetchers): Promise<Uint8Array> {
+  const attempts: PlaceAttempt[] = [];
+  for (const place of file.src ?? []) {
+    const result = await tryPlace(place, file, fetchers);
+    if ('bytes' in result) return result.bytes;
+    attempts.push({ place, problem: result.problem });
+  }
+  throw new ElsewhereError(path, attempts);
 }
 
 async function fetchVerified(source: ChunkSource, hashes: string[]): Promise<Map<string, Uint8Array>> {
@@ -55,23 +77,30 @@ export interface FileContent {
 
 const defaultExternal = cdnSource();
 
-async function sha256HexAsync(bytes: Uint8Array): Promise<string> {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) return sha256Hex(bytes);
-  return toHex(new Uint8Array(await subtle.digest('SHA-256', bytes as BufferSource)));
+/** Where the files a site does not store come from. */
+export interface Outside {
+  /** Fetches a file of an npm package (`ext`). Defaults to the npm CDNs. */
+  external?: ExternalSource;
+  /** Fetches a file kept at places (`src`). Defaults to fetching nothing. */
+  elsewhere?: (path: string, file: ManifestFile) => Promise<Uint8Array>;
 }
 
 /** Reads one file of a manifest and checks it against the manifest's size and hash. */
-export async function readFile(manifest: Manifest, path: string, source: ChunkSource, external: ExternalSource = defaultExternal): Promise<FileContent> {
+export async function readFile(manifest: Manifest, path: string, source: ChunkSource, outside: Outside = {}): Promise<FileContent> {
   const file = manifest.files[path];
   if (!file) throw new ContentError(`no such file: ${path}`);
+  if (file.unread) throw new ContentError(`${path} ${file.unread}`);
   if (file.ext) {
-    const bytes = await external(file.ext, file.size);
-    if (bytes.length !== file.size || (await integrityOfAsync(bytes)) !== file.ext.integrity || (await sha256HexAsync(bytes)) !== file.sha256) {
-      throw new ContentError(`${path} does not match its hash`);
-    }
+    const bytes = await (outside.external ?? defaultExternal)(file.ext, file.size);
+    if (!(await matchesFile(bytes, file)) || (await integrityOfAsync(bytes)) !== file.ext.integrity) throw new ContentError(`${path} does not match its hash`);
     return { file, bytes, stored: bytes };
   }
+  if (file.src) {
+    const bytes = await (outside.elsewhere ?? ((at, entry) => readElsewhere(at, entry, {})))(path, file);
+    if (!(await matchesFile(bytes, file))) throw new ContentError(`${path} does not match its hash`);
+    return { file, bytes, stored: bytes };
+  }
+  if (file.enc !== undefined && file.enc !== 'gzip' && file.enc !== 'br') throw new ContentError(`${path} is stored in a form this version cannot read`);
   const hashes = file.parts.map(([index]) => manifest.chunks[index] as string);
   const chunks = await fetchVerified(source, hashes);
   const pieces: Uint8Array[] = [];
@@ -84,7 +113,7 @@ export async function readFile(manifest: Manifest, path: string, source: ChunkSo
   let bytes = stored;
   if (file.enc) {
     try {
-      bytes = file.enc === 'gzip' ? gunzip(stored, file.size) : brotliDecompress(stored, file.size);
+      bytes = file.enc === 'gzip' ? gunzip(stored, file.size) : (await import('brotli/decompress')).decompress(stored, file.size);
     } catch (error) {
       throw new ContentError(`${path} cannot be decompressed: ${(error as Error).message}`);
     }

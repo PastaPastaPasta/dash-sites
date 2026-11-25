@@ -185,7 +185,7 @@ describe('manifest validation', () => {
 
   it('rejects malformed manifests', () => {
     const cases: Array<[string, (m: any) => void]> = [
-      ['version', (m) => (m.v = 2)],
+      ['version', (m) => (m.v = 3)],
       ['extra key', (m) => (m.extra = 1)],
       ['chunk hash', (m) => (m.chunks[0] = 'zz')],
       ['duplicate chunk', (m) => m.chunks.push(m.chunks[0])],
@@ -563,6 +563,42 @@ describe('resolve and publish', () => {
     expect(plan.remove.map((chunk) => chunk.hash).sort()).toEqual(gone.sort());
     expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBe(gone.length);
     for (const hash of v2.chunks.keys()) expect((await holds(alice, hash))).toBe(true);
+  });
+
+  it('keeps every chunk of a site with files kept at places, and deletes nothing while a manifest holds something it does not know', async () => {
+    const platform = setup();
+    let now = Date.now() + 1_000_000;
+    platform.now = () => now;
+    platform.registerName('alice2', 'alice-id');
+    platform.registerName('alice3', 'alice-id');
+    const alice = platform.as('alice-id');
+    const photo = new Uint8Array(40000).map((_, i) => (i * 7) % 251);
+    const placed = buildSite([...SITE, { path: '/photo.bin', bytes: photo, src: ['https://media.example.com/photo.bin'] }]);
+    expect(placed.manifest.v).toBe(3);
+    await publishSite(alice, 'alice2', placed);
+    const later = buildSite([{ path: '/index.html', bytes: text('<p>later</p>'.repeat(300)) }, { path: '/photo.bin', bytes: photo, src: ['https://media.example.com/photo.bin'] }]);
+    const entry = later.manifest.files['/photo.bin']!;
+    const unreadable = { ...later.manifest, files: { ...later.manifest.files, '/photo.bin': { ...entry, src: Array.from({ length: 9 }, (_, i) => `https://media.example.com/${i}`) } } };
+    const sort = (v: unknown): unknown => (Array.isArray(v) ? v.map(sort) : v !== null && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort((v as Record<string, unknown>)[k])])) : v);
+    const piece = gzip(utf8.encode(JSON.stringify(sort(unreadable))));
+    const old = buildSite([{ path: '/index.html', bytes: text('old') }]);
+    const current = buildSite([{ path: '/index.html', bytes: text('new') }]);
+    await publishSite(alice, 'alice', old);
+    await publishSite(alice, 'alice', current);
+    now += DEFAULT_PRUNE_GRACE_MS + 1000;
+    const plan = await planPrune(alice, { now });
+    for (const hash of placed.chunks.keys()) expect(plan.remove.some((chunk) => chunk.hash === hash)).toBe(false);
+    expect(plan.remove.length).toBeGreaterThan(0);
+
+    const third = (await alice.getDomain('a11ce3')).value!;
+    const record = await alice.ensureSite(third);
+    for (const [hash, data] of later.chunks) await alice.createChunk(record.id, hash, data);
+    await alice.createChunk(record.id, sha256Hex(piece), piece);
+    await alice.putSite(third, formatContentUri({ scheme: 'dash-manifest', chunks: [sha256Hex(piece)] }));
+    now += DEFAULT_PRUNE_GRACE_MS + 1000;
+    await expect(planPrune(alice, { now })).rejects.toThrow(/holds something this version does not know/);
+    await expect(collectGarbage(alice, { now, recheckMs: 0 })).rejects.toThrow(/nothing is deleted/);
+    for (const hash of [...old.chunks.keys(), ...later.manifest.chunks]) expect(await holds(alice, hash)).toBe(true);
   });
 
   it('deletes nothing while a site manifest fails validation', async () => {

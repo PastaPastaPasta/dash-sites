@@ -1,0 +1,23 @@
+{
+ "about": "Frozen. A site record in format 1 pointing at a version 3 manifest as a later writer might write one, written by hand: a key this reader does not know in the manifest and in a file entry, a place of an unknown kind next to one that answers, a file with an unknown enc, and a file with only places of an unknown kind. The reader serves the files listed under files, refuses those under unread one by one, and marks the manifest partial. Never regenerate or edit: every later reader must load it.",
+ "record": {
+  "v": 1,
+  "content": "dash-manifest:v1:0573a33266a46252613709f7208a18a9ad3b311c9e297b69dd417192ddceb7b8"
+ },
+ "manifestVersion": 3,
+ "files": {
+  "/index.html": "38e282d78a5256de06d9ed15e788d3862c424e6e5923220f1fcd3d46e98fa379",
+  "/photo.bin": "2f76a7e4b230918b173bb7dbeeaae62c12b1e3264f677d6512c928d13c22da04"
+ },
+ "unread": [
+  "/elsewhere.bin",
+  "/later.bin"
+ ],
+ "chunks": {
+  "5004e9ed5874ab1f392f8046782a1f673aae08bbab3d811afdf05702bb39adb9": "PCFkb2N0eXBlIGh0bWw+PHRpdGxlPkxhdGVyPC90aXRsZT48cD5BIHNpdGUgYXMgYSBsYXRlciB3cml0ZXIgbWlnaHQgc3RvcmUgaXQuPC9wPgtAdarfFEl+s+gdUoe88SZbkMX6L2SZzgM4baLXDEF2q+AVSn+06R5TiL3yJ1yRxvswZZrPBDluo9gNQnes4RZLgLXqH1SJvvMoXZLH/DFmm9AFOm+k2Q5DeK3iF0yBtg==",
+  "0573a33266a46252613709f7208a18a9ad3b311c9e297b69dd417192ddceb7b8": "H4sIAAAAAAACA42STY7bMAyFr1JonYkl6j9FTzLIgpIo2KjjGLbSpjOYu5dOMWmnizYLAwZFUd97fK8i95fp6yoOz8JKaShSscEbTKrqCDVI43wAVNV5jUgypIRJl6AU1lKl9RJS0hFLiuK4E3UYiYe9io7Glb73tNA+DdNWmXFp2zvctfYI1omDiCZIJGdVdL4W7ZMpVhfnpLKRAjodJA9WMeQaNRRPVfKno0NAtKQFzxpeSByc4b8lbzJqmw9ddwPZ1+HaLoxAVzzNI3Xr0OgvMsZpP2YeIXCexyFjG85Td86N2tPaFsKTeNuJbpgKXfd9O42bln6YGt+ow7I2ZniX9ix3chfg+KdEHQgCowe0XCgkXWGPlSUfQtHBQTZgyJGNoAFkVTUXXYyjGCpqH+8SA9xJG11bt7F8/pR7XFZqXy6tPoUb6YiNlnfTaWJPxMvaykdMHhbdB07vrLHsb9BSgc45MUbkLYNknzGFInOKFJE8lyGhhkq8McMLQcXi7pzRPebo3J/b+V/hgOodejIJtIwqJOV1Sr4kIg4i+8YUijQ4w9n0hUMEOUIoSmeAgtLciVSQj6fjN9ZO9K3NK7efqAz4v/ZHgsS6b+vZJP+qbaLVDo588k0c9NtPI8IN6ZEDAAA="
+ },
+ "places": {
+  "https://media.fixture.example/site/photo.bin": "CzBVep/E6Q4zWH2ix+wRNluApcrvFDleg6jN8hc8YYar0PUaP2SJrtP4HUJnjLHW+yBFao+02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKHG6xA1Wn+kye4TOF2Cp8zxFjtgharP9Bk+Y4it0vccQWaLsNX6H0RpjrPY/SJHbJG22wAlSm+Uud4DKE1yl7zhBitQdZq/5AkuU3idwucMMVZ7oMXq"
+ }
+}
