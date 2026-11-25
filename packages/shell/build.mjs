@@ -106,6 +106,9 @@ const boot = await build({
   define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER_FILES__: JSON.stringify([verifierUrl, sdkUrl]) },
 });
 const { DENIED_TITLE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, readerConfig } = await import('@dash-sites/core');
+const abuseContact = process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`;
+const abuseUrl = escapeHtml(abuseContact.includes('@') && !abuseContact.includes('/') ? `mailto:${abuseContact}` : abuseContact);
+const siteName = escapeHtml(gatewayDomain || 'This page');
 if (hosted) writeFileSync(join(out, 'unavailable.html'), messagePage('451', DENIED_TITLE, deniedDetail('this name'), { builderUrl }));
 const script = boot.outputFiles[0].text.trim();
 
@@ -121,7 +124,7 @@ function landingHtml() {
 <form id="go"><input name="name" placeholder="alice.dash" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="DPNS name"><button>Open</button></form>
 ${live ? '' : `<p>Publishing on ${escapeHtml(network)} has not opened yet. Names already resolve here, and a name's site appears as soon as its owner publishes one.</p>`}
 <p><a href="${escapeHtml(builderUrl)}">Make a site</a>${process.env.PUBLISH_URL ? ` · <a href="${escapeHtml(process.env.PUBLISH_URL)}">Publish your own</a>` : ''}${peer}</p>
-<footer>This static site does not author or review the sites it opens. Report abuse: ${escapeHtml(process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`)}.</footer>`;
+<footer>${siteName} is a static page with no backend service. When you open a name here, your browser builds the site from what its author published to Dash Platform, a decentralized network. ${siteName} does not host, own, control or review these sites, and does not condone or endorse them. It cannot change or remove anything on Dash Platform, but it can stop opening a name here. <a href="${abuseUrl}">Report abuse</a></footer>`;
 }
 const csp = `default-src 'none'; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'; style-src 'unsafe-inline'; connect-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'`;
 const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
@@ -130,7 +133,9 @@ const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
   .replace('__CSP__', () => csp)
   .replace('<!--LANDING-->', () => landingHtml())
   .replaceAll('__NETWORK__', network)
-  .replaceAll('__SOURCE_URL__', sourceUrl);
+  .replaceAll('__SOURCE_URL__', sourceUrl)
+  .replaceAll('__ABUSE_URL__', abuseUrl)
+  .replaceAll('__SITE_NAME__', siteName);
 writeFileSync(join(out, 'index.html'), html);
 await build({
   ...common,
