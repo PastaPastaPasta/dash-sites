@@ -797,16 +797,15 @@ its `$ownerId`, and its `$transferredAt`.
 
 [`contract/platform-upgrade-test.patch`](../contract/platform-upgrade-test.patch)
 is a test for dashpay/platform, not part of Platform itself. Applied to tag
-`v5.1.0-dev.4` it registers this contract on a protocol 14 chain, runs the
+`v5.1.0-rc.1` it registers this contract on a protocol 14 chain, runs the
 upgrade to protocol 15 and repeats every kind of write on the far side: a
 site record is created, replaced with and without content, a chunk is stored
-and deleted, and Platform refuses the same things it refuses on protocol 14
-(a chunk under another identity's record, a second record for one name, the
-delete of a record). It also parses the schema with the full validation of
-both versions. It last passed on the schema before 0d06481 added `immutable`
-and the counted `updated` index; testnet (protocol 14) accepted the final
-schema, and the meta-schema is the same in `v5.1.0-rc.1`, but the patch has
-not been re-run since. To run it against a later Platform:
+and deleted. On both protocols Platform refuses a chunk under another
+identity's record, a second record for one name, and a replace that moves a
+record to another name; on protocol 15 it also refuses the delete of a
+record. It also parses the schema with the full validation of both versions.
+All of it passed on the final schema on 2026-11-25. To run it against a
+later Platform:
 
 ```
 git apply <dash-sites>/contract/platform-upgrade-test.patch
