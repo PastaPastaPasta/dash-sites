@@ -96,6 +96,17 @@ dash-sites resolve alice
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
 ```
 
+Large files can stay off Platform. `publish --elsewhere places.json` takes a map
+of site paths to the places that hold them, each an `https://` address or an
+`ipfs://` CID. Platform then stores only the file's size and hash, and a
+visitor's browser fetches the file from the first place that serves exactly
+those bytes. `dash-sites check alice` asks every such place of a published
+site. See [the design doc](docs/DESIGN.md#files-kept-outside-platform-manifest-version-2).
+
+```json
+{ "/img/hero.webp": ["ipfs://bafy…", "https://media.example.com/hero.webp"] }
+```
+
 `--identity-file` takes the identity JSON that dash-bridge writes; `--identity <id>` with `DASH_SITES_KEY=<WIF>` works too. Storage costs
 about 0.3 DASH per megabyte, paid once; deleting old chunks refunds most of it.
 Testnet funds: https://faucet.thepasta.org.

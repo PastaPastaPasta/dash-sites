@@ -232,6 +232,54 @@ Limits a reader enforces: manifest ≤ 30 chunks (441 KB compressed) and ≤ 4 M
 decoded, ≤ 5,000 files, site ≤ 50 MB decoded, path ≤ 512 bytes. Decompression
 stops at the declared size. The gateway sets lower limits (25 MB per site).
 
+### Files kept outside Platform (manifest version 2)
+
+Platform storage costs about 0.3 DASH per MB, which suits pages and not
+photos, media or large scripts. A file's entry may therefore say where the
+file is instead of holding it:
+
+```json
+"/img/hero.webp": { "type": "image/webp", "size": 184211, "sha256": "<hex>",
+                    "parts": [],
+                    "src": ["ipfs://bafy…", "https://media.example.com/hero.webp"] }
+```
+
+- `src` lists places as URIs, tried in order. Two kinds are fetched today: an
+  `https://` address and an `ipfs://` CID (with an optional path). The entry
+  has no parts and no `enc`. A manifest with any such file has `"v": 2`; one
+  without stays version 1, byte for byte as before.
+- The manifest is still proved, so `size` and `sha256` are the owner's. The
+  shell serves the file only when a place returns exactly those bytes. A place
+  is relied on to answer, never trusted for content, and the site's address
+  for the file does not change.
+- **HTTPS**: a plain GET with no cookies and no referrer, following redirects,
+  reading at most `size` bytes. The host must let other sites read the file
+  (`Access-Control-Allow-Origin: *`).
+- **IPFS**: through Helia's `@helia/verified-fetch` with recursive gateways
+  turned off, so blocks come from the providers that hold them and are checked
+  against the CID before the whole file is checked against `sha256`. Finding
+  the providers uses a delegated routing service (`delegated-ipfs.dev` unless
+  the shell is built with `IPFS_ROUTERS`).
+- The IPFS client is not a file of the shell's host. Its exact npm version and
+  SHA-256 are constants in `packages/core/src/ipfs.ts`. The worker downloads it
+  from jsDelivr or unpkg the first time a site asks for a file at an IPFS
+  place, runs it only if the hash matches, and keeps it in Cache Storage,
+  checking it again on every read. A site with no IPFS place never fetches it.
+- Verified files are kept in the origin's Cache Storage under their hash and
+  checked again on every read. If no place serves the file, that request gets
+  a 502 and the rest of the site is unaffected.
+- A file kept outside is read whole before any of it is served, so it is
+  capped at 64 MB, with at most 8 places. It does not count against the 50 MB
+  a site may store on Platform.
+
+**Staying compatible.** A version 2 reader ignores keys it does not know (in
+the manifest and in a file entry), skips places whose kind it does not know,
+and refuses only the files whose `enc` it does not know. So a later shell can
+add a kind of place, a hash per piece for streaming, or another encoding, and
+an older shell keeps serving everything it still understands. A change that
+older readers must not ignore raises `v`. Version 1 stays strict. A writer
+only emits what its own version reads.
+
 ## 4. Resolution
 
 Input: a name, e.g. `Alice.dash` (or a gateway host label).
@@ -557,6 +605,16 @@ queries for browsers.
 - **Stored chunks are not trusted**: site code can write to the origin's
   Cache Storage, so the worker re-hashes every chunk it reads from there. A
   poisoned entry is a cache miss.
+- **Files kept outside Platform**: the storage host can withhold a file, and
+  cannot change it: only bytes matching the proved size and SHA-256 are
+  served, and the browser's kept copy is checked again on every read. Visitors'
+  browsers contact the hosts the owner listed (and, for IPFS, the routing
+  service and the providers), which see the visitor's address. That is no more
+  than a page linking to those hosts directly would cause, and requests carry
+  no cookies and no referrer. The IPFS client is code the worker downloads, so
+  it is run only when its SHA-256 matches the constant the worker was built
+  with; an npm mirror can refuse to serve it, which costs IPFS places and
+  nothing else.
 - **Origin isolation**: one site per subdomain, so `localStorage`, IndexedDB,
   and permissions are per name. The canonical-host redirect keeps a name from
   having several origins.
