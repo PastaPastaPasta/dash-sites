@@ -297,25 +297,29 @@ describe('resolve and publish', () => {
     expect(reads).toEqual(['name', 'name', 'name']);
   });
 
-  it('never shows a record written by an identity that does not own the name', async () => {
+  it('never shows a record written by an identity that does not own the name now', async () => {
     const platform = setup();
     const reader = platform.as('anyone');
     const mallory = platform.as('mallory-id');
-    const alice = platform.domains.get('a11ce')!;
-    await mallory.putSite(alice, 'ipfs://bafymallory');
+    await expect(mallory.putSite(platform.domains.get('a11ce')!, 'ipfs://bafymallory')).rejects.toThrow(/does not own/);
+    platform.transferName('alice', 'mallory-id');
+    await mallory.putSite(platform.domains.get('a11ce')!, 'ipfs://bafymallory');
+    platform.transferName('alice', 'alice-id');
     expect(await mallory.listSites()).toHaveLength(1);
     expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'alice-id' });
 
     const bundle = buildSite(SITE);
     await publishSite(platform.as('alice-id'), 'alice', bundle);
-    await mallory.putSite(alice, 'ipfs://bafynewer');
+    await expect(mallory.putSite(platform.domains.get('a11ce')!, 'ipfs://bafynewer')).rejects.toThrow(/does not own/);
     expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id', site: { ownerId: 'alice-id', content: bundle.contentUri } });
   });
 
   it('refuses an answer whose site record is not the name owner\'s', async () => {
     const platform = setup();
     const inner = platform.as('anyone');
+    platform.transferName('alice', 'mallory-id');
     await platform.as('mallory-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafymallory');
+    platform.transferName('alice', 'alice-id');
     const [forged] = await platform.as('mallory-id').listSites();
     const lying: PlatformReader = { ...inner, getName: async (label) => ({ value: { domain: (await inner.getDomain(label)).value!, site: forged! }, meta: platform.meta() }) };
     await expect(resolveName(lying, 'alice.dash')).rejects.toThrow(/different site/);
@@ -329,7 +333,7 @@ describe('resolve and publish', () => {
     platform.transferName('alice', 'carol-id');
     expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'carol-id', canonicalLabel: 'alice' });
     await expect(publishSite(platform.as('alice-id'), 'alice', buildSite(SITE))).rejects.toThrow(/owned by carol-id/);
-    await platform.as('alice-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafyold');
+    await expect(platform.as('alice-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafyold')).rejects.toThrow(/does not own/);
     expect((await resolveName(reader, 'alice.dash')).status).toBe('no-site');
     expect(await unpublishSite(platform.as('carol-id'), 'alice')).toBe(false);
 
@@ -362,9 +366,11 @@ describe('resolve and publish', () => {
     expect(isCurrent(domain, { ...site, ownerId: 'bob-id' })).toBe(false);
   });
 
-  it('does not count a record written before the identity owned the name', async () => {
+  it('does not count a record written before the name was deleted and registered again', async () => {
     const platform = setup();
-    await platform.as('dave-id').putSite({ id: '', ownerId: '', label: 'dave', normalizedLabel: 'dave', transferredAt: 0 }, 'ipfs://bafyearly');
+    const dave = platform.registerName('dave', 'dave-id');
+    await platform.as('dave-id').putSite(dave, 'ipfs://bafyearly');
+    platform.domains.delete('dave');
     platform.registerName('dave', 'dave-id');
     expect(await resolveName(platform.as('anyone'), 'dave.dash')).toMatchObject({ status: 'no-site', ownerId: 'dave-id' });
   });

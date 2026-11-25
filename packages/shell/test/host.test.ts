@@ -273,14 +273,18 @@ describe('site host', () => {
     expect(body(await h.get('/'))).toContain('has no site yet');
   });
 
-  it('keeps the site and its data when another identity writes a record for the name', async () => {
+  it('keeps the site and its data when another identity holds or tries to write a record for the name', async () => {
     const h = new Harness();
+    const mallory = h.platform.as('mallory-id');
+    h.platform.registerName('alice', 'mallory-id');
+    await mallory.putSite(h.platform.domains.get('a11ce')!, 'ipfs://bafymallory');
+    h.platform.transferName('alice', 'alice-id');
     await h.publish('alice-id', 'one');
     await h.open();
     await h.get('/');
     await h.settle();
     const wipes = h.store.wipes;
-    await h.platform.as('mallory-id').putSite(h.platform.domains.get('a11ce')!, 'ipfs://bafymallory');
+    await expect(mallory.putSite(h.platform.domains.get('a11ce')!, 'ipfs://bafynewer')).rejects.toThrow(/does not own/);
     h.clock += 60_000;
     await h.get('/');
     await h.settle();

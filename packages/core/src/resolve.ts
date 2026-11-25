@@ -30,9 +30,9 @@ export const isCurrent = (domain: DomainRecord, site: SiteRecord): boolean => si
 /**
  * Resolves a name with one proved read: its DPNS domain, the site record written by the identity
  * that owns the domain, and with `preload` the first chunks stored under that record. Platform
- * stores a site record from any identity, so the owner check is this read's: it looks the record
- * up by the domain's owner, and one proof covers the domain and the record as the same block holds
- * them. A name that changes hands shows nothing of the previous owner from that block on, and a
+ * takes a site record only from the name's owner, but the record outlives that ownership, so this
+ * read checks the owner again: it looks the record up by the domain's owner, and one proof covers
+ * the domain and the record as the same block holds them. A name that changes hands shows nothing of the previous owner from that block on, and a
  * name that comes back to an identity does not bring back what it published before.
  */
 export async function resolveName(reader: PlatformReader, input: string, options: { preload?: boolean } = {}): Promise<Resolution> {

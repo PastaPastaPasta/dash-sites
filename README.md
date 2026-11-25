@@ -14,7 +14,7 @@ Platform; there is no web host.
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
-The data contract is `5BS87xCmGqFKv6fndGjv6cJWbokqWtGs6ui91oRn7q6u` on
+The data contract is `CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT` on
 testnet (`DEPLOYMENTS` in `packages/core/src/config.ts`). It is not registered
 on mainnet yet. Until it is, every mainnet name reads as having no site, so
 dash.site is not redeployed from `main`. The earlier contracts (mainnet
