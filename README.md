@@ -9,7 +9,7 @@ Platform; there is no web host.
 | --- | --- |
 | Showcase site | https://p2p.id.dashhq.org/ (`p2p.dash`, testnet) |
 | Sites, mainnet | https://dash.site/ (a static site: files on Cloudflare, no server) |
-| Publish, mainnet | https://dash.site/new (builder), https://dash.site/publish (name check and cost) |
+| Publish, mainnet | https://dash.site/new |
 | Gateway, testnet | https://id.dashhq.org/ |
 | Builder, testnet | https://dash-sites.thepasta.org/ |
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |

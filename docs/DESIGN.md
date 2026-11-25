@@ -626,7 +626,7 @@ landing page says publishing has not opened.
 | Network | Gateway | Runs on |
 | --- | --- | --- |
 | Mainnet | `dash.site`, `*.dash.site` | Cloudflare Worker `dash-site`, static assets only |
-| Mainnet publishing | `dash.site/new*`, `dash.site/publish*` | Cloudflare Worker `dash-site-app`, static assets only: the builder and the publish page, on the bare host only so no site origin serves a page that takes keys; CSP with `frame-ancestors 'none'` |
+| Mainnet publishing | `dash.site/new*`, `dash.site/publish*` | Cloudflare Worker `dash-site-app`, static assets only: the builder (`/publish` redirects to `/new`), on the bare host only so no site origin serves a page that takes keys; CSP with `frame-ancestors 'none'` |
 | Testnet | `id.dashhq.org`, `*.id.dashhq.org` | DigitalOcean droplet `dash-sites-gateway` (Caddy + fallback process) |
 
 | Piece | Where | Why |

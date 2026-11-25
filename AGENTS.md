@@ -2,7 +2,7 @@
 
 ## Every dash.site page follows the system theme
 
-Every page dash.site shows must follow the visitor's light/dark setting: the landing page, the loading page and its errors, pages the worker generates (not found, unavailable), `/new` and `/publish`, and the notice.
+Every page dash.site shows must follow the visitor's light/dark setting: the landing page, the loading page and its errors, pages the worker generates (not found, unavailable), `/new`, and the notice.
 
 - Declare both themes: `<meta name="color-scheme" content="light dark">` in the `<head>`, and `color-scheme: light dark` on `:root`.
 - Prefer the system colours (`Canvas`, `CanvasText`, `GrayText`) for page background and text, so pages look native, the way a plain page does in that browser. Branded palettes are fine only with a light and a dark variant under `prefers-color-scheme`.
