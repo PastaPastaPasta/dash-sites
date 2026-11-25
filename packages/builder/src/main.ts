@@ -30,6 +30,7 @@ declare const __REMEMBER_WALLET__: boolean;
 const GATEWAY = __GATEWAY_DOMAIN__;
 const NETWORK = __NETWORK__ as Network;
 const OPEN = DEPLOYMENTS[NETWORK] !== undefined;
+const CLOSED = `Publishing on ${NETWORK} is not open yet.`;
 const DRAFT_KEY = 'dash-sites.draft';
 const PICTURE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
 
@@ -228,6 +229,10 @@ async function enter(connected: EvoWriter, attempt: number): Promise<void> {
 
 async function signIn(identity: string, key: string): Promise<void> {
   const error = $('signin-error');
+  if (!OPEN) {
+    error.textContent = CLOSED;
+    return;
+  }
   const button = $<HTMLButtonElement>('signin-button');
   cancelWallet();
   const attempt = ++session;
@@ -304,6 +309,10 @@ function confirmed(signal: AbortSignal): Promise<boolean> {
 }
 
 async function signInWithWallet(): Promise<void> {
+  if (!OPEN) {
+    $('wallet-error').textContent = CLOSED;
+    return;
+  }
   cancelWallet();
   const attempt = ++session;
   const abort = new AbortController();
@@ -689,7 +698,7 @@ function takeHandoff(): void {
 
 function start(): void {
   $('net').textContent = NETWORK;
-  $('net-note').textContent = OPEN ? `This builder publishes on ${NETWORK}.` : `Publishing on ${NETWORK} is not open yet.`;
+  $('net-note').textContent = OPEN ? `This builder publishes on ${NETWORK}.` : CLOSED;
   for (const id of ['signin-button', 'wallet-button']) $<HTMLButtonElement>(id).disabled = !OPEN;
   $<HTMLInputElement>('title').value = draft.title;
   $<HTMLInputElement>('tagline').value = draft.tagline;

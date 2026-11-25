@@ -269,6 +269,21 @@ describe('site host', () => {
     expect(body(await h.get('/'))).toContain('has no site yet');
   });
 
+  it('keeps serving the site, with its data, after the name changed hands and before the new owner wrote a record', async () => {
+    const h = new Harness();
+    await h.publish('alice-id', 'one');
+    await h.open();
+    await h.get('/');
+    await h.settle();
+    const wipes = h.store.wipes;
+    h.platform.transferName('alice', 'bob-id');
+    h.clock += 60_000;
+    expect(body(await h.get('/'))).toContain('one');
+    await h.settle();
+    expect(h.ownerChanges).toBe(0);
+    expect(h.store.wipes).toBe(wipes);
+  });
+
   it('keeps a reset pending until the reset page itself reports back', async () => {
     const h = new Harness();
     await h.publish('alice-id', 'one');

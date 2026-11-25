@@ -183,6 +183,38 @@ describe('writing a site record', () => {
     expect(down.revision).toBe(3);
     expect(down.content).toBeUndefined();
     expect(writes).toEqual(['create', 'replace', 'replace']);
+    expect(await writer.ensureSite(domain)).toMatchObject({ revision: 3 });
+    expect(writes).toHaveLength(3);
+  });
+
+  it('takes the record another tab created first as its own, and reports any other refusal', async () => {
+    vi.useFakeTimers();
+    const metadata = { toJSON: () => ({}) };
+    let stored: Document | undefined;
+    let visible = false;
+    let refusal = 'Document has duplicate unique properties ["$ownerId"] with other documents';
+    const sdk = {
+      ...(sdkWith([key()]) as object),
+      wasm: { version: () => 14 },
+      documents: {
+        queryWithProof: async () => ({ data: new Map(stored && visible ? [['id', stored]] : []), metadata }),
+        create: async ({ document }: { document: Document }) => {
+          stored = document;
+          throw new Error(refusal);
+        },
+      },
+    };
+    const writer = await EvoWriter.on(sdk as never, CONFIG, { identityId: IDENTITY, privateKey: SECRET });
+    const domain = { id: 'domain', ownerId: IDENTITY, label: 'Alice', normalizedLabel: 'a11ce' };
+    const ensured = writer.ensureSite(domain);
+    await vi.advanceTimersByTimeAsync(2000);
+    visible = true;
+    await vi.runAllTimersAsync();
+    expect(await ensured).toMatchObject({ revision: 1, label: 'Alice' });
+
+    visible = false;
+    refusal = "the document's $ownerId does not agree with the referenced document's $ownerId";
+    await expect(writer.ensureSite(domain)).rejects.toThrow(/does not agree/);
   });
 });
 

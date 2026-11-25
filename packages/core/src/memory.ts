@@ -43,7 +43,7 @@ export class MemoryPlatform {
     const siteKey = (ownerId: string, normalizedLabel: string) => `${ownerId}/${normalizedLabel}`;
     const chunkKey = (siteId: string, hash: string) => `${siteId}/${hash}`;
     const ownSite = (siteId: string) => [...this.sites.values()].some((site) => site.id === siteId && site.ownerId === identityId);
-    return {
+    const writer: PlatformWriter = {
       identityId,
       getDomain: async (normalizedLabel) => proved(this.domains.get(normalizedLabel)),
       getSite: async (normalizedLabel) =>
@@ -85,6 +85,7 @@ export class MemoryPlatform {
         this.height += 1;
         return record;
       },
+      ensureSite: async (domain) => this.sites.get(siteKey(identityId, domain.normalizedLabel)) ?? writer.putSite(domain),
       deleteChunk: async (id) => {
         for (const [key, chunk] of this.chunks) {
           if (chunk.id === id && chunk.ownerId === identityId) this.chunks.delete(key);
@@ -93,5 +94,6 @@ export class MemoryPlatform {
       },
       balance: async () => this.funds,
     };
+    return writer;
   }
 }

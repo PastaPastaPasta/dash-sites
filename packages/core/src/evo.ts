@@ -187,7 +187,7 @@ export class EvoReader implements PlatformReader {
     return !this.config.contractId;
   }
 
-  private readonly preloaded = new Map<string, Map<string, Uint8Array>>();
+  protected readonly preloaded = new Map<string, Map<string, Uint8Array>>();
 
   /**
    * The newest site record for a name. With `preload`, the same query also brings up to
@@ -491,7 +491,25 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     return stored;
   }
 
+  async ensureSite(domain: DomainRecord): Promise<SiteRecord> {
+    const { label, normalizedLabel } = domain;
+    const own = () => this.ownSite(normalizedLabel);
+    let existing = await own();
+    if (!existing) {
+      const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, label };
+      await this.sdk.documents.create({ document: this.newDocument('site', properties), ...this.key }).catch((error: unknown) => {
+        if (!/duplicate unique/.test(String(error))) throw error;
+      });
+      existing = await settled(own, (found) => found !== undefined);
+    }
+    if (!existing) throw new Error('the site record was not stored');
+    const site = toSite(...existing);
+    this.written.set(normalizedLabel, Math.max(site.revision, this.written.get(normalizedLabel) ?? 0));
+    return site;
+  }
+
   deleteChunk(id: string): Promise<void> {
+    this.preloaded.clear();
     return this.deleteDocument('chunk', id);
   }
 

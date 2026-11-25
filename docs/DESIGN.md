@@ -239,6 +239,9 @@ Four things follow from registering the contract as it is, and stay true of
 rules and holds these terms, so a change to the schema file is a deliberate
 one.
 
+These terms are what protocol 14 enforces. §7 describes what protocol 15 does
+to the owner check.
+
 Measured on testnet at protocol 14: registering the contract cost 0.1813 DASH;
 the first site record for a name 0.0008 DASH, a replace under 0.0001 DASH, a
 full chunk (14,700 bytes) 0.0045 DASH, and a write Platform refuses about
@@ -665,6 +668,19 @@ it is superseded and this code does not read it. Registering
 `contract/dash-sites.v2.json` costs about 0.18 DASH; its id then goes into
 `packages/core/src/config.ts`, and `NETWORK=mainnet` selects it.
 Registering is final in the ways §3 lists under "What registration fixes".
+
+**Protocol 15 stops writes to this contract, so it must not be registered on
+mainnet as it is.** The owner check is a `deletableDocument` reference to DPNS
+`domain`, the only kind protocol 14 accepts for that type. Protocol 15 (in
+Platform's 5.1 pre-releases) replaces DPNS with a contract whose `domain` can
+no longer be deleted, and Platform checks a reference's kind on every write.
+From the block that activates protocol 15 it refuses every create and replace
+of a site record under this contract (`ReferencedDocumentTypeNotDeletableError`,
+40131): nobody can publish, update or take a site down, and a contract update
+cannot change the reference. Records and chunks already stored stay readable.
+The ways out are a Platform change that lets a `deletableDocument` reference
+point at a type that has become permanent, or a contract that declares
+`permanentDocument`, which registers only once protocol 15 is active.
 
 A gateway runs on a network before its contract exists: the reader proves
 names as usual and every registered name resolves to "no site yet", and the

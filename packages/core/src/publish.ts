@@ -62,7 +62,7 @@ export async function publishSite(
   const before = await writer.balance();
   const existing = (await writer.listSites()).find((site) => site.normalizedLabel === domain.normalizedLabel);
   if (!existing && before < estimateCredits(bundle)) throw new Error(`the identity holds ${formatDash(before)}, and this site costs about ${formatDash(estimateCredits(bundle))} to store`);
-  const record = existing ?? (await writer.putSite(domain));
+  const record = existing ?? (await writer.ensureSite(domain));
   const all = [...bundle.chunks.keys()];
   const present = await storedHashes(writer, record.id, all);
   const missing = all.filter((hash) => !present.has(hash));
@@ -97,14 +97,17 @@ export async function unpublishSite(writer: PlatformWriter, name: string): Promi
 
 /**
  * Deletes the chunks this identity's sites no longer use, and returns how many were deleted.
- * A record keeps the chunks of its site only while it is the one the name resolves to.
+ * A record keeps the chunks of its site until another identity has written a newer record for
+ * the name. An answer that does not show one keeps them: a node can answer from an earlier block.
  */
 export async function collectGarbage(writer: PlatformWriter, onDelete: (hash: string) => void = () => {}): Promise<number> {
   let deleted = 0;
   for (const site of await writer.listSites()) {
-    const ref = site.content === undefined ? undefined : parseContentUri(site.content);
-    const served = ref?.scheme === 'dash-manifest' && (await writer.getSite(site.normalizedLabel)).value?.id === site.id;
-    const keep = served ? referencedChunks(ref, await loadManifest(ref, (hashes) => writer.getChunks(site.id, hashes))) : new Set<string>();
+    const newest = (await writer.getSite(site.normalizedLabel)).value;
+    const superseded = newest !== undefined && newest.id !== site.id && newest.updatedAt > site.updatedAt;
+    const { content } = newest?.id === site.id && newest.revision > site.revision ? newest : site;
+    const ref = superseded || content === undefined ? undefined : parseContentUri(content);
+    const keep = ref?.scheme === 'dash-manifest' ? referencedChunks(ref, await loadManifest(ref, (hashes) => writer.getChunks(site.id, hashes))) : new Set<string>();
     for (const chunk of await writer.listChunks(site.id)) {
       if (keep.has(chunk.hash)) continue;
       await writer.deleteChunk(chunk.id);

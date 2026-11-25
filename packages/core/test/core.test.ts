@@ -381,6 +381,30 @@ describe('resolve and publish', () => {
     expect(await stored(alice)).toEqual([]);
   });
 
+  it('keeps the chunks of a served site when a node answers from before its record was written', async () => {
+    const platform = setup();
+    const alice = platform.as('alice-id');
+    await publishSite(alice, 'alice', buildSite(SITE));
+    const behind = { ...alice, getSite: async () => ({ value: undefined, meta: platform.meta() }) };
+    expect(await collectGarbage(behind)).toBe(0);
+    expect((await resolveName(alice, 'alice')).status).toBe('ok');
+  });
+
+  it('leaves the site up while a new version uploads, even when a node does not show the record yet', async () => {
+    const platform = setup();
+    const alice = platform.as('alice-id');
+    await publishSite(alice, 'alice', buildSite(SITE));
+    const behind = { ...alice, listSites: async () => [] };
+    const during: string[] = [];
+    const next = buildSite([{ path: '/index.html', bytes: text('next') }]);
+    await publishSite(behind, 'alice', next, (progress) => {
+      if (progress.step === 'upload') void resolveName(alice, 'alice').then((resolution) => during.push(resolution.status));
+    });
+    expect(during.length).toBeGreaterThan(0);
+    expect(new Set(during)).toEqual(new Set(['ok']));
+    expect(await resolveName(alice, 'alice')).toMatchObject({ status: 'ok', site: { content: next.contentUri, revision: 3 } });
+  });
+
   it('writes nothing on a first publish the identity cannot pay for', async () => {
     const platform = setup();
     platform.funds = 1n;

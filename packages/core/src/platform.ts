@@ -62,6 +62,8 @@ export interface PlatformWriter extends PlatformReader {
   createChunk(siteId: string, hash: string, data: Uint8Array): Promise<void>;
   /** Creates this identity's site record for a name or replaces its content; without content, takes the site down. */
   putSite(domain: DomainRecord, content?: string): Promise<SiteRecord>;
+  /** This identity's site record for a name, created empty when there is none. An existing record is left as it is. */
+  ensureSite(domain: DomainRecord): Promise<SiteRecord>;
   deleteChunk(id: string): Promise<void>;
   balance(): Promise<bigint>;
 }
