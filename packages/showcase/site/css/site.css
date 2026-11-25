@@ -85,6 +85,7 @@ th,td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--muted);over
 th{color:var(--muted);font-weight:400;font-size:12px}
 td.num,th.num{text-align:right;white-space:nowrap}
 .scroll{overflow-x:auto}
+.scroll table{min-width:720px}
 ol.log{font:13.5px/1.55 var(--mono);list-style:none;padding:14px 16px;margin:16px 0 0;border:1.5px solid var(--ink);background:var(--panel);min-height:3em}
 ol.log:empty{display:none}
 ol.log li::before{content:"· ";color:var(--muted)}
