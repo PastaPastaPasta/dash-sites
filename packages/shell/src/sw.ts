@@ -237,6 +237,9 @@ function toResponse(reply: Reply, request: Request): Response {
 }
 
 self.addEventListener('install', (event) => event.waitUntil(load().then(() => self.skipWaiting())));
+self.addEventListener('message', (event) => {
+  if ((event.data as { dashSitesClaim?: unknown } | null)?.dashSitesClaim === true) event.waitUntil(self.clients.claim());
+});
 self.addEventListener('activate', (event) => event.waitUntil(Promise.all([self.clients.claim(), pruneShellCache().catch(() => undefined)])));
 self.addEventListener('fetch', (event) => {
   const { request } = event;

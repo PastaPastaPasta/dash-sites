@@ -48,6 +48,19 @@ try {
   await page.waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 180000 });
   console.log(`     first visit took ${((Date.now() - started) / 1000).toFixed(1)} s`);
   const record = await page.evaluate(async () => (await fetch('/.well-known/dash/site.json')).json());
+  const loadedTitle = await page.title();
+  const devtools = await context.newCDPSession(page);
+  let reloads = 0;
+  for (; reloads < 5; reloads++) {
+    void devtools.send('Page.reload', { ignoreCache: true }).catch(() => undefined);
+    await page.waitForTimeout(300);
+    const back = await page
+      .waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 30000 })
+      .then(() => true, () => false);
+    if (!back || (await page.title()) !== loadedTitle) break;
+  }
+  check(reloads === 5, `five hard reloads in a row each show the site again (${reloads} did)`);
+  await devtools.detach();
   check(record.status === 'ok' && record.servedBy === 'browser', `the browser proved ${record.name}: owner ${record.ownerId}, revision ${record.site?.revision}, block ${record.proof?.height}`);
   check(elsewhere.size === 0, `the page loaded nothing from other hosts ${[...elsewhere].join(' ')}`);
 

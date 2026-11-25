@@ -46,14 +46,25 @@ function landing(): boolean {
   return true;
 }
 
-const TRIES = 'dash-sites-boot';
-const RETRY_WINDOW_MS = 30_000;
+const RELOADS = 'dash-sites-reloads';
+const LOOP_WINDOW_MS = 10_000;
+const LOOP_LIMIT = 8;
+const CLAIM_MS = 3000;
+/** Reloads into the worker. Every visit and hard reload passes here once, so only a page that keeps coming back within seconds is looping. */
 function reload(): void {
-  const [count, since] = (sessionStorage.getItem(TRIES) ?? '0:0').split(':').map(Number) as [number, number];
-  const recent = Date.now() - since < RETRY_WINDOW_MS;
-  if (recent && count >= 3) return fail('The verifier is installed but is not answering for this page. Close this tab and open the site again.');
-  sessionStorage.setItem(TRIES, recent ? `${count + 1}:${since}` : `1:${Date.now()}`);
+  const recent = (sessionStorage.getItem(RELOADS) ?? '').split(',').map(Number).filter((at) => Date.now() - at < LOOP_WINDOW_MS);
+  if (recent.length >= LOOP_LIMIT) return fail('This site could not start in this tab. Reload the page to try again.');
+  sessionStorage.setItem(RELOADS, [...recent, Date.now()].join(','));
   location.reload();
+}
+
+/** A hard reload skips the worker, which leaves this page uncontrolled; the active worker is asked to claim it. */
+function claim(worker: ServiceWorker): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, CLAIM_MS);
+    navigator.serviceWorker.addEventListener('controllerchange', () => (clearTimeout(timer), resolve()), { once: true });
+    worker.postMessage({ dashSitesClaim: true });
+  });
 }
 
 /** Resolves once the worker controls this page; rejects if its installation fails. */
@@ -84,7 +95,7 @@ async function start(): Promise<void> {
   if (!navigator.serviceWorker.controller) {
     say('Downloading the verifier, about 6 MB. This happens once.');
     const registration = await navigator.serviceWorker.register('/sw.js');
-    if (registration.active) return reload();
+    if (registration.active) return claim(registration.active).then(reload);
     await controlled(registration);
     advance(0.95, true);
   }
