@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { brotliCompressSync, brotliDecompressSync, constants, gunzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -19,18 +21,89 @@ mkdirSync(out, { recursive: true });
 
 const common = { bundle: true, format: 'iife', target: 'es2022', minify: true, legalComments: 'none', logLevel: 'warning' };
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
-const verifier = (await build({ ...common, entryPoints: [join(root, 'src', 'verifier.ts')], write: false })).outputFiles[0].contents;
+
+/** Exactly one match of `pattern` in `text`, or the build stops: the SDK bundle changed shape. */
+function only(text, pattern, what) {
+  const found = [...text.matchAll(new RegExp(pattern.source, 'g'))];
+  if (found.length !== 1) throw new Error(`evo-sdk: expected one ${what}, found ${found.length}; update the patch in packages/shell/build.mjs`);
+  return found[0];
+}
+
+/**
+ * The Dash SDK bundle carries its WebAssembly inline as base64 of gzip, which costs 9 MB on the wire.
+ * The verifier build takes it out and serves it as a separate file compressed with brotli at the
+ * highest level (Cloudflare recompresses assets at a low level and ignores a file's own
+ * Content-Encoding, so the worker decompresses it). The SDK's init then uses the module the worker
+ * compiled from those bytes after checking their hash.
+ */
+let sdkWasm;
+const sdkPlugin = {
+  name: 'evo-sdk-wasm',
+  setup(b) {
+    b.onLoad({ filter: /[\\/]@dashevo[\\/]evo-sdk[\\/]dist[\\/]evo-sdk\.module\.js$/ }, ({ path }) => {
+      let code = readFileSync(path, 'utf8');
+      const inline = only(code, /const ([\w$]+)="(H4sI[A-Za-z0-9+/=]+)"/, 'inline WebAssembly');
+      sdkWasm = gunzipSync(Buffer.from(inline[2], 'base64'));
+      if (sdkWasm.readUInt32BE(0) !== 0x0061736d) throw new Error('evo-sdk: the inline payload is not WebAssembly');
+      code = code.replace(inline[0], () => `const ${inline[1]}=""`);
+      const init = only(code, /async function ([\w$]+)\(([\w$]+)\)\{if\(([\w$]+)\)\{if\(void 0===\2\)\{return [\w$]+\(\{module:await [\w$]+\(\)\}\)\}return ([\w$]+)\(\2\)\}/, 'WebAssembly init');
+      const [whole, , arg, , instantiate] = init;
+      code = code.replace(whole, () => whole.replace('{', () => `{if(void 0===${arg})return ${instantiate}({module_or_path:globalThis.dashSitesSdk});`));
+      return { contents: code, loader: 'js' };
+    });
+  },
+};
+
+const require = createRequire(import.meta.url);
+const decoderWasm = readFileSync(require.resolve('brotli-dec-wasm/web/bg.wasm'));
+const verifier = (
+  await build({
+    ...common,
+    entryPoints: [join(root, 'src', 'verifier.ts')],
+    write: false,
+    plugins: [sdkPlugin],
+    define: { __BROTLI_DECODER__: JSON.stringify(decoderWasm.toString('base64')) },
+  })
+).outputFiles[0].contents;
+if (!sdkWasm) throw new Error('evo-sdk: the verifier build did not load the SDK bundle');
 const verifierName = `dash-sites-verifier-${sha256(verifier).slice(0, 16)}.js`;
 writeFileSync(join(out, verifierName), verifier);
+
+/**
+ * Brotli at quality 11 takes a minute or two, so the result is kept per input hash, and checked on
+ * every build. The file is named for the WebAssembly it holds: that is what the worker checks, and
+ * another brotli encoder may produce different bytes for it.
+ */
+function brotli(data) {
+  const cached = join(root, 'node_modules', '.cache', `sdk-${sha256(data)}.q11w24.br`);
+  const fits = (packed) => brotliDecompressSync(packed).equals(data);
+  if (existsSync(cached)) {
+    const packed = readFileSync(cached);
+    if (fits(packed)) return packed;
+  }
+  const packed = brotliCompressSync(data, {
+    params: { [constants.BROTLI_PARAM_QUALITY]: 11, [constants.BROTLI_PARAM_LGWIN]: 24, [constants.BROTLI_PARAM_SIZE_HINT]: data.length },
+  });
+  if (!fits(packed)) throw new Error('brotli did not round-trip the SDK WebAssembly');
+  mkdirSync(dirname(cached), { recursive: true });
+  writeFileSync(`${cached}.tmp`, packed);
+  renameSync(`${cached}.tmp`, cached);
+  return packed;
+}
+const sdkPacked = brotli(sdkWasm);
+const sdkName = `dash-sites-verifier-${sha256(sdkWasm).slice(0, 16)}.wasm.br`;
+writeFileSync(join(out, sdkName), sdkPacked);
 // On a static deployment every name's worker fetches the verifier from the bare domain, so the
 // browser downloads it once for all names (they are one site for the HTTP cache).
-const verifierUrl = gatewayDomain ? `https://${gatewayDomain}/${verifierName}` : `/${verifierName}`;
+const assetUrl = (name) => (gatewayDomain ? `https://${gatewayDomain}/${name}` : `/${name}`);
+const verifierUrl = assetUrl(verifierName);
+const sdkUrl = assetUrl(sdkName);
 copyFileSync(join(root, 'src', 'denied-sw.js'), join(out, 'denied-sw.js'));
 const boot = await build({
   ...common,
   entryPoints: [join(root, 'src', 'boot.ts')],
   write: false,
-  define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER__: JSON.stringify(verifierUrl) },
+  define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER_FILES__: JSON.stringify([verifierUrl, sdkUrl]) },
 });
 const { DENIED_TITLE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, readerConfig } = await import('@dash-sites/core');
 if (hosted) writeFileSync(join(out, 'unavailable.html'), messagePage('451', DENIED_TITLE, deniedDetail('this name'), { builderUrl }));
@@ -67,9 +140,8 @@ await build({
     __NETWORK__: JSON.stringify(network),
     __CONTRACT_ID__: JSON.stringify(process.env.CONTRACT_ID ?? ''),
     __BUILDER_URL__: JSON.stringify(builderUrl),
-    __VERIFIER__: JSON.stringify(verifierUrl),
-    __VERIFIER_SHA256__: JSON.stringify(sha256(verifier)),
-    __VERIFIER_SIZE__: String(verifier.length),
+    __VERIFIER__: JSON.stringify({ url: verifierUrl, sha256: sha256(verifier), size: verifier.length }),
+    __SDK__: JSON.stringify({ url: sdkUrl, sha256: sha256(sdkWasm), size: sdkWasm.length }),
     __DENYLIST__: JSON.stringify(hosted),
     __BOOT_PAGE__: JSON.stringify(html),
   },
@@ -90,6 +162,6 @@ if (gatewayDomain) {
   );
 }
 
-const hashes = Object.fromEntries(['index.html', 'sw.js', verifierName].map((file) => [file, sha256(readFileSync(join(out, file)))]));
+const hashes = Object.fromEntries(['index.html', 'sw.js', verifierName, sdkName].map((file) => [file, sha256(readFileSync(join(out, file)))]));
 writeFileSync(join(out, 'shell.json'), `${JSON.stringify({ network, hosted, gatewayDomain, files: hashes }, null, 2)}\n`);
 console.log(out, hashes);
