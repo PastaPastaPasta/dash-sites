@@ -3,6 +3,7 @@ export * from './config.js';
 export * from './content.js';
 export * from './cost.js';
 export * from './denylist.js';
+export * from './external.js';
 export * from './gzip.js';
 export * from './limits.js';
 export * from './manifest.js';

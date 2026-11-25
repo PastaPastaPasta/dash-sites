@@ -1,8 +1,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
+import { brotliCompressSync, constants as zlib } from 'node:zlib';
+import { decompress as brotliDecompress } from 'brotli/decompress';
 import {
   buildSite,
+  checkExternalAssets,
+  type BuildOptions,
   collectGarbage,
   estimateCredits,
   formatDash,
@@ -18,6 +22,7 @@ import {
   type Network,
   type NetworkConfig,
   type PlatformReader,
+  type SiteBundle,
 } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { EvoReader, EvoWriter, registerContract, type Credentials } from '@dash-sites/core/evo';
@@ -26,7 +31,8 @@ import { readSiteDirectory } from './files.js';
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
-  dash-sites publish <dir> --name <name> [--spa] [--dry-run]   publish a folder as <name>.dash
+  dash-sites publish <dir> --name <name> [--spa] [--brotli] [--external <file>] [--dry-run]
+                                                               publish a folder as <name>.dash
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
   dash-sites unpublish --name <name>                           remove the site record
   dash-sites gc                                                delete stored chunks no site uses
@@ -43,6 +49,9 @@ Options
   --contract <id>               dash-sites contract id, if not the built-in one
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
   --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
+  --brotli                      store a file as brotli when that is smaller than gzip (needs a current shell)
+  --external <file>             JSON {"/site/path": {"npm": "pkg", "version": "1.2.3", "path": "dist/file"}}:
+                                files not stored, fetched by readers from npm CDNs and checked by SHA-384
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity
@@ -72,6 +81,8 @@ const { values, positionals } = parseArgs({
     domain: { type: 'string', default: 'localhost' },
     output: { type: 'string', short: 'o' },
     spa: { type: 'boolean', default: false },
+    brotli: { type: 'boolean', default: false },
+    external: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -98,6 +109,36 @@ function network(): NetworkConfig {
 function requireName(): string {
   if (!values.name || !parseName(values.name)) fail('--name must be a DPNS name such as alice or alice.dash');
   return values.name;
+}
+
+/**
+ * Brotli at the highest quality, with a window no larger than the file needs (readers allocate the
+ * window to decode). A file that does not decode back exactly with the readers' own decoder is
+ * returned unchanged, so it is stored as gzip instead.
+ */
+function brotli(data: Uint8Array): Uint8Array {
+  const window = Math.min(24, Math.max(10, Math.ceil(Math.log2(Math.max(data.length, 1)))));
+  const compressed = new Uint8Array(brotliCompressSync(data, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_LGWIN]: window, [zlib.BROTLI_PARAM_SIZE_HINT]: data.length } }));
+  try {
+    const decoded = brotliDecompress(compressed, data.length);
+    if (decoded.length === data.length && decoded.every((byte, i) => byte === data[i])) return compressed;
+  } catch {
+    // stored as gzip below
+  }
+  return data;
+}
+
+function buildOptions(): BuildOptions {
+  const external = values.external ? (JSON.parse(readFileSync(values.external, 'utf8')) as BuildOptions['external']) : undefined;
+  return { spa: values.spa, ...(values.brotli ? { brotli } : {}), ...(external ? { external } : {}) };
+}
+
+/** Refuses the site unless every npm CDN serves each external file with its integrity. */
+async function checkExternal(bundle: SiteBundle): Promise<void> {
+  const results = await checkExternalAssets(bundle.manifest.files);
+  for (const r of results) console.error(`${r.result.padEnd(11)} ${r.path} <- ${r.url}${r.detail ? ` (${r.detail})` : ''}`);
+  if (results.some((r) => r.result === 'mismatch')) fail('an external file is not byte-identical to the npm package file on every CDN; store it instead');
+  if (results.some((r) => r.result === 'unreachable')) fail('an npm CDN could not be reached; try again');
 }
 
 const print = (value: unknown): void => console.log(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
@@ -129,7 +170,8 @@ const commands: Record<string, () => Promise<void>> = {
   async publish() {
     const dir = positionals[1] ?? fail('publish needs a directory');
     const name = requireName();
-    const bundle = buildSite(await readSiteDirectory(dir), { spa: values.spa });
+    const bundle = buildSite(await readSiteDirectory(dir), buildOptions());
+    await checkExternal(bundle);
     console.error(`${bundle.stats.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
     if (!bundle.manifest.files['/index.html']) console.error('warning: the site has no /index.html');
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
@@ -203,7 +245,7 @@ const commands: Record<string, () => Promise<void>> = {
     const platform = new MemoryPlatform();
     platform.registerName(label, 'preview-identity');
     const writer = platform.as('preview-identity');
-    await publishSite(writer, label, buildSite(await readSiteDirectory(dir), { spa: values.spa }));
+    await publishSite(writer, label, buildSite(await readSiteDirectory(dir), buildOptions()));
     await serve(writer, `http://${label.toLowerCase()}.${values.domain}:${values.port}/`);
   },
 

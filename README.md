@@ -108,6 +108,8 @@ alias dash-sites="node $PWD/packages/cli/bundle/dash-sites.mjs"
 dash-sites preview ./my-site                      # http://preview.localhost:8080/
 dash-sites publish ./my-site --name alice --identity-file identity.json
 dash-sites resolve alice
+dash-sites publish ./my-site --name alice --identity-file identity.json \
+  --brotli --external external.json             # version 2: see below
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
 ```
 
@@ -116,6 +118,16 @@ also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
 0.3 DASH per megabyte, paid once, and deleting old chunks refunds most of it.
 Get testnet funds at https://faucet.thepasta.org. Run `dash-sites` with no
 arguments for every command.
+
+`--external external.json` names files of published npm packages that the site
+ships unmodified (`{"/path/in/site": {"npm": "pkg", "version": "1.2.3", "path":
+"dist/file"}}`, exact versions only). They are not stored: readers fetch them from
+cdn.jsdelivr.net, then unpkg.com, and use them only if their SHA-384, recorded in
+the proved manifest, matches; `publish` refuses unless both CDNs serve each file
+byte for byte. `--brotli` stores a file as brotli when that is smaller than gzip;
+the result depends on Node's bundled brotli, so a different Node version can give
+different chunks. Either option makes the manifest version 2, which needs a
+current shell, gateway or extension; older ones refuse the site as a whole.
 
 A site can read its own proved record at `/.well-known/dash/site.json` and
 its file list at `/.well-known/dash/manifest.json`, whoever serves it. Sites
