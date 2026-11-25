@@ -247,7 +247,7 @@ what:
 | Add an optional property to `site` or `chunk`, or a required one marked `requiredSince`; a new property may carry a `refersTo` check | Remove a property, or stop requiring one |
 | Raise `maxLength` and `maxItems` (a chunk field up to Platform's 5,120-byte limit), remove a `pattern` | Give an existing property a `refersTo` check, or change or remove the one on `chunk.site` |
 | List properties under `immutable` | Change a `pattern`, or whether `site` and `chunk` documents can be replaced, deleted, transferred or traded |
-| Add tokens, keywords and a description | Give `site` or `chunk` a time to live, a fee, a token cost or a count |
+| Add tokens, keywords and a description | Give `site` or `chunk` a time to live, a fee, a token cost or a doctype-level count |
 | | Let moderators delete `site` or `chunk` documents, start a banlist or a suspension list, hand moderation to an elected team, keep the contract's history, or make it read-only |
 
 Four things follow from registering the contract as it is, and stay true of
@@ -803,7 +803,10 @@ site record is created, replaced with and without content, a chunk is stored
 and deleted, and Platform refuses the same things it refuses on protocol 14
 (a chunk under another identity's record, a second record for one name, the
 delete of a record). It also parses the schema with the full validation of
-both versions. All of it passes. To run it against a later Platform:
+both versions. It last passed on the schema before 0d06481 added `immutable`
+and the counted `updated` index; testnet (protocol 14) accepted the final
+schema, and the meta-schema is the same in `v5.1.0-rc.1`, but the patch has
+not been re-run since. To run it against a later Platform:
 
 ```
 git apply <dash-sites>/contract/platform-upgrade-test.patch
