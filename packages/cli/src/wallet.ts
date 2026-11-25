@@ -144,15 +144,36 @@ export function qrTerminal(uri: string, options: { color?: boolean } = {}): stri
     const top = rows[y] ?? [];
     const bottom = rows[y + 1];
     let line = '';
+    let style = '';
     for (let x = 0; x < top.length; x++) {
       const darkTop = Boolean(top[x]);
       const darkBottom = Boolean(bottom?.[x]);
-      if (darkTop && darkBottom) line += '█';
-      else if (darkTop) line += '▀';
-      else if (darkBottom) line += '▄';
-      else line += ' ';
+      if (!color) {
+        if (darkTop && darkBottom) line += '█';
+        else if (darkTop) line += '▀';
+        else if (darkBottom) line += '▄';
+        else line += ' ';
+        continue;
+      }
+      let nextStyle: string;
+      let ch: string;
+      if (darkTop && darkBottom) {
+        nextStyle = '\x1b[48;5;16m';
+        ch = ' ';
+      } else if (!darkTop && !darkBottom) {
+        nextStyle = '\x1b[48;5;231m';
+        ch = ' ';
+      } else {
+        nextStyle = '\x1b[38;5;16;48;5;231m';
+        ch = darkTop ? '▀' : '▄';
+      }
+      if (nextStyle !== style) {
+        line += nextStyle;
+        style = nextStyle;
+      }
+      line += ch;
     }
-    lines.push(color ? `\x1b[30;47m${line}\x1b[0m` : line);
+    lines.push(color ? `${line}\x1b[0m` : line);
   }
   return lines.join('\n');
 }

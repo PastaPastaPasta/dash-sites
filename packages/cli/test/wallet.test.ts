@@ -159,7 +159,10 @@ describe('QR rendering', () => {
     }
 
     const colored = qrTerminal(uri, { color: true }).split('\n');
-    expect(colored[0]).toMatch(/^\x1b\[30;47m.*\x1b\[0m$/);
+    expect(colored).toHaveLength(plain.length);
+    expect(colored[0]).toMatch(/^\x1b\[48;5;231m +\x1b\[0m$/);
+    expect(colored.some((line) => line.includes('\x1b[48;5;16m '))).toBe(true);
+    expect(colored.some((line) => line.includes('█'))).toBe(false);
   });
 
   it('renders a white-backed SVG matching raw modules', () => {
