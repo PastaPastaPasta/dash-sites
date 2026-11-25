@@ -96,6 +96,14 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
   vote, and the domain document exists only once the contest is won.
 - A label is 3 to 63 characters of `[a-zA-Z0-9-]`, not starting or ending with
   `-`: always a valid DNS label.
+- Every name is `<label>.dash`; DPNS has no `blog.alice.dash`.
+  - `parentDomainName` must be one label with no dot, and only the contract
+    owner can create a top-level domain. Genesis creates `dash`, the only one
+    today.
+  - Platform rejects a second-level name that allows subdomains (the
+    `create_domain_data_trigger` in `rs-drive-abci`).
+  - Dash Sites accepts only `<label>` or `<label>.dash` (`parseName` in
+    `packages/core/src/names.ts`).
 
 ## 3. Storage and addressing
 
@@ -315,6 +323,53 @@ site has one content URI and republishing it unchanged stores nothing.
 Limits a reader enforces: manifest ≤ 30 chunks (441 KB compressed) and ≤ 4 MB
 decoded, ≤ 5,000 files, site ≤ 50 MB decoded, path ≤ 512 bytes. Decompression
 stops at the declared size. The gateway sets lower limits (25 MB per site).
+
+### Manifest version 2: external npm assets and brotli
+
+Storing a byte on Platform costs about 0.27 DASH per MB, once. A site that ships
+an unmodified file of a published npm package (a 26 MB SDK wasm, say) can name
+it instead of storing it:
+
+```json
+"/_next/static/wasm/wasm_sdk_bg.e9693c35d34d68e7.wasm": {
+  "type": "application/wasm", "size": 26513399, "sha256": "<hex>", "parts": [],
+  "ext": { "npm": "@dashevo/wasm-sdk", "version": "5.0.0-rc.8",
+           "path": "dist/raw/wasm_sdk_bg.wasm",
+           "integrity": "sha384-w5Q3Aw54F8HwCjSPF/bX+BQwWEP0e6bea4S63gs3+d/R7kbQQI9OpZPvHj4wCbVG" } }
+```
+
+and a file may be stored as brotli (`"enc": "br"`), which is a third smaller
+than gzip for JavaScript and HTML.
+
+**Trust model.** The SHA-384 (and the SHA-256 beside it) sit in the manifest,
+which is fixed by the site record, which a Platform proof fixes: that hash is
+the root of trust, exactly as for stored chunks. The npm CDNs are transport
+only. A reader fetches `https://cdn.jsdelivr.net/npm/<pkg>@<version>/<path>`,
+then `https://unpkg.com/<pkg>@<version>/<path>`, refuses redirects, reads at
+most `size` bytes, and serves the file only if both hashes match; otherwise it
+tries the next CDN, and with none left it serves an error page instead of the
+file, so nothing from it runs. A CDN can withhold the file (the site then
+cannot load that file) but cannot change it. Versions are exact (no ranges or
+tags), so what a name resolves to never changes without a new site record. The
+shell keeps a verified copy in Cache Storage and checks it again on every read,
+since site code can write there. The CDNs are the only hosts contacted for an
+external asset; the worker's own requests to Platform nodes go to their IP
+addresses, so a header CSP on the worker could not be narrower than `https:`,
+and the allowlist is enforced in code instead.
+
+**Privacy.** Opening a site with an external asset tells jsDelivr and unpkg
+the visitor's IP address and which package file they fetched, and the request
+carries the site's origin (`Origin` header), as for any cross-origin fetch. A
+CDN that does not answer within 15 seconds, or stalls for 30 seconds while
+sending, is skipped for the next.
+
+**Compatibility.** A manifest that uses neither feature stays version 1 and
+byte-identical to before. One that uses either is version 2. Readers that only
+know version 1 (older shells, gateways and extensions) reject version 2 whole,
+showing their "cannot be shown" page, and the older `gc` stops with an error
+instead of deleting chunks it cannot account for. `dash-sites publish
+--external <map>` checks each named file against the local copy and against the
+CDNs before publishing, and `--brotli` is opt-in.
 
 ## 4. Resolution
 
@@ -762,7 +817,7 @@ landing page says publishing has not opened.
 | Network | Gateway | Runs on |
 | --- | --- | --- |
 | Mainnet | `dash.site`, `*.dash.site` | Cloudflare Worker `dash-site`, static assets only |
-| Mainnet publishing | `dash.site/new*`, `dash.site/publish*` | Cloudflare Worker `dash-site-app`, static assets only: the builder and the publish page, on the bare host only so no site origin serves a page that takes keys; CSP with `frame-ancestors 'none'` |
+| Mainnet publishing | `dash.site/new*`, `dash.site/publish*` | Cloudflare Worker `dash-site-app`, static assets only: the builder (`/publish` redirects to `/new`), on the bare host only so no site origin serves a page that takes keys; CSP with `frame-ancestors 'none'` |
 | Testnet | `id.dashhq.org`, `*.id.dashhq.org` | DigitalOcean droplet `dash-sites-gateway` (Caddy + fallback process) |
 
 | Piece | Where | Why |
@@ -796,10 +851,16 @@ droplet gateway. What changes without a server:
   boot page moves to `https://` itself, since the Worker cannot redirect.
 - **No operator denylist in the build.** The `dash.site` build leaves the
   denylist out (`DENYLIST` unset). Blocking is done in front of it instead.
-- **Caching.** `_headers` sends `Cache-Control: no-cache` for everything but
-  the content-addressed verifier, so a browser revalidates `/sw.js` on every
-  navigation and a new worker, or a kill-switch worker, takes effect on the
-  next visit.
+- **Caching.** Every file named for its content is cached for a year as
+  `immutable`: the two verifier files, and everything under `/new/assets/`
+  (the builder's script chunks, stylesheet, font and icon). The entry points
+  stay `no-cache`, so they are revalidated (a 304 when unchanged) on every
+  visit: the shell's `index.html` and `/sw.js`, `/new` itself, and
+  `shell.json`. That keeps the kill switch: a new worker, or the blocking
+  Worker's page and `/sw.js`, takes effect on the next visit. A shell cached
+  for even a minute could keep a blocked host's visitors on the old page
+  until it expired, so there is no `max-age` or `stale-while-revalidate` on
+  the entry points.
 
 **Blocking a name on dash.site, when needed.** Route the exact host,
 `badname.dash.site/*`, to a second assets-only Worker; Cloudflare uses the
@@ -888,7 +949,7 @@ the host, a build setting of the builder, and a user setting of the extension.
 
 ## 9. Out of scope for v1
 
-Subdomain names (`blog.alice.dash`), custom DNS domains pointing at a name
+Custom DNS domains pointing at a name
 (DNSLink in reverse), serving `ipfs://` content from the gateway, Arweave,
 private sites, a site directory, a site's own service worker, form posts,
 serving sites from inside the extension, starting contested-name votes from

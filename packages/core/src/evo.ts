@@ -433,28 +433,40 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     return Document.fromObject({ ...(base.toObject() as object), ...properties } as never, this.sdk.wasm.version() as never);
   }
 
-  private async all(type: string, where: Where, orderBy: string): Promise<Array<[string, Document]>> {
+  /** Every document of a type this identity's query selects, and the proof of the oldest page. */
+  private async all(type: string, where: Where, orderBy: string): Promise<Proved<Array<[string, Document]>>> {
     const out: Array<[string, Document]> = [];
+    let meta: ProofMeta | undefined;
     let startAfter: string | undefined;
     for (;;) {
       const extra = { orderBy: [[orderBy, 'asc']], limit: PAGE, ...(startAfter ? { startAfter } : {}) };
       const result = await this.query(this.config.contractId, type, [where], extra);
+      const pageMeta = toMeta(result.metadata);
+      if (!meta || pageMeta.timeMs < meta.timeMs) meta = pageMeta;
       const page = [...result.data].filter((entry): entry is [string, Document] => entry[1] !== undefined);
       out.push(...page);
-      if (page.length < PAGE) return out;
+      if (page.length < PAGE) return { value: out, meta };
       startAfter = page[page.length - 1]?.[0];
     }
   }
 
   /** This identity's site records, none older than this writer left it: a node can answer from before a write. */
   async listSites(): Promise<SiteRecord[]> {
-    const read = async () => (await this.all('site', ['$ownerId', '==', this.identityId], 'normalizedParentDomainName')).map(([id, document]) => toSite(id, document));
+    return (await this.listSitesProved()).value;
+  }
+
+  /** {@link listSites} with the proof's block, the oldest when the listing took several pages. */
+  async listSitesProved(): Promise<Proved<SiteRecord[]>> {
+    const read = async (): Promise<Proved<SiteRecord[]>> => {
+      const { value, meta } = await this.all('site', ['$ownerId', '==', this.identityId], 'normalizedParentDomainName');
+      return { value: value.map(([id, document]) => toSite(id, document)), meta };
+    };
     const revision = (sites: SiteRecord[], label: string) => sites.find((site) => site.normalizedLabel === label)?.revision ?? 0;
-    return settled(read, (sites) => [...this.written].every(([label, written]) => revision(sites, label) >= written));
+    return settled(read, ({ value }) => [...this.written].every(([label, written]) => revision(value, label) >= written));
   }
 
   async listChunks(siteId: string): Promise<StoredChunk[]> {
-    return (await this.all('chunk', ['site', '==', siteId], 'hash')).map(([id, document]) => ({ id, hash: toHex((document.toObject() as Record<string, unknown>).hash as Uint8Array) }));
+    return (await this.all('chunk', ['site', '==', siteId], 'hash')).value.map(([id, document]) => ({ id, hash: toHex((document.toObject() as Record<string, unknown>).hash as Uint8Array) }));
   }
 
   async createChunk(siteId: string, hash: string, data: Uint8Array): Promise<void> {

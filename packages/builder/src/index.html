@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' data:; img-src 'self' data:; font-src 'self'; connect-src https:; frame-src 'self' about: data:; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="Publish a website under your Dash Platform name.">
@@ -163,7 +164,7 @@
         <button type="button" class="second" id="unpublish">Take the site down</button>
         <button type="button" class="second" id="gc">Delete files no site uses</button>
       </div>
-      <p class="hint">Deleting unused files returns part of what you paid to store them.</p>
+      <p class="hint">Deleting unused files returns part of what you paid to store them. It deletes nothing while a site of this identity changed in the last 25 hours; otherwise it checks the sites again for a few minutes before deleting. Don't publish from another tab or the command line while it runs.</p>
       <p class="status" id="manage-status" aria-live="polite"></p>
     </details>
   </section>

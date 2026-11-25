@@ -7,13 +7,23 @@ const bar = document.querySelector('.bar') as HTMLElement;
 const say = (text: string): void => {
   step.textContent = text;
 };
+let shown = 0;
+const advance = (share: number, creep = false): void => {
+  if (share < shown) return;
+  shown = share;
+  const percent = Math.round(share * 100);
+  bar.classList.add('known');
+  bar.classList.toggle('creep', creep);
+  bar.style.setProperty('--done', `${percent}%`);
+  bar.setAttribute('aria-valuenow', String(percent));
+};
 const fail = (text: string, title?: string): void => {
   document.body.classList.add('failed');
-  if (title) {
-    (document.getElementById('title') as HTMLElement).textContent = title;
-    document.title = title;
-  }
-  say(text);
+  (document.getElementById('title') as HTMLElement).textContent = title ?? `${location.hostname} could not be loaded`;
+  if (title) document.title = title;
+  const error = document.getElementById('error') as HTMLElement;
+  error.textContent = text;
+  error.hidden = false;
 };
 
 /** The gateway domain itself is not a name: the same static files show the landing page there. */
@@ -35,13 +45,21 @@ function landing(): boolean {
   return true;
 }
 
-const TRIES = 'dash-sites-boot';
-const RETRY_WINDOW_MS = 30_000;
+const RELOADS = 'dash-sites-reloads';
+const LOOP_WINDOW_MS = 10_000;
+const LOOP_LIMIT = 8;
+/**
+ * Reloads into the worker, which serves every navigation in its scope, including one from a page a
+ * hard reload left uncontrolled. Each visit and each hard reload passes here once, so only a page that
+ * keeps coming back within seconds is looping.
+ */
 function reload(): void {
-  const [count, since] = (sessionStorage.getItem(TRIES) ?? '0:0').split(':').map(Number) as [number, number];
-  const recent = Date.now() - since < RETRY_WINDOW_MS;
-  if (recent && count >= 3) return fail('The verifier is installed but is not answering for this page. Close this tab and open the site again.');
-  sessionStorage.setItem(TRIES, recent ? `${count + 1}:${since}` : `1:${Date.now()}`);
+  const recent = (sessionStorage.getItem(RELOADS) ?? '').split(',').map(Number).filter((at) => Date.now() - at < LOOP_WINDOW_MS);
+  if (recent.length >= LOOP_LIMIT) {
+    sessionStorage.removeItem(RELOADS);
+    return fail('This site could not start in this tab. Reload the page to try again.');
+  }
+  sessionStorage.setItem(RELOADS, [...recent, Date.now()].join(','));
   location.reload();
 }
 
@@ -57,7 +75,7 @@ function controlled(registration: ServiceWorkerRegistration): Promise<void> {
 }
 
 async function start(): Promise<void> {
-  (document.getElementById('name') as HTMLElement).textContent = `${label}.dash`;
+  (document.getElementById('name') as HTMLElement).textContent = location.hostname;
   if (!('serviceWorker' in navigator)) {
     return fail(
       'Sites here are read from Dash Platform and checked by your browser, which needs service workers. They are unavailable in this browser or window (for example a Firefox private window). Open the site in a regular window of Chrome, Edge, Firefox or Safari.',
@@ -67,8 +85,7 @@ async function start(): Promise<void> {
   navigator.serviceWorker.addEventListener('message', (event: MessageEvent<{ dashSitesProgress?: number }>) => {
     const share = event.data?.dashSitesProgress;
     if (typeof share !== 'number' || document.body.classList.contains('failed')) return;
-    bar.classList.add('known');
-    bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
+    advance(share * 0.8);
     say(`Downloading the verifier, about 6 MB: ${Math.round(share * 100)}%. This happens once.`);
   });
   if (!navigator.serviceWorker.controller) {
@@ -76,7 +93,7 @@ async function start(): Promise<void> {
     const registration = await navigator.serviceWorker.register('/sw.js');
     if (registration.active) return reload();
     await controlled(registration);
-    bar.classList.remove('known');
+    advance(0.95, true);
   }
   say(`Asking Dash Platform who owns ${label}.dash and checking the proof.`);
   const response = await fetch('/.well-known/dash/site.json');
@@ -85,6 +102,7 @@ async function start(): Promise<void> {
   }
   const record = (await response.json()) as { proof?: { height: number } };
   if (record.proof) say(`Proved at block ${record.proof.height}. Loading the site.`);
+  if (bar.classList.contains('known')) advance(1);
   reload();
 }
 

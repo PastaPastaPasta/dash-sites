@@ -64,6 +64,8 @@ export interface StoredChunk {
 export interface PlatformWriter extends PlatformReader {
   readonly identityId: string;
   listSites(): Promise<SiteRecord[]>;
+  /** {@link listSites} with the proof's block, the oldest when the listing took several pages. */
+  listSitesProved(): Promise<Proved<SiteRecord[]>>;
   listChunks(siteId: string): Promise<StoredChunk[]>;
   /** Stores a chunk under one of this identity's site records; Platform refuses anyone else's. */
   createChunk(siteId: string, hash: string, data: Uint8Array): Promise<void>;
