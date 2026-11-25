@@ -36,7 +36,7 @@ function network(list: unknown[], answers: Record<string, Answer>, listDelay = 0
 describe('fastNodes', () => {
   it('returns the first enabled, version-checked nodes to answer, after an empty grpc-web request to each', async () => {
     const list = [node('a:443'), node('b:443'), node('c:443'), node('d:443'), node('old:443', 'ENABLED', 'fail'), node('banned:443', 'POSE_BANNED')];
-    const { fetch, probes } = network(list, { a: 40, b: 10, c: 30, d: 20, old: 1, banned: 1 });
+    const { fetch, probes } = network(list, { a: 400, b: 100, c: 300, d: 200, old: 1, banned: 1 });
     expect(await fastNodes({ quorumUrl: QUORUMS, fetch, keep: 3 })).toEqual(['https://b:443', 'https://d:443', 'https://c:443']);
     expect(probes.map((probe) => probe.host).sort()).toEqual(['a', 'b', 'c', 'd']);
     for (const { init } of probes) {

@@ -147,7 +147,10 @@ try {
   check(loaded, `the site loads in a private window: ${loaded ? await page.title() : await page.textContent('#error')}`);
   const home = await browser.newPage();
   await home.goto(`${scheme}://${gateway}/`, { waitUntil: 'load' });
-  if (await home.locator('#landing').isVisible()) check(!(await home.locator('#shell').isVisible()), `${gateway} itself shows its landing page and no loader`);
+  if (await home.locator('#shell').count()) {
+    const [landing, loader] = [await home.locator('#landing').isVisible(), await home.locator('#shell').isVisible()];
+    check(landing !== loader, `${gateway} itself shows ${landing ? 'its landing page' : 'the loader'} and not both`);
+  }
 } finally {
   await browser.close();
 }
