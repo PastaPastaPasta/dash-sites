@@ -804,12 +804,12 @@ queries for browsers.
 
 Testnet first: the contract is registered on testnet and all three surfaces
 default to it. The network, contract id and gateway domains are configuration.
-Mainnet has no contract of this schema yet. `5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`
+On mainnet the contract is `GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3`,
+registered from `contract/dash-sites.v2.json` on 2026-11-25 for 0.1814 DASH
+and selected by `NETWORK=mainnet`. `5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`
 was registered from the first schema, which keyed a site by the domain
 document's id and needed two reads per name; it is superseded and this code
-does not read it. Registering `contract/dash-sites.v2.json` costs about 0.18
-DASH; its id then goes into `packages/core/src/config.ts`, and
-`NETWORK=mainnet` selects it. Registering is final in the ways §3 lists under
+does not read it. Registration is final in the ways §3 lists under
 "What registration fixes".
 
 **Protocol versions.** Reads and writes both need the DPNS `domain` type, found

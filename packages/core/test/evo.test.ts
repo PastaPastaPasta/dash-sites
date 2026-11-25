@@ -5,7 +5,7 @@ import * as secp from '@noble/secp256k1';
 import { base58 } from '@scure/base';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { sha256Hex, toHex } from '../src/bytes.js';
-import { DPNS_CONTRACT_ID, networkConfig, readerConfig } from '../src/config.js';
+import { DPNS_CONTRACT_ID, networkConfig } from '../src/config.js';
 import { EvoReader, EvoWriter, KeyRefused, withReadDeadline } from '../src/evo.js';
 import { PRELOAD_CHUNKS } from '../src/limits.js';
 import { NewerFormatError } from '../src/formats.js';
@@ -179,7 +179,7 @@ describe('reading a name', () => {
   it('asks DPNS alone on a network without a dash-sites contract', async () => {
     const queries: string[] = [];
     const sdk = { documents: { queryWithProof: async (query: { documentTypeName: string }) => (queries.push(query.documentTypeName), { data: new Map([[DOMAIN_ID, domain]]), metadata }) } };
-    const platform = new EvoReader(sdk as never, readerConfig('mainnet'));
+    const platform = new EvoReader(sdk as never, { network: 'mainnet', contractId: '' });
     expect(platform.noSiteContract).toBe(true);
     expect((await platform.getName('a11ce', true)).value).toEqual({ domain: read.domain });
     expect(queries).toEqual(['domain']);

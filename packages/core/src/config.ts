@@ -11,6 +11,7 @@ export interface NetworkConfig {
 /** Where the dash-sites contract is registered. */
 export const DEPLOYMENTS: Partial<Record<Network, NetworkConfig>> = {
   testnet: { network: 'testnet', contractId: 'CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT' },
+  mainnet: { network: 'mainnet', contractId: 'GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3' },
 };
 
 /**

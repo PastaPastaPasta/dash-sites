@@ -14,10 +14,9 @@ Platform; there is no web host.
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
-The data contract is `CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT` on
-testnet (`DEPLOYMENTS` in `packages/core/src/config.ts`). It is not registered
-on mainnet yet. Until it is, every mainnet name reads as having no site, so
-dash.site is not redeployed from `main`. The earlier contracts (mainnet
+The data contract is `GCSi8NkjXyRpLC7FsEnCfx5ntmWZ16bD2t9zc4JiT4X3` on
+mainnet and `CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT` on testnet
+(`DEPLOYMENTS` in `packages/core/src/config.ts`). The earlier contracts (mainnet
 `5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, testnet
 `3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`) are no longer read. How
 formats and the contract change later is in
@@ -86,8 +85,7 @@ operator denylist (`dash-sites-deny`) for names, owners and content
 
 ## Publish a site
 
-**In the browser**: open https://dash.site/new for mainnet (publishing there
-opens once the contract is registered on mainnet), or the
+**In the browser**: open https://dash.site/new for mainnet, or the
 [testnet builder](https://dash-sites.thepasta.org/). Choose **Sign in with
 DashPay**, scan the code with the DashPay app (More, Tools, Connections, Scan
 QR) and approve. On a phone, the button under the code opens the wallet
