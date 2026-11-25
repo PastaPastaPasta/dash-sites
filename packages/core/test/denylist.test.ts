@@ -11,7 +11,6 @@ import {
   readerConfig,
   resolveName,
   utf8,
-  type PlatformReader,
 } from '../src/index.js';
 import { MemoryPlatform } from '../src/memory.js';
 
@@ -85,25 +84,5 @@ describe('networks without a dash-sites contract', () => {
     expect(readerConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '' });
     expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
     expect(readerConfig('testnet').contractId).toBe(networkConfig('testnet').contractId);
-  });
-
-  it('resolves registered names to no-site without asking for a site record', async () => {
-    const platform = new MemoryPlatform();
-    platform.registerName('alice', 'alice-id');
-    await publishSite(platform.as('alice-id'), 'alice', buildSite([{ path: '/index.html', bytes: utf8.encode('x') }]));
-    const inner = platform.as('reader');
-    let siteReads = 0;
-    const reader: PlatformReader = {
-      noSiteContract: true,
-      getDomain: (label) => inner.getDomain(label),
-      getSite: (label) => {
-        siteReads += 1;
-        return inner.getSite(label);
-      },
-      getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
-    };
-    expect(await resolveName(reader, 'alice')).toMatchObject({ status: 'no-site', ownerId: 'alice-id' });
-    expect(await resolveName(reader, 'carol')).toMatchObject({ status: 'unregistered' });
-    expect(siteReads).toBe(0);
   });
 });

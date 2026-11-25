@@ -8,6 +8,7 @@ import {
   decodeManifest,
   encodeManifest,
   formatContentUri,
+  isCurrent,
   gunzip,
   gzip,
   loadManifest,
@@ -273,67 +274,102 @@ describe('resolve and publish', () => {
     await expect(publishSite(platform.as('bob-id'), 'carol', buildSite(SITE))).rejects.toThrow(/not registered/);
   });
 
-  it('resolves a published name with one read, and never reads DPNS for it', async () => {
+  it('resolves a name with one read, whatever the answer', async () => {
     const platform = setup();
     await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
     const inner = platform.as('anyone');
     const reads: string[] = [];
     const reader: PlatformReader = {
       getDomain: (label) => (reads.push('domain'), inner.getDomain(label)),
-      getSite: (label) => (reads.push('site'), inner.getSite(label)),
+      getName: (label) => (reads.push('name'), inner.getName(label)),
       getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
     };
     expect((await resolveName(reader, 'alice.dash')).status).toBe('ok');
-    expect(reads).toEqual(['site']);
     expect((await resolveName(reader, 'bob.dash')).status).toBe('no-site');
-    expect(reads).toEqual(['site', 'site', 'domain']);
+    expect((await resolveName(reader, 'carol.dash')).status).toBe('unregistered');
+    expect(reads).toEqual(['name', 'name', 'name']);
   });
 
-  it('has no way to write a site record for a name the identity does not own', async () => {
+  it('never shows a record written by an identity that does not own the name', async () => {
     const platform = setup();
+    const reader = platform.as('anyone');
+    const mallory = platform.as('mallory-id');
     const alice = platform.domains.get('a11ce')!;
-    await expect(platform.as('mallory-id').putSite(alice, buildSite(SITE).contentUri)).rejects.toThrow(/does not own/);
-    await expect(platform.as('alice-id').putSite({ ...alice, label: 'a1ice' }, buildSite(SITE).contentUri)).rejects.toThrow(/does not own/);
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('no-site');
+    await mallory.putSite(alice, 'ipfs://bafymallory');
+    expect(await mallory.listSites()).toHaveLength(1);
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'alice-id' });
+
+    const bundle = buildSite(SITE);
+    await publishSite(platform.as('alice-id'), 'alice', bundle);
+    await mallory.putSite(alice, 'ipfs://bafynewer');
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id', site: { ownerId: 'alice-id', content: bundle.contentUri } });
   });
 
-  it('keeps the previous owner\'s site after a name changes hands, until the new owner writes', async () => {
+  it('refuses an answer whose site record is not the name owner\'s', async () => {
+    const platform = setup();
+    const inner = platform.as('anyone');
+    await platform.as('mallory-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafymallory');
+    const [forged] = await platform.as('mallory-id').listSites();
+    const lying: PlatformReader = { ...inner, getName: async (label) => ({ value: { domain: (await inner.getDomain(label)).value!, site: forged! }, meta: platform.meta() }) };
+    await expect(resolveName(lying, 'alice.dash')).rejects.toThrow(/different site/);
+  });
+
+  it('stops showing the previous owner\'s site in the block a name changes hands', async () => {
     const platform = setup();
     const reader = platform.as('anyone');
     const aliceSite = buildSite(SITE);
     await publishSite(platform.as('alice-id'), 'alice', aliceSite);
     platform.transferName('alice', 'carol-id');
-    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id' });
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'carol-id', canonicalLabel: 'alice' });
     await expect(publishSite(platform.as('alice-id'), 'alice', buildSite(SITE))).rejects.toThrow(/owned by carol-id/);
-    await expect(platform.as('alice-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafyold')).rejects.toThrow(/does not own/);
+    await platform.as('alice-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafyold');
+    expect((await resolveName(reader, 'alice.dash')).status).toBe('no-site');
+    expect(await unpublishSite(platform.as('carol-id'), 'alice')).toBe(false);
 
     const carolSite = buildSite([{ path: '/index.html', bytes: text('carol') }]);
     await publishSite(platform.as('carol-id'), 'alice', carolSite);
     expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'carol-id', site: { content: carolSite.contentUri } });
   });
 
-  it('lets a new owner take down a site without publishing one', async () => {
-    const platform = setup();
-    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
-    platform.transferName('alice', 'carol-id');
-    expect(await unpublishSite(platform.as('carol-id'), 'alice')).toBe(true);
-    expect(await resolveName(platform.as('anyone'), 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'carol-id', canonicalLabel: 'alice' });
-    expect(await unpublishSite(platform.as('carol-id'), 'alice')).toBe(false);
-  });
-
-  it('never brings an earlier owner\'s site back when the latest one is taken down', async () => {
+  it('does not bring an identity\'s earlier site back when the name returns to it', async () => {
     const platform = setup();
     const reader = platform.as('anyone');
-    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
+    const alice = platform.as('alice-id');
+    const aliceSite = buildSite(SITE);
+    await publishSite(alice, 'alice', aliceSite);
     platform.transferName('alice', 'carol-id');
-    await publishSite(platform.as('carol-id'), 'alice', buildSite([{ path: '/index.html', bytes: text('carol') }]));
-    await unpublishSite(platform.as('carol-id'), 'alice');
-    expect((await resolveName(reader, 'alice.dash')).status).toBe('no-site');
-
     platform.transferName('alice', 'alice-id');
-    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'carol-id' });
-    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
-    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id', site: { revision: 3 } });
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'alice-id' });
+    expect(await unpublishSite(alice, 'alice')).toBe(false);
+    expect(await collectGarbage(alice)).toBe(aliceSite.chunks.size);
+
+    await publishSite(alice, 'alice', aliceSite);
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id', site: { content: aliceSite.contentUri } });
+  });
+
+  it('counts a record written in the block the name came to its owner, and none from before', () => {
+    const domain = { id: 'd', ownerId: 'alice-id', label: 'Alice', normalizedLabel: 'a11ce', transferredAt: 100 };
+    const site = { id: 's', ownerId: 'alice-id', normalizedLabel: 'a11ce', content: 'ipfs://x', revision: 1, updatedAt: 100 };
+    expect(isCurrent(domain, site)).toBe(true);
+    expect(isCurrent(domain, { ...site, updatedAt: 99 })).toBe(false);
+    expect(isCurrent(domain, { ...site, ownerId: 'bob-id' })).toBe(false);
+  });
+
+  it('does not count a record written before the identity owned the name', async () => {
+    const platform = setup();
+    await platform.as('dave-id').putSite({ id: '', ownerId: '', label: 'dave', normalizedLabel: 'dave', transferredAt: 0 }, 'ipfs://bafyearly');
+    platform.registerName('dave', 'dave-id');
+    expect(await resolveName(platform.as('anyone'), 'dave.dash')).toMatchObject({ status: 'no-site', ownerId: 'dave-id' });
+  });
+
+  it('lets the owner take a site down', async () => {
+    const platform = setup();
+    const alice = platform.as('alice-id');
+    await publishSite(alice, 'alice', buildSite(SITE));
+    expect(await unpublishSite(alice, 'alice')).toBe(true);
+    expect(await resolveName(platform.as('anyone'), 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'alice-id', canonicalLabel: 'alice' });
+    expect(await unpublishSite(alice, 'alice')).toBe(false);
+    await expect(unpublishSite(platform.as('bob-id'), 'alice')).rejects.toThrow(/owned by alice-id/);
   });
 
   const stored = async (writer: PlatformWriter) => (await Promise.all((await writer.listSites()).map((site) => writer.listChunks(site.id)))).flat();
@@ -361,7 +397,7 @@ describe('resolve and publish', () => {
     expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
   });
 
-  it('collects the chunks of a site taken down, and of a sold name once the buyer has written a record', async () => {
+  it('collects the chunks of a site taken down, and of a name that changed hands', async () => {
     const platform = setup();
     platform.registerName('second', 'alice-id');
     const alice = platform.as('alice-id');
@@ -373,11 +409,7 @@ describe('resolve and publish', () => {
     expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...kept.chunks.keys()].sort());
 
     platform.transferName('second', 'carol-id');
-    expect(await collectGarbage(alice)).toBe(0);
-    expect((await resolveName(alice, 'second')).status).toBe('ok');
-
-    await unpublishSite(platform.as('carol-id'), 'second');
-    await collectGarbage(alice);
+    expect(await collectGarbage(alice)).toBe(kept.chunks.size);
     expect(await stored(alice)).toEqual([]);
   });
 
@@ -385,8 +417,11 @@ describe('resolve and publish', () => {
     const platform = setup();
     const alice = platform.as('alice-id');
     await publishSite(alice, 'alice', buildSite(SITE));
-    const behind = { ...alice, getSite: async () => ({ value: undefined, meta: platform.meta() }) };
-    expect(await collectGarbage(behind)).toBe(0);
+    const earlier = { ...platform.meta(), timeMs: 0 };
+    const previousOwner = { domain: { ...platform.domains.get('a11ce')!, ownerId: 'bob-id' } };
+    for (const value of [undefined, previousOwner]) {
+      expect(await collectGarbage({ ...alice, getName: async () => ({ value, meta: earlier }) })).toBe(0);
+    }
     expect((await resolveName(alice, 'alice')).status).toBe('ok');
   });
 

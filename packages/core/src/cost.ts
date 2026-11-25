@@ -3,9 +3,10 @@ import type { SiteBundle } from './pack.js';
 export const CREDITS_PER_DASH = 100_000_000_000n;
 
 /**
- * Measured on testnet, protocol 14: a chunk of 100 bytes cost 39 to 49 M credits and one of 14,700
- * bytes 442 to 452 M; a first publish writes the site record twice, 76 M and 7 M. The constants
- * round those up.
+ * Measured on testnet, protocol 14: a chunk of 100 bytes cost 60 to 72 M credits as the first under
+ * its record, and one of 14,700 bytes 452 to 458 M; a first publish writes the site record twice,
+ * 61 M and 7 M. A one-page site cost 138 M and a 440 KB site 13,522 M, against 217 M and 14,247 M
+ * from the constants.
  */
 const CREDITS_PER_BYTE = 28_500n;
 const CREDITS_PER_CHUNK = 50_000_000n;

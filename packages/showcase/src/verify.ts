@@ -16,7 +16,7 @@ export async function verify(label: string, network: Network, report: Report): P
     report(false, `Platform has no stored site for ${label}.dash (${resolution.status})`);
     return false;
   }
-  report(true, `Proved at block ${resolution.meta.height}: ${resolution.canonicalLabel}.dash is published by ${resolution.ownerId}`);
+  report(true, `Proved at block ${resolution.meta.height}: ${resolution.canonicalLabel}.dash belongs to ${resolution.ownerId}`);
   report(true, `Proved: that identity's site record, revision ${resolution.site.revision}`);
   const source = (hashes: string[]) => reader.getChunks(resolution.site.id, hashes);
   const manifest = await loadManifest(resolution.content, source);

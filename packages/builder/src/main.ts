@@ -11,6 +11,7 @@ import {
   parseName,
   publishSite,
   requireOwnedName,
+  resolveName,
   unpublishSite,
   type DomainRecord,
   type Network,
@@ -187,10 +188,10 @@ async function choose(domain: DomainRecord): Promise<void> {
   renderNames();
   refresh();
   if (!writer) return;
-  const site = (await writer.getSite(domain.normalizedLabel)).value;
+  const resolved = await resolveName(writer, domain.normalizedLabel);
   if (chosen?.id !== domain.id) return;
-  $('site-status').textContent = site?.content !== undefined
-    ? `${label()}.dash has a site already (revision ${site.revision}, ${new Date(site.updatedAt).toLocaleDateString()}). Publishing replaces it.`
+  $('site-status').textContent = 'site' in resolved
+    ? `${label()}.dash has a site already (revision ${resolved.site.revision}, ${new Date(resolved.site.updatedAt).toLocaleDateString()}). Publishing replaces it.`
     : `${label()}.dash has no site yet.`;
 }
 

@@ -14,7 +14,7 @@ import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
 import { KNOWN_CONTRACTS } from './known-contracts.js';
 import { CHUNK_FIELD_SIZE, CHUNK_SIZE, PRELOAD_CHUNKS } from './limits.js';
 import { DASH_TLD, isValidLabel, normalizeLabel } from './names.js';
-import type { DomainRecord, PlatformReader, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
+import type { DomainRecord, NameRecord, PlatformReader, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
 
 const PAGE = 100;
 const PROTOCOL_VERSION = 14;
@@ -38,11 +38,14 @@ function toMeta(metadata: ProvedDocuments['metadata']): ProofMeta {
 
 function toDomain(id: string, document: Document): DomainRecord {
   const object = document.toObject() as Record<string, unknown>;
+  const transferredAt = document.transferredAt ?? document.createdAt;
+  if (transferredAt === undefined) throw new Error('DPNS answered with a name that carries no time');
   return {
     id,
     ownerId: document.ownerId.toBase58(),
     label: String(object.label),
     normalizedLabel: String(object.normalizedLabel),
+    transferredAt: Number(transferredAt),
   };
 }
 
@@ -51,7 +54,6 @@ function toSite(id: string, document: Document): SiteRecord {
   return {
     id,
     ownerId: document.ownerId.toBase58(),
-    label: String(object.label),
     normalizedLabel: String(object.normalizedLabel),
     ...(typeof object.content === 'string' ? { content: object.content } : {}),
     revision: Number(document.revision ?? 1),
@@ -59,7 +61,7 @@ function toSite(id: string, document: Document): SiteRecord {
   };
 }
 
-const siteName = (normalizedLabel: string): Where[] => [
+const dashName = (normalizedLabel: string): Where[] => [
   ['normalizedParentDomainName', '==', DASH_TLD],
   ['normalizedLabel', '==', normalizedLabel],
 ];
@@ -70,8 +72,9 @@ function toChunk(document: Document): [hash: string, data: Uint8Array] {
   return [toHex(object.hash as Uint8Array), concat(fields)];
 }
 
-const SITE_ORDER = { orderBy: [['$updatedAt', 'desc']], limit: 1 };
 const PRELOADED_SITES = 4;
+
+const named = (domain: DomainRecord, site?: SiteRecord): NameRecord => (site ? { domain, site } : { domain });
 
 export interface ConnectOptions {
   /** DAPI addresses to use instead of the network's own list. */
@@ -176,11 +179,7 @@ export class EvoReader implements PlatformReader {
   }
 
   async getDomain(normalizedLabel: string): Promise<Proved<DomainRecord | undefined>> {
-    const where: Where[] = [
-      ['normalizedParentDomainName', '==', DASH_TLD],
-      ['normalizedLabel', '==', normalizedLabel],
-    ];
-    return this.one(await this.query(DPNS_CONTRACT_ID, 'domain', where, { limit: 1 }), toDomain);
+    return this.one(await this.query(DPNS_CONTRACT_ID, 'domain', dashName(normalizedLabel), { limit: 1 }), toDomain);
   }
 
   get noSiteContract(): boolean {
@@ -190,30 +189,46 @@ export class EvoReader implements PlatformReader {
   protected readonly preloaded = new Map<string, Map<string, Uint8Array>>();
 
   /**
-   * The newest site record for a name. With `preload`, the same query also brings up to
-   * `PRELOAD_CHUNKS` of the record's chunks under one proof, and `getChunks` answers from them.
+   * One composite read under one proof. The page is the name's DPNS domain. The site record is
+   * looked up by the name and the domain's `$ownerId`, so it is the owner's record or nothing, and
+   * with `preload` the chunks are looked up by that record's `$id`; `getChunks` answers from them.
+   * A node that cannot answer the composite read is asked for the domain and the record in turn;
+   * the record then counts only if it was last written by the block that proved the owner, so the
+   * answer is still what one block held.
    */
-  async getSite(normalizedLabel: string, preload = false): Promise<Proved<SiteRecord | undefined>> {
-    const where = siteName(normalizedLabel);
-    const composite = preload ? await this.withChunks(where).catch(() => undefined) : undefined;
-    if (!composite) return this.one(await this.query(this.config.contractId, 'site', where, SITE_ORDER), toSite);
+  async getName(normalizedLabel: string, preload = false): Promise<Proved<NameRecord | undefined>> {
+    const composite = this.noSiteContract ? undefined : await this.nameWithSite(normalizedLabel, preload).catch(() => undefined);
+    if (!composite) return this.nameInTwoReads(normalizedLabel);
     const { data, metadata } = composite;
-    const record = data.pageDocuments[0];
-    const found = data.subResults[0];
-    if (record && found?.kind === 'documents' && found.documents.length > 0) {
-      this.preloaded.set(record.id.toBase58(), new Map(found.documents.map(toChunk)));
+    const [sites, chunks] = data.subResults;
+    const domain = data.pageDocuments[0];
+    const record = sites?.kind === 'documents' ? sites.documents[0] : undefined;
+    if (record && chunks?.kind === 'documents' && chunks.documents.length > 0) {
+      this.preloaded.set(record.id.toBase58(), new Map(chunks.documents.map(toChunk)));
       for (const oldest of this.preloaded.keys()) {
         if (this.preloaded.size <= PRELOADED_SITES) break;
         this.preloaded.delete(oldest);
       }
     }
-    return { value: record && toSite(record.id.toBase58(), record), meta: toMeta(metadata) };
+    return { value: domain && named(toDomain(domain.id.toBase58(), domain), record && toSite(record.id.toBase58(), record)), meta: toMeta(metadata) };
   }
 
-  private withChunks(where: Where[]) {
-    const chunks = { documentType: 'chunk', bind: { sourceProperty: '$id', field: 'site' }, limit: PRELOAD_CHUNKS };
-    const query = { dataContractId: this.config.contractId, documentType: 'site', where, ...SITE_ORDER, subQueries: [chunks] };
+  private nameWithSite(normalizedLabel: string, preload: boolean) {
+    const where = dashName(normalizedLabel);
+    const contract = { dataContractId: this.config.contractId };
+    const subQueries: object[] = [{ ...contract, documentType: 'site', where, bind: { sourceProperty: '$ownerId', field: '$ownerId' } }];
+    if (preload) subQueries.push({ ...contract, documentType: 'chunk', bind: { source: 0, sourceProperty: '$id', field: 'site' }, limit: PRELOAD_CHUNKS });
+    const query = { dataContractId: DPNS_CONTRACT_ID, documentType: 'domain', where, limit: 1, subQueries };
     return this.sdk.documents.compositeWithProof(query as never);
+  }
+
+  private async nameInTwoReads(normalizedLabel: string): Promise<Proved<NameRecord | undefined>> {
+    const domain = await this.getDomain(normalizedLabel);
+    if (!domain.value || this.noSiteContract) return { value: domain.value && named(domain.value), meta: domain.meta };
+    const where: Where[] = [...dashName(normalizedLabel), ['$ownerId', '==', domain.value.ownerId]];
+    const site = await this.one(await this.query(this.config.contractId, 'site', where, { limit: 1 }), toSite);
+    const record = site.value && site.value.updatedAt <= domain.meta.timeMs ? site.value : undefined;
+    return { value: named(domain.value, record), meta: site.meta.height < domain.meta.height ? site.meta : domain.meta };
   }
 
   async getChunks(siteId: string, hashes: string[]): Promise<Map<string, Uint8Array>> {
@@ -431,8 +446,11 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     }
   }
 
+  /** This identity's site records, none older than this writer left it: a node can answer from before a write. */
   async listSites(): Promise<SiteRecord[]> {
-    return (await this.all('site', ['$ownerId', '==', this.identityId], 'normalizedParentDomainName')).map(([id, document]) => toSite(id, document));
+    const read = async () => (await this.all('site', ['$ownerId', '==', this.identityId], 'normalizedParentDomainName')).map(([id, document]) => toSite(id, document));
+    const revision = (sites: SiteRecord[], label: string) => sites.find((site) => site.normalizedLabel === label)?.revision ?? 0;
+    return settled(read, (sites) => [...this.written].every(([label, written]) => revision(sites, label) >= written));
   }
 
   async listChunks(siteId: string): Promise<StoredChunk[]> {
@@ -460,19 +478,19 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
   private readonly written = new Map<string, number>();
 
   private async ownSite(normalizedLabel: string): Promise<[string, Document] | undefined> {
-    const where: Where[] = [['$ownerId', '==', this.identityId], ...siteName(normalizedLabel)];
+    const where: Where[] = [...dashName(normalizedLabel), ['$ownerId', '==', this.identityId]];
     const result = await this.query(this.config.contractId, 'site', where, { limit: 1 });
     return [...result.data].find((entry): entry is [string, Document] => entry[1] !== undefined);
   }
 
   async putSite(domain: DomainRecord, content?: string): Promise<SiteRecord> {
-    const { label, normalizedLabel } = domain;
+    const { normalizedLabel } = domain;
     const known = this.written.get(normalizedLabel) ?? 0;
     const existing = await settled(
       () => this.ownSite(normalizedLabel),
       (own) => Number(own?.[1].revision ?? 0) >= known,
     );
-    const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, label, ...(content === undefined ? {} : { content }) };
+    const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, ...(content === undefined ? {} : { content }) };
     const revision = existing ? Number(existing[1].revision ?? 1) + 1 : 1;
     if (existing) {
       const next = { ...(existing[1].toObject() as Record<string, unknown>), ...properties, $revision: BigInt(revision) };
@@ -492,11 +510,11 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
   }
 
   async ensureSite(domain: DomainRecord): Promise<SiteRecord> {
-    const { label, normalizedLabel } = domain;
+    const { normalizedLabel } = domain;
     const own = () => this.ownSite(normalizedLabel);
     let existing = await own();
     if (!existing) {
-      const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, label };
+      const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel };
       await this.sdk.documents.create({ document: this.newDocument('site', properties), ...this.key }).catch((error: unknown) => {
         if (!/duplicate unique/.test(String(error))) throw error;
       });

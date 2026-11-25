@@ -1,6 +1,6 @@
 import { parseContentUri, type ContentRef } from './content.js';
 import { parseName } from './names.js';
-import type { PlatformReader, ProofMeta, PublishedSite } from './platform.js';
+import type { DomainRecord, PlatformReader, ProofMeta, PublishedSite, SiteRecord } from './platform.js';
 
 interface Named {
   normalized: string;
@@ -10,8 +10,9 @@ interface Named {
 interface Owned extends Named {
   /** The one host label a name is served under: the registered label, lowercased. */
   canonicalLabel: string;
-  /** The identity that wrote the name's site record; for a name without one, the name's owner. */
+  /** The identity that owns the name. A site shown for the name is the record this identity wrote. */
   ownerId: string;
+  domain: DomainRecord;
 }
 
 export type Resolution =
@@ -21,40 +22,39 @@ export type Resolution =
   | ({ status: 'unsupported'; site: PublishedSite } & Owned)
   | ({ status: 'ok'; site: PublishedSite; content: ContentRef } & Owned);
 
+/** Whether `site` is the record a name shows: its owner's, written since the name came to that owner. */
+export const isCurrent = (domain: DomainRecord, site: SiteRecord): boolean => site.ownerId === domain.ownerId && site.updatedAt >= domain.transferredAt;
+
 /**
- * Resolves a name with one proved read: the site record written last for it, and with
- * `preload` the first chunks stored under that record in the same read. Platform takes a
- * site record only from the identity that owns the DPNS name at that moment and never deletes
- * one, so the last record is the last word of the last owner who published. A name that changes
- * hands keeps the previous owner's site until the new owner writes a record. DPNS is read only
- * for a name without a record, to tell a registered name from a free one.
+ * Resolves a name with one proved read: its DPNS domain, the site record written by the identity
+ * that owns the domain, and with `preload` the first chunks stored under that record. Platform
+ * stores a site record from any identity, so the owner check is this read's: it looks the record
+ * up by the domain's owner, and one proof covers the domain and the record as the same block holds
+ * them. A name that changes hands shows nothing of the previous owner from that block on, and a
+ * name that comes back to an identity does not bring back what it published before.
  */
 export async function resolveName(reader: PlatformReader, input: string, options: { preload?: boolean } = {}): Promise<Resolution> {
   const name = parseName(input);
   if (!name) return { status: 'invalid' };
   const normalized = name.normalized;
-  const site = reader.noSiteContract ? undefined : await reader.getSite(normalized, options.preload);
-  if (site?.value) {
-    const record = site.value;
-    if (record.normalizedLabel !== normalized) throw new Error('Platform answered with a different site');
-    const base = { normalized, canonicalLabel: record.label.toLowerCase(), ownerId: record.ownerId, meta: site.meta };
-    if (record.content === undefined) return { status: 'no-site', ...base };
-    const published = { ...record, content: record.content };
-    const content = parseContentUri(record.content);
-    if (!content) return { status: 'unsupported', ...base, site: published };
-    return { status: 'ok', ...base, site: published, content };
-  }
-  const domain = await reader.getDomain(normalized);
-  if (!domain.value) return { status: 'unregistered', normalized, meta: domain.meta };
-  if (domain.value.normalizedLabel !== normalized) throw new Error('DPNS answered with a different name');
-  return { status: 'no-site', normalized, canonicalLabel: domain.value.label.toLowerCase(), ownerId: domain.value.ownerId, meta: domain.meta };
+  const { value, meta } = await reader.getName(normalized, options.preload);
+  if (!value) return { status: 'unregistered', normalized, meta };
+  const { domain, site } = value;
+  if (domain.normalizedLabel !== normalized) throw new Error('DPNS answered with a different name');
+  if (site && (site.normalizedLabel !== normalized || site.ownerId !== domain.ownerId)) throw new Error('Platform answered with a different site');
+  const base = { normalized, domain, canonicalLabel: domain.label.toLowerCase(), ownerId: domain.ownerId, meta };
+  if (!site || !isCurrent(domain, site) || site.content === undefined) return { status: 'no-site', ...base };
+  const published = { ...site, content: site.content };
+  const content = parseContentUri(site.content);
+  if (!content) return { status: 'unsupported', ...base, site: published };
+  return { status: 'ok', ...base, site: published, content };
 }
 
 /**
- * What a browser's storage for a name belongs to. When it changes, a new owner has published,
- * and a host clears what the previous owner's site stored.
+ * What a browser's storage for a name belongs to. When it changes, the name has changed hands, and
+ * a host clears what the previous owner's site stored.
  */
-export const ownerEpoch = (resolution: Resolution): string => ('ownerId' in resolution ? resolution.ownerId : '');
+export const ownerEpoch = (resolution: Resolution): string => ('ownerId' in resolution ? `${resolution.ownerId}.${resolution.domain.transferredAt}` : '');
 
 /**
  * What a host tells a site about a name: the answer of `site.json` and `resolve/<name>` under
@@ -71,6 +71,8 @@ export function describeResolution(resolution: Resolution, network: string): Rec
   if (resolution.status === 'unregistered') return out;
   out.name = `${resolution.canonicalLabel}.dash`;
   out.ownerId = resolution.ownerId;
+  out.domainId = resolution.domain.id;
+  out.transferredAt = resolution.domain.transferredAt;
   if (resolution.status === 'no-site') return out;
   out.site = { id: resolution.site.id, revision: resolution.site.revision, updatedAt: resolution.site.updatedAt, content: resolution.site.content };
   return out;

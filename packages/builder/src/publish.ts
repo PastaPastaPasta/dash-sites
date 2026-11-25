@@ -1,4 +1,4 @@
-import { parseName, readerConfig, type Network } from '@dash-sites/core';
+import { parseName, readerConfig, resolveName, type Network } from '@dash-sites/core';
 import type { EvoReader } from '@dash-sites/core/evo';
 
 declare const __GATEWAY_DOMAIN__: string;
@@ -65,13 +65,11 @@ input.addEventListener('input', () => {
     void (async () => {
       try {
         const platform = await connect();
-        const domain = (await platform.getDomain(name.normalized)).value;
+        const resolved = await resolveName(platform, name.normalized);
         if (mine !== turn) return;
-        if (!domain) return say(span('mark', `${full} is free`), ...notes);
-        const site = platform.noSiteContract ? undefined : (await platform.getSite(name.normalized)).value;
-        if (mine !== turn) return;
-        if (site?.content !== undefined) {
-          const url = `https://${site.label.toLowerCase()}.${GATEWAY}/`;
+        if (resolved.status === 'unregistered') return say(span('mark', `${full} is free`), ...notes);
+        if ('site' in resolved) {
+          const url = `https://${resolved.canonicalLabel}.${GATEWAY}/`;
           return say(`${full} is taken and has a site. `, Object.assign(document.createElement('a'), { href: url, textContent: 'Visit it', target: '_blank', rel: 'noopener' }));
         }
         say(`${full} is registered and has no site yet. ${platform.noSiteContract ? `Publishing on ${NETWORK} is not open yet.` : 'If it is yours, sign in below to publish one.'}`);

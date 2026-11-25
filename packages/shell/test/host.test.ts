@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSite, normalizeLabel, publishSite, unpublishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, normalizeLabel, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
@@ -48,10 +48,10 @@ class Harness {
     const inner = this.platform.as('reader');
     const reader: PlatformReader = {
       getDomain: (name) => inner.getDomain(name),
-      getSite: async (name) => {
+      getName: async (name) => {
         this.reads += 1;
         if (this.down) throw new Error('platform down');
-        return inner.getSite(name);
+        return inner.getName(name);
       },
       getChunks: (owner, hashes) => {
         this.chunkReads += 1;
@@ -250,7 +250,7 @@ describe('site host', () => {
     }
   });
 
-  it('resets open pages when a new owner of the name writes its record while the worker is running', async () => {
+  it('resets open pages when the name changes hands while the worker is running', async () => {
     const h = new Harness();
     await h.publish('alice-id', 'one');
     await h.open();
@@ -258,7 +258,6 @@ describe('site host', () => {
     await h.settle();
     expect(h.store.chunks.size).toBeGreaterThan(0);
     h.platform.transferName('alice', 'bob-id');
-    await unpublishSite(h.platform.as('bob-id'), 'alice');
     h.clock += 60_000;
     expect(body(await h.get('/'))).toContain('one');
     await h.settle();
@@ -269,17 +268,18 @@ describe('site host', () => {
     expect(body(await h.get('/'))).toContain('has no site yet');
   });
 
-  it('keeps serving the site, with its data, after the name changed hands and before the new owner wrote a record', async () => {
+  it('keeps the site and its data when another identity writes a record for the name', async () => {
     const h = new Harness();
     await h.publish('alice-id', 'one');
     await h.open();
     await h.get('/');
     await h.settle();
     const wipes = h.store.wipes;
-    h.platform.transferName('alice', 'bob-id');
+    await h.platform.as('mallory-id').putSite(h.platform.domains.get('a11ce')!, 'ipfs://bafymallory');
     h.clock += 60_000;
-    expect(body(await h.get('/'))).toContain('one');
+    await h.get('/');
     await h.settle();
+    expect(body(await h.get('/'))).toContain('one');
     expect(h.ownerChanges).toBe(0);
     expect(h.store.wipes).toBe(wipes);
   });

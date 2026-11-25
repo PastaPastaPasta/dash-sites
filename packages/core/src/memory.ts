@@ -2,7 +2,7 @@ import { sha256Hex } from './bytes.js';
 import { normalizeLabel } from './names.js';
 import type { DomainRecord, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
 
-/** An in-memory Platform for tests and local previews. Like Platform, it takes a site record only from the name's owner. */
+/** An in-memory Platform for tests and local previews. Like Platform, it stores a site record from any identity and reads the owner's. */
 export class MemoryPlatform {
   readonly domains = new Map<string, DomainRecord>();
   readonly sites = new Map<string, SiteRecord>();
@@ -15,7 +15,7 @@ export class MemoryPlatform {
 
   registerName(label: string, ownerId: string): DomainRecord {
     const normalizedLabel = normalizeLabel(label);
-    const record = { id: `domain-${this.nextId++}`, ownerId, label, normalizedLabel };
+    const record = { id: `domain-${this.nextId++}`, ownerId, label, normalizedLabel, transferredAt: this.tick() };
     this.domains.set(normalizedLabel, record);
     this.height += 1;
     return record;
@@ -25,17 +25,18 @@ export class MemoryPlatform {
     const record = this.domains.get(normalizeLabel(label));
     if (!record) throw new Error('no such name');
     record.ownerId = ownerId;
+    record.transferredAt = this.tick();
     this.height += 1;
   }
 
-  /** A strictly increasing block time, so that the record written last is the newest. */
+  /** A strictly increasing block time. */
   private tick(): number {
     this.clock = Math.max(this.clock + 1, this.now());
     return this.clock;
   }
 
   meta(): ProofMeta {
-    return { height: this.height, timeMs: this.now(), coreChainLockedHeight: 1, protocolVersion: 14 };
+    return { height: this.height, timeMs: Math.max(this.clock, this.now()), coreChainLockedHeight: 1, protocolVersion: 14 };
   }
 
   as(identityId: string): PlatformWriter {
@@ -46,8 +47,11 @@ export class MemoryPlatform {
     const writer: PlatformWriter = {
       identityId,
       getDomain: async (normalizedLabel) => proved(this.domains.get(normalizedLabel)),
-      getSite: async (normalizedLabel) =>
-        proved([...this.sites.values()].filter((site) => site.normalizedLabel === normalizedLabel).sort((a, b) => b.updatedAt - a.updatedAt)[0]),
+      getName: async (normalizedLabel) => {
+        const domain = this.domains.get(normalizedLabel);
+        const site = domain && this.sites.get(siteKey(domain.ownerId, normalizedLabel));
+        return proved(domain && { domain: { ...domain }, ...(site ? { site } : {}) });
+      },
       getChunks: async (siteId, hashes) => {
         const out = new Map<string, Uint8Array>();
         for (const hash of hashes) {
@@ -68,14 +72,11 @@ export class MemoryPlatform {
         this.height += 1;
       },
       putSite: async (domain, content) => {
-        const registered = this.domains.get(domain.normalizedLabel);
-        if (registered?.ownerId !== identityId || registered.label !== domain.label) throw new Error(`${identityId} does not own ${domain.normalizedLabel}.dash`);
         const key = siteKey(identityId, domain.normalizedLabel);
         const existing = this.sites.get(key);
         const record: SiteRecord = {
           id: existing?.id ?? `site-${this.nextId++}`,
           ownerId: identityId,
-          label: domain.label,
           normalizedLabel: domain.normalizedLabel,
           ...(content === undefined ? {} : { content }),
           revision: (existing?.revision ?? 0) + 1,

@@ -16,11 +16,12 @@ Platform; there is no web host.
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
 The testnet data contract is
-`6mfB1X8wg4xfYbac7U88rHeJmTApLb3Y3CNf8UhCSRhK`. Dash Platform accepts a site
-record for a name only from the identity that owns the name. This contract is
-not registered on mainnet yet; the earlier mainnet contract,
-`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, had no such rule and is no
-longer read. `dash.site` opens mainnet names (`alice.dash.site`) as a static
+`zVqSAuc1SosVqcXHTvrigRdeiVyHh3i7dTpMFbRVU3L`. Dash Platform stores a site
+record for a name from any identity; a reader shows only the record of the
+identity that owns the name, and proves the owner and the record in one query.
+This contract is not registered on mainnet yet; the earlier mainnet contract,
+`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, is no longer read. `dash.site`
+opens mainnet names (`alice.dash.site`) as a static
 site: the same static page for every name, served from a Cloudflare Worker
 with no server.
 

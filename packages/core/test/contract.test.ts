@@ -66,13 +66,13 @@ describe('the contract to register', () => {
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
-        required: ['normalizedParentDomainName', 'normalizedLabel', 'label', '$createdAt', '$updatedAt'],
+        required: ['normalizedParentDomainName', 'normalizedLabel', '$createdAt', '$updatedAt'],
         indices: [
+          { name: 'nameAndOwner', properties: [{ normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }, { $ownerId: 'asc' }], unique: true },
           { name: 'ownerAndName', properties: [{ $ownerId: 'asc' }, { normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }], unique: true },
-          { name: 'name', properties: [{ normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }, { $updatedAt: 'asc' }] },
           { name: 'updated', properties: [{ $updatedAt: 'asc' }] },
         ],
-        positions: { normalizedParentDomainName: 0, normalizedLabel: 1, label: 2, content: 3 },
+        positions: { normalizedParentDomainName: 0, normalizedLabel: 1, content: 2 },
       },
       chunk: {
         type: 'object',
@@ -89,7 +89,7 @@ describe('the contract to register', () => {
   });
 
   it('is the schema its cost was measured on', () => {
-    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('873fd579786cd7610743573ce82dbb887fb422e71a450125e888a3d9b7cc3620');
+    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('53e32381605ef6108324bba58aaf22d3a88ccc4a3edc849cc304ea15772a8cba');
   });
 
   it('is the contract registered on testnet', () => {
@@ -97,15 +97,11 @@ describe('the contract to register', () => {
     expect((knownContract(bytes).toJSON() as { documentSchemas: unknown }).documentSchemas).toEqual(schemas());
   });
 
-  it('has Platform take a site record only from the owner of the DPNS name, under its registered label', () => {
-    const parsed = (registered().toJSON() as { documentSchemas: Schemas }).documentSchemas.site as DocumentTypeSchema;
-    expect(parsed.properties.normalizedLabel?.refersTo).toEqual({
-      type: 'deletableDocument',
-      contractId: DPNS_CONTRACT_ID,
-      documentType: 'domain',
-      findBy: { normalizedParentDomainName: 'normalizedParentDomainName', normalizedLabel: '.' },
-      where: { $ownerId: '$ownerId', label: 'label' },
-    });
+  it('refers to nothing outside itself, so no change to DPNS can stop its writes', () => {
+    const parsed = (registered().toJSON() as { documentSchemas: Schemas }).documentSchemas;
+    const references = Object.values(parsed).flatMap((type) => Object.values(type.properties).flatMap((property) => (property.refersTo ? [property.refersTo] : [])));
+    expect(references).toEqual([{ type: 'permanentDocument', documentType: 'site', where: { $ownerId: '$ownerId' } }]);
+    expect(JSON.stringify(parsed)).not.toContain(DPNS_CONTRACT_ID);
   });
 
   it('has Platform take a chunk only from the identity that wrote its site record', () => {
@@ -133,17 +129,16 @@ describe('the contract to register', () => {
 
     for (const label of ['Alice', 'b0b', `${'L'.repeat(62)}9`]) {
       expect(isValidLabel(label)).toBe(true);
-      expect(label).toMatch(new RegExp(site.properties.label?.pattern as string));
       expect(normalizeLabel(label)).toMatch(new RegExp(site.properties.normalizedLabel?.pattern as string));
     }
     expect(DASH_TLD).toMatch(new RegExp(site.properties.normalizedParentDomainName?.pattern as string));
-    for (const key of ['label', 'normalizedLabel', 'normalizedParentDomainName']) expect(site.properties[key]?.maxLength).toBe(63);
+    for (const key of ['normalizedLabel', 'normalizedParentDomainName']) expect(site.properties[key]?.maxLength).toBe(63);
   });
 
   it('costs what the publisher is quoted, and a delete refunds most of the storage', () => {
     const contract = registered();
     const chunk = documentCreateCost(contract, 'chunk', { fields: { site: { length: 32 }, d0: { length: CHUNK_FIELD_SIZE }, d1: { length: CHUNK_FIELD_SIZE }, d2: { length: CHUNK_FIELD_SIZE } } }, PROTOCOL_VERSION);
-    const site = documentCreateCost(contract, 'site', { fields: { normalizedParentDomainName: { length: 4 }, normalizedLabel: { length: 63 }, label: { length: 63 }, content: { length: 81 } } }, PROTOCOL_VERSION);
+    const site = documentCreateCost(contract, 'site', { fields: { normalizedParentDomainName: { length: 4 }, normalizedLabel: { length: 63 }, content: { length: 81 } } }, PROTOCOL_VERSION);
     const quoted = estimateCredits({ chunks: new Map([['', new Uint8Array(CHUNK_SIZE)]]) } as SiteBundle);
     expect(BigInt(chunk.storage.credits.newValues + site.storage.credits.newValues)).toBeLessThanOrEqual(quoted);
     expect(chunk.refund.afterOneYear.knownValues / chunk.storage.credits.knownValues).toBeGreaterThan(0.9);

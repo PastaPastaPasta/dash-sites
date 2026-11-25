@@ -4,6 +4,7 @@ import { parseName } from './names.js';
 import type { SiteBundle } from './pack.js';
 import type { DomainRecord, PlatformWriter, SiteRecord } from './platform.js';
 import { loadManifest, referencedChunks } from './reader.js';
+import { isCurrent, resolveName } from './resolve.js';
 
 export class NotOwnerError extends Error {
   constructor(name: string, reason: string) {
@@ -85,28 +86,31 @@ export async function publishPointer(writer: PlatformWriter, name: string, conte
 }
 
 /**
- * Takes down the site of a name the writer owns, a previous owner's included, by writing a record
- * without content: Platform never deletes a site record. Returns false when there was no site.
+ * Takes down the site of a name the writer owns by writing its record without content: Platform
+ * never deletes a site record. Returns false when there was no site.
  */
 export async function unpublishSite(writer: PlatformWriter, name: string): Promise<boolean> {
   const domain = await requireOwnedName(writer, name);
-  if ((await writer.getSite(domain.normalizedLabel)).value?.content === undefined) return false;
+  const { status } = await resolveName(writer, domain.normalizedLabel);
+  if (status !== 'ok' && status !== 'unsupported') return false;
   await writer.putSite(domain);
   return true;
 }
 
 /**
  * Deletes the chunks this identity's sites no longer use, and returns how many were deleted.
- * A record keeps the chunks of its site until another identity has written a newer record for
- * the name. An answer that does not show one keeps them: a node can answer from an earlier block.
+ * A record keeps the chunks of its site while it is the record the name shows. An answer that
+ * says otherwise counts only when it is from a block as late as the record: a node can answer
+ * from an earlier one.
  */
 export async function collectGarbage(writer: PlatformWriter, onDelete: (hash: string) => void = () => {}): Promise<number> {
   let deleted = 0;
   for (const site of await writer.listSites()) {
-    const newest = (await writer.getSite(site.normalizedLabel)).value;
-    const superseded = newest !== undefined && newest.id !== site.id && newest.updatedAt > site.updatedAt;
-    const { content } = newest?.id === site.id && newest.revision > site.revision ? newest : site;
-    const ref = superseded || content === undefined ? undefined : parseContentUri(content);
+    const name = await writer.getName(site.normalizedLabel);
+    const read = name.value?.site;
+    const record = read?.id === site.id && read.revision > site.revision ? read : site;
+    const shown = name.value ? isCurrent(name.value.domain, record) : false;
+    const ref = (shown || name.meta.timeMs < record.updatedAt) && record.content !== undefined ? parseContentUri(record.content) : undefined;
     const keep = ref?.scheme === 'dash-manifest' ? referencedChunks(ref, await loadManifest(ref, (hashes) => writer.getChunks(site.id, hashes))) : new Set<string>();
     for (const chunk of await writer.listChunks(site.id)) {
       if (keep.has(chunk.hash)) continue;
