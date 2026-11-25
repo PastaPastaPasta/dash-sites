@@ -621,8 +621,14 @@ queries for browsers.
   evonodes (`<ip>:443`, from the masternode list of the quorum key service);
   the quorum key service `quorums.<network>.networks.dash.org` (see §6); and,
   only for a site whose manifest names external npm files (§3),
-  `cdn.jsdelivr.net`, and `unpkg.com` if jsDelivr fails. Nothing else. `e2e/shell.mjs` asserts
-  this list in Chromium for a site without external files.
+  `cdn.jsdelivr.net`, and `unpkg.com` if jsDelivr fails. For a site that keeps
+  files at places (§3) it also contacts those places: the HTTPS hosts the
+  manifest lists and, for a file at an IPFS place, the npm CDNs for the IPFS
+  client, the routing service and the providers that hold the file. Nothing
+  else. `e2e/shell.mjs` asserts this list in Chromium for a site without
+  external files; `e2e/elsewhere.mjs` prints the hosts the worker contacted
+  for a site that keeps files at places and asserts that no recursive IPFS
+  gateway is among them.
 - **Choosing nodes**: while the verifier downloads, the worker reads that
   masternode list (enabled nodes that passed the service's version check),
   sends an empty request to 10 random ones, and gives the SDK the first 4 to
