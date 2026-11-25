@@ -192,6 +192,19 @@ bundling its icons, and turning its telemetry off. §5.2 to §5.5 do not change.
 - **Existing drafts** of the current form convert to a header, a text block
   and a link list.
 
+### 5.1.1 Versions
+
+Everything a builder-made site stores says which version of its format it
+is, so that a later builder can change the format without guessing.
+
+| What | Where its version is | Rule |
+| --- | --- | --- |
+| Page model | `v` in `/dash-site.json` (1 today) | Any change to the model's shape raises `v`. A builder opens every version up to its own and saves in its own. A page from a newer builder is refused with a message to reload, never half-read |
+| Published HTML | None of its own | It is an output of the model. Republishing from a newer builder rewrites it; until then it stays exactly as published |
+| Manifest | `v` (1, or 2 when a file is kept outside Platform) | Version 2 readers ignore what they do not know ([BULK-STORAGE.md](BULK-STORAGE.md)). Only a change older readers must not ignore raises it |
+| Widgets (proposed, §5.2) | A `v` attribute on each tag, and the version in the write page's address and messages | A site keeps the widget script it was published with. The write site answers every version it ever shipped |
+| Records on Platform | The data contract | Read through `@dash-sites/core`'s resolver only, so the builder follows a contract change without changes of its own |
+
 ### 5.2 Widgets
 
 The rule: the shell gains nothing for widgets. Every byte of widget code is
@@ -204,7 +217,7 @@ different things.
 **Showing** is a script stored in the site:
 
 ```html
-<dash-comments thread="/"></dash-comments>
+<dash-comments v="1" thread="/"></dash-comments>
 <script src="/dash-widgets.js" async></script>
 ```
 

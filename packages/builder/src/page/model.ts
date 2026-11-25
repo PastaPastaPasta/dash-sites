@@ -103,8 +103,9 @@ function readBlock(value: unknown, where: string): Block {
  */
 export function readPageModel(value: unknown, options: { repair?: boolean } = {}): PageModel {
   if (!isRecord(value)) throw new PageModelError('page', 'not an object');
-  onlyKeys(value, ['v', 'theme', 'pages'], 'page');
+  if (typeof value.v === 'number' && Number.isInteger(value.v) && value.v > PAGE_MODEL_VERSION) throw new PageModelError('page.v', `version ${value.v} was made with a newer builder than this one; reload the builder to get the latest`);
   if (value.v !== PAGE_MODEL_VERSION) throw new PageModelError('page.v', `version ${JSON.stringify(value.v)} is not supported`);
+  onlyKeys(value, ['v', 'theme', 'pages'], 'page');
   if (typeof value.theme !== 'string' || !Object.hasOwn(THEMES, value.theme)) throw new PageModelError('page.theme', `unknown theme ${JSON.stringify(value.theme)}`);
   if (!isRecord(value.pages)) throw new PageModelError('page.pages', 'not an object');
   onlyKeys(value.pages, ['/'], 'page.pages');

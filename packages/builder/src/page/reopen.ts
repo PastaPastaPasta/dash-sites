@@ -1,11 +1,6 @@
-import { contentTypeFor, ElsewhereError, loadManifest, parseContentUri, parsePlace, readElsewhere, readFile, utf8, type ChunkSource, type DomainRecord, type PlaceFetchers, type Proved, type SiteRecord } from '@dash-sites/core';
+import { contentTypeFor, ElsewhereError, loadManifest, parsePlace, readElsewhere, readFile, resolveName, utf8, type ChunkSource, type PlaceFetchers, type PlatformReader } from '@dash-sites/core';
 import type { SiteAsset } from '../assets.js';
 import { imagePaths, PAGE_MODEL_PATH, readPageModel, type PageModel } from './model.js';
-
-export interface PublishedSource {
-  getSite(ownerId: string, domainId: string): Promise<Proved<SiteRecord | undefined>>;
-  getChunks(ownerId: string, hashes: string[]): Promise<Map<string, Uint8Array>>;
-}
 
 export class ReopenError extends Error {
   constructor(message: string) {
@@ -15,6 +10,10 @@ export class ReopenError extends Error {
 }
 
 export interface PublishedPage {
+  /** The name as registered, such as `alice.dash`. */
+  name: string;
+  /** The identity that owns the name, and so published the page. */
+  ownerId: string;
   model: PageModel;
   assets: SiteAsset[];
   /** Images the site keeps outside Platform: the hash of each and the places it lists that this version can fetch. */
@@ -27,18 +26,22 @@ export interface PublishedPage {
  * Whose places a reopened page may bring into this browser: only a site the signed-in identity
  * owns. Anyone can publish a page that lists places of their choosing for bytes they copied.
  */
-export const trustedOutside = (page: PublishedPage, domain: DomainRecord, identity: string | undefined): PublishedPage['outside'] =>
-  identity !== undefined && identity === domain.ownerId ? page.outside : [];
+export const trustedOutside = (page: PublishedPage, identity: string | undefined): PublishedPage['outside'] =>
+  identity !== undefined && identity === page.ownerId ? page.outside : [];
 
-/** Reads the page model and images of the site published under `domain`, as the editor saved them. */
-export async function readPublishedPage(source: PublishedSource, domain: DomainRecord, places: PlaceFetchers = {}): Promise<PublishedPage> {
-  const name = `${domain.label.toLowerCase()}.dash`;
-  const site = (await source.getSite(domain.ownerId, domain.id)).value;
-  if (!site || site.updatedAt < domain.transferredAt) throw new ReopenError(`${name} has no site.`);
-  const ref = parseContentUri(site.content);
-  if (ref?.scheme !== 'dash-manifest') throw new ReopenError(`The site at ${name} is not stored in a way this builder can read.`);
-  const chunks: ChunkSource = (hashes) => source.getChunks(site.ownerId, hashes);
-  const manifest = await loadManifest(ref, chunks);
+/**
+ * Reads the page model and images of the site a name shows, as the editor saved them. The name is
+ * resolved the way a visitor's browser resolves it, so only its current owner's site is opened.
+ */
+export async function readPublishedPage(reader: PlatformReader, input: string, places: PlaceFetchers = {}): Promise<PublishedPage> {
+  const resolution = await resolveName(reader, input);
+  if (resolution.status === 'invalid') throw new ReopenError('Enter a name such as alice.dash.');
+  if (resolution.status === 'unregistered') throw new ReopenError(`${input} is not registered.`);
+  const name = `${resolution.canonicalLabel}.dash`;
+  if (resolution.status === 'no-site') throw new ReopenError(`${name} has no site.`);
+  if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') throw new ReopenError(`The site at ${name} is not stored in a way this builder can read.`);
+  const chunks: ChunkSource = (hashes) => reader.getChunks(resolution.ownerId, hashes);
+  const manifest = await loadManifest(resolution.content, chunks);
   if (!manifest.files[PAGE_MODEL_PATH]) throw new ReopenError(`The site at ${name} was not made with the page editor, so there is nothing to open. Upload its files instead.`);
   let parsed: unknown;
   try {
@@ -63,5 +66,5 @@ export async function readPublishedPage(source: PublishedSource, domain: DomainR
       lost.push(path);
     }
   }
-  return { model, assets, outside, lost };
+  return { name, ownerId: resolution.ownerId, model, assets, outside, lost };
 }

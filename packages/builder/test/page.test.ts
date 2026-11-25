@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
-import { buildSite, sha256Hex, utf8, type DomainRecord, type SiteRecord } from '@dash-sites/core';
+import { buildSite, publishSite, sha256Hex, utf8, type PlaceFetchers } from '@dash-sites/core';
+import { MemoryPlatform } from '@dash-sites/core/memory';
 import { cleanRichText, plainText, toHtml, h } from '../src/page/markup.js';
 import { BLOCKS } from '../src/page/blocks.js';
 import { emptyPageModel, newBlock, PAGE_MODEL_PATH, readPageModel, serializePageModel, tidyPageModel, type PageModel } from '../src/page/model.js';
@@ -96,7 +97,9 @@ describe('page model', () => {
     const cases: Array<[unknown, RegExp]> = [
       [null, /not an object/],
       [[], /not an object/],
-      [bad((m) => (m.v = 2)), /version 2 is not supported/],
+      [bad((m) => (m.v = 2)), /version 2 was made with a newer builder/],
+      [bad((m) => Object.assign(m, { v: 3, added: true })), /version 3 was made with a newer builder/],
+      [bad((m) => (m.v = 0)), /version 0 is not supported/],
       [bad((m) => delete m.v), /version undefined/],
       [bad((m) => (m.theme = 'neon')), /unknown theme/],
       [bad((m) => (m.extra = 1)), /unknown field "extra"/],
@@ -304,43 +307,50 @@ describe('drafts', () => {
 });
 
 describe('reopening a published page', () => {
-  const domain: DomainRecord = { id: 'dom1', ownerId: 'owner1', label: 'Alice', normalizedLabel: 'a11ce', transferredAt: 1000 };
-  const source = (files: ReturnType<typeof renderSite>, updatedAt = 2000) => {
-    const bundle = buildSite(files);
-    const site: SiteRecord = { id: 's', ownerId: 'owner1', domainId: 'dom1', content: bundle.contentUri, revision: 1, updatedAt };
-    return {
-      getSite: async (ownerId: string, domainId: string) => ({ value: ownerId === 'owner1' && domainId === 'dom1' ? site : undefined, proof: undefined as never }),
-      getChunks: async (_owner: string, hashes: string[]) => new Map(hashes.flatMap((hash) => (bundle.chunks.has(hash) ? [[hash, bundle.chunks.get(hash)!] as const] : []))),
-    };
+  const published = async (files: ReturnType<typeof renderSite>) => {
+    const platform = new MemoryPlatform();
+    platform.registerName('Alice', 'owner1');
+    await publishSite(platform.as('owner1'), 'alice', buildSite(files));
+    return platform;
   };
+  const open = async (files: ReturnType<typeof renderSite>, places?: PlaceFetchers) => readPublishedPage((await published(files)).as('visitor'), 'alice.dash', places);
 
   it('reads back the model and its images', async () => {
-    const opened = await readPublishedPage(source(renderSite(reference, 'alice.dash', [picture])), domain);
+    const opened = await open(renderSite(reference, 'alice.dash', [picture]));
     expect(opened.model).toEqual(tidyPageModel(reference));
     expect(opened.assets).toEqual([picture]);
+    expect(opened).toMatchObject({ name: 'alice.dash', ownerId: 'owner1' });
   });
 
   it('reads images kept outside Platform from their places, and says which ones are gone', async () => {
     const place = 'https://media.example.com/photo.webp';
     const files = renderSite(reference, 'alice.dash', [picture]).map((file) => (file.path === picture.path ? { ...file, src: [place] } : file));
-    const opened = await readPublishedPage(source(files), domain, { https: async () => picture.bytes });
+    const opened = await open(files, { https: async () => picture.bytes });
     expect(opened.assets).toEqual([picture]);
     expect(opened.outside).toEqual([{ sha256: sha256Hex(picture.bytes), places: [place] }]);
     expect(opened.lost).toEqual([]);
-    expect(trustedOutside(opened, domain, 'owner1')).toEqual(opened.outside);
-    expect(trustedOutside(opened, domain, 'someone-else')).toEqual([]);
-    expect(trustedOutside(opened, domain, undefined)).toEqual([]);
+    expect(trustedOutside(opened, 'owner1')).toEqual(opened.outside);
+    expect(trustedOutside(opened, 'someone-else')).toEqual([]);
+    expect(trustedOutside(opened, undefined)).toEqual([]);
 
-    const gone = await readPublishedPage(source(files), domain, { https: async () => new Uint8Array(picture.bytes.length) });
+    const gone = await open(files, { https: async () => new Uint8Array(picture.bytes.length) });
     expect(gone.model).toEqual(tidyPageModel(reference));
     expect(gone.assets).toEqual([]);
     expect(gone.lost).toEqual([picture.path]);
   });
 
+  it('opens only what the name shows now: nothing of a previous owner', async () => {
+    const platform = await published(renderSite(reference, 'alice.dash', [picture]));
+    platform.transferName('alice', 'owner2');
+    await expect(readPublishedPage(platform.as('visitor'), 'alice.dash')).rejects.toThrow(/alice\.dash has no site/);
+  });
+
   it('says why a site cannot be opened', async () => {
-    await expect(readPublishedPage(source([{ path: '/index.html', bytes: utf8.encode('<h1>hand made</h1>') }]), domain)).rejects.toThrow(/not made with the page editor/);
-    await expect(readPublishedPage(source(renderSite(reference, 'alice.dash', []), 500), domain)).rejects.toThrow(ReopenError);
-    await expect(readPublishedPage(source([{ path: PAGE_MODEL_PATH, bytes: utf8.encode('{"v":9}') }]), domain)).rejects.toThrow(/version 9/);
-    await expect(readPublishedPage(source([{ path: PAGE_MODEL_PATH, bytes: utf8.encode('nope') }]), domain)).rejects.toThrow(/cannot be read/);
+    await expect(open([{ path: '/index.html', bytes: utf8.encode('<h1>hand made</h1>') }])).rejects.toThrow(/not made with the page editor/);
+    await expect(open([{ path: PAGE_MODEL_PATH, bytes: utf8.encode('{"v":9}') }])).rejects.toThrow(/version 9/);
+    await expect(open([{ path: PAGE_MODEL_PATH, bytes: utf8.encode('nope') }])).rejects.toThrow(/cannot be read/);
+    const platform = await published(renderSite(reference, 'alice.dash', []));
+    await expect(readPublishedPage(platform.as('visitor'), 'bob.dash')).rejects.toThrow(/bob\.dash is not registered/);
+    await expect(readPublishedPage(platform.as('visitor'), 'not a name')).rejects.toThrow(ReopenError);
   });
 });

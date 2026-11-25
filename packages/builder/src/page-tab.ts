@@ -144,17 +144,15 @@ async function reopen(input: string): Promise<void> {
       reader = undefined;
       throw error;
     });
-    const domain = (await connected.getDomain(name.normalized)).value;
-    if (!domain) throw new Error(`${name.label}.dash is not registered on ${options.network}.`);
-    const opened = await readPublishedPage(connected, domain, options.places);
-    const trusted = trustedOutside(opened, domain, options.identity());
+    const opened = await readPublishedPage(connected, `${name.label}.dash`, options.places);
+    const trusted = trustedOutside(opened, options.identity());
     for (const file of trusted) rememberOutside(file.sha256, file.places);
     setSiteAssets(opened.assets);
     setPageModel(opened.model);
     const outside = opened.outside.length - trusted.length;
     const unkept = outside === 0 ? '' : ` ${outside === 1 ? 'One image is' : `${outside} images are`} kept outside Platform. Publishing would store ${outside === 1 ? 'it' : 'them'} on Platform: to keep ${outside === 1 ? 'it' : 'them'} outside, sign in as the owner and open the site again.`;
     const lost = opened.lost.length === 0 ? '' : ` ${opened.lost.length === 1 ? 'One image is' : `${opened.lost.length} images are`} kept outside Platform and could not be fetched (${opened.lost.join(', ')}); add ${opened.lost.length === 1 ? 'it' : 'them'} again in the editor.`;
-    status.textContent = `Opened the page published at ${domain.label.toLowerCase()}.dash. Publishing again stores only what changed.${unkept}${lost}`;
+    status.textContent = `Opened the page published at ${opened.name}. Publishing again stores only what changed.${unkept}${lost}`;
   } catch (error) {
     status.textContent = message(error);
   } finally {
