@@ -29,12 +29,12 @@ const UNAVAILABLE = '14';
 /**
  * Picks Platform nodes for the SDK while the verifier downloads, and leaves the browser with an open
  * connection and a cached CORS preflight to each, so the first proved queries skip both. Each node
- * gets an empty request, which DAPI refuses at once. Resolves to the first that answered, or to
- * undefined, in which case the SDK picks nodes itself. Which node answers cannot change what is
- * shown, only whether and how fast it arrives: every answer is proof-checked.
+ * gets an empty request, which DAPI refuses at once. Resolves to the first `keep` that answered, or
+ * to undefined, in which case the SDK picks nodes itself. Every answer is still proof-checked.
  */
 export async function fastNodes(options: NodeOptions): Promise<string[] | undefined> {
-  const { quorumUrl, fetch, tries = 10, keep = 4, deadlineMs = 2500 } = options;
+  const { quorumUrl, fetch, tries = 10, deadlineMs = 2500 } = options;
+  const keep = Math.max(options.keep ?? 4, MIN_NODES);
   const stop = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

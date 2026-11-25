@@ -390,9 +390,11 @@ queries for browsers.
   nodes itself. After the first failed query on the picked nodes, the worker
   moves to the SDK's own list for the rest of its life, so a short outage
   that gets the few picked nodes banned does not stall it. Which node
-  answers cannot change what is shown, only whether and how fast it arrives:
-  every answer is proof-checked. The cost is that 4 operators see one
-  visit's lookups rather than a random spread.
+  answers cannot change what is shown beyond the SDK's tolerance for a node
+  that is a little behind, as before: every answer is proof-checked. The
+  cost is that the 10 probed operators see the visitor's address and the
+  site's origin, and 4 of them see one visit's lookups rather than a random
+  spread.
 - **Caching**: a proved answer is reused for 30 s, then served while a fresh
   one is fetched. Verified chunks are kept in the origin's Cache Storage and
   re-hashed on every read. A worker that has just started serves nothing
