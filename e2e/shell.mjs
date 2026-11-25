@@ -131,7 +131,7 @@ try {
   const loaded = await page
     .waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 120000 })
     .then(() => true, () => false);
-  check(loaded, `the site loads in a private window: ${loaded ? await page.title() : await page.textContent('#step')}`);
+  check(loaded, `the site loads in a private window: ${loaded ? await page.title() : await page.textContent('#error')}`);
 } finally {
   await browser.close();
 }
