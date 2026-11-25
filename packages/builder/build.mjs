@@ -17,6 +17,7 @@ mkdirSync(join(app, 'assets'), { recursive: true });
 const result = await build({
   entryPoints: { app: join(root, 'src', 'main.ts') },
   entryNames: '[name]-[hash]',
+  absWorkingDir: root,
   metafile: true,
   outdir: join(app, 'assets'),
   bundle: true,
@@ -47,7 +48,7 @@ const css = readFileSync(join(root, 'src', 'styles.css'), 'utf8');
 if (!css.includes('url(assets/bricolage.woff2)')) throw new Error('builder: styles.css no longer loads the font from assets/bricolage.woff2');
 const styles = fingerprint('styles.css', css.replace('url(assets/bricolage.woff2)', `url(${font.slice('assets/'.length)})`));
 const icon = fingerprint('icon.svg', readFileSync(join(root, 'src', 'icon.svg')));
-const script = Object.keys(result.metafile.outputs).find((path) => /\/app-[^/]+\.js$/.test(path));
+const script = Object.entries(result.metafile.outputs).find(([, output]) => output.entryPoint)?.[0];
 if (!script) throw new Error('builder: no app entry in the esbuild output');
 const assets = { 'styles.css': styles, 'icon.svg': icon, 'assets/app.js': `assets/${script.split('/').pop()}` };
 const html = readFileSync(join(root, 'src', 'index.html'), 'utf8').replace(/(href|src)="(styles\.css|icon\.svg|assets\/app\.js)"/g, (_, attr, path) => `${attr}="${assets[path]}"`);
