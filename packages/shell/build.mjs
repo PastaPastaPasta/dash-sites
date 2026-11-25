@@ -128,7 +128,7 @@ function landingHtml() {
 <p><code>alice.dash</code> is at <code>alice.${domain}</code>. These pages are static files with no server behind them. Your browser reads the name, its site record and its files from Dash Platform, checks the proofs and every file's hash, and shows the site.</p>
 <form id="go"><input name="name" placeholder="alice.dash" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="DPNS name"><button>Open</button></form>
 ${live ? '' : `<p>Publishing on ${escapeHtml(network)} has not opened yet. Names already resolve here, and a name's site appears as soon as its owner publishes one.</p>`}
-<p><a href="${escapeHtml(builderUrl)}">Make a site</a>${process.env.PUBLISH_URL ? ` · <a href="${escapeHtml(process.env.PUBLISH_URL)}">Publish your own</a>` : ''}${peer}</p>
+<p><a href="${escapeHtml(builderUrl)}">Make a site</a>${peer}</p>
 <footer>${domain} is a static page with no backend service. When you open a name here, your browser builds the site from what its author published to Dash Platform, a decentralized network. ${domain} does not host, own, control or review these sites, and does not condone or endorse them. It cannot change or remove anything on Dash Platform, but it can stop opening a name here. ${reportAbuse}</footer>`;
 }
 const csp = `default-src 'none'; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'; style-src 'unsafe-inline'; connect-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'`;

@@ -123,7 +123,7 @@ function refresh(): void {
 function renderPreview(): void {
   const frame = $<HTMLIFrameElement>('frame');
   const html = previewHtml(keepOutside(madeFiles()));
-  frame.srcdoc = html ?? '<html style="color-scheme:light dark"><body style="font:15px system-ui;color:GrayText;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body></html>';
+  frame.srcdoc = html ?? '<body style="color-scheme:light dark;background:Canvas;color:GrayText;color:color-mix(in srgb,CanvasText 62%,Canvas);font:15px system-ui;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body>';
 }
 
 async function refreshBalance(): Promise<void> {

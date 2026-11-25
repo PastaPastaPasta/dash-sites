@@ -48,6 +48,19 @@ try {
   await page.waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 180000 });
   console.log(`     first visit took ${((Date.now() - started) / 1000).toFixed(1)} s`);
   const record = await page.evaluate(async () => (await fetch('/.well-known/dash/site.json')).json());
+  const loadedTitle = await page.title();
+  const devtools = await context.newCDPSession(page);
+  let reloads = 0;
+  for (; reloads < 5; reloads++) {
+    await page.evaluate(() => (window.beforeHardReload = true));
+    void devtools.send('Page.reload', { ignoreCache: true }).catch(() => undefined);
+    const back = await page
+      .waitForFunction((title) => !window.beforeHardReload && document.title === title && document.readyState === 'complete', loadedTitle, { timeout: 30000 })
+      .then(() => true, () => false);
+    if (!back) break;
+  }
+  check(reloads === 5, `five hard reloads in a row each show the site again (${reloads} did)`);
+  await devtools.detach().catch(() => undefined);
   check(record.status === 'ok' && record.servedBy === 'browser', `the browser proved ${record.name}: owner ${record.ownerId}, revision ${record.site?.revision}, block ${record.proof?.height}`);
   check(elsewhere.size === 0, `the page loaded nothing from other hosts ${[...elsewhere].join(' ')}`);
 
@@ -134,7 +147,10 @@ try {
   check(loaded, `the site loads in a private window: ${loaded ? await page.title() : await page.textContent('#error')}`);
   const home = await browser.newPage();
   await home.goto(`${scheme}://${gateway}/`, { waitUntil: 'load' });
-  if (await home.locator('#landing').isVisible()) check(!(await home.locator('#shell').isVisible()), `${gateway} itself shows its landing page and no loader`);
+  if (await home.locator('#shell').count()) {
+    const [landing, loader] = [await home.locator('#landing').isVisible(), await home.locator('#shell').isVisible()];
+    check(landing !== loader, `${gateway} itself shows ${landing ? 'its landing page' : 'the loader'} and not both`);
+  }
 } finally {
   await browser.close();
 }

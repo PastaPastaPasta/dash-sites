@@ -1,5 +1,5 @@
-// dash.site/new and dash.site/publish: the builder and the publish page, an assets-only Worker of
-// their own. Only the bare dash.site host routes here, so no site's origin ever serves a page that
+// dash.site/new, the builder, an assets-only Worker of its own; dash.site/publish redirects there
+// (_redirects). Only the bare dash.site host routes here, so no site's origin ever serves a page that
 // takes keys; these routes are more specific than dash-site's dash.site/*. Deploy with deploy.sh.
 {
   "name": "dash-site-app",
