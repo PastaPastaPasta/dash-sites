@@ -52,15 +52,15 @@ try {
   const devtools = await context.newCDPSession(page);
   let reloads = 0;
   for (; reloads < 5; reloads++) {
+    await page.evaluate(() => (window.beforeHardReload = true));
     void devtools.send('Page.reload', { ignoreCache: true }).catch(() => undefined);
-    await page.waitForTimeout(300);
     const back = await page
-      .waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 30000 })
+      .waitForFunction((title) => !window.beforeHardReload && document.title === title && document.readyState === 'complete', loadedTitle, { timeout: 30000 })
       .then(() => true, () => false);
-    if (!back || (await page.title()) !== loadedTitle) break;
+    if (!back) break;
   }
   check(reloads === 5, `five hard reloads in a row each show the site again (${reloads} did)`);
-  await devtools.detach();
+  await devtools.detach().catch(() => undefined);
   check(record.status === 'ok' && record.servedBy === 'browser', `the browser proved ${record.name}: owner ${record.ownerId}, revision ${record.site?.revision}, block ${record.proof?.height}`);
   check(elsewhere.size === 0, `the page loaded nothing from other hosts ${[...elsewhere].join(' ')}`);
 

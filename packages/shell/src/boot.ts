@@ -49,22 +49,19 @@ function landing(): boolean {
 const RELOADS = 'dash-sites-reloads';
 const LOOP_WINDOW_MS = 10_000;
 const LOOP_LIMIT = 8;
-const CLAIM_MS = 3000;
-/** Reloads into the worker. Every visit and hard reload passes here once, so only a page that keeps coming back within seconds is looping. */
+/**
+ * Reloads into the worker, which serves every navigation in its scope, including one from a page a
+ * hard reload left uncontrolled. Each visit and each hard reload passes here once, so only a page that
+ * keeps coming back within seconds is looping.
+ */
 function reload(): void {
   const recent = (sessionStorage.getItem(RELOADS) ?? '').split(',').map(Number).filter((at) => Date.now() - at < LOOP_WINDOW_MS);
-  if (recent.length >= LOOP_LIMIT) return fail('This site could not start in this tab. Reload the page to try again.');
+  if (recent.length >= LOOP_LIMIT) {
+    sessionStorage.removeItem(RELOADS);
+    return fail('This site could not start in this tab. Reload the page to try again.');
+  }
   sessionStorage.setItem(RELOADS, [...recent, Date.now()].join(','));
   location.reload();
-}
-
-/** A hard reload skips the worker, which leaves this page uncontrolled; the active worker is asked to claim it. */
-function claim(worker: ServiceWorker): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, CLAIM_MS);
-    navigator.serviceWorker.addEventListener('controllerchange', () => (clearTimeout(timer), resolve()), { once: true });
-    worker.postMessage({ dashSitesClaim: true });
-  });
 }
 
 /** Resolves once the worker controls this page; rejects if its installation fails. */
@@ -95,7 +92,7 @@ async function start(): Promise<void> {
   if (!navigator.serviceWorker.controller) {
     say('Downloading the verifier, about 6 MB. This happens once.');
     const registration = await navigator.serviceWorker.register('/sw.js');
-    if (registration.active) return claim(registration.active).then(reload);
+    if (registration.active) return reload();
     await controlled(registration);
     advance(0.95, true);
   }
