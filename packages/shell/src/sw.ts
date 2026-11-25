@@ -4,6 +4,7 @@ import { hostedDenylist } from './hosted-denylist.js';
 import { resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Inflater } from './inflate.js';
+import { fastNodes } from './nodes.js';
 import type { Verifier } from './verifier.js';
 
 declare const self: ServiceWorkerGlobalScope & { dashSitesVerifier?: Verifier };
@@ -34,6 +35,7 @@ const VERIFIER_URLS = [__VERIFIER__.url, __SDK__.url];
  * every read is checked against the hash this worker was built with, and nothing runs before that.
  */
 async function loadVerifier(): Promise<{ verifier: Verifier; sdk: WebAssembly.Module }> {
+  void pickNodes();
   const cache = await caches.open(SHELL_CACHE).catch(() => undefined);
   const keptSdk = kept(cache, __SDK__);
   // The SDK is most of the bytes, so its download starts while the script is still coming.
@@ -143,10 +145,23 @@ function retryable<T>(start: () => Promise<T>): () => Promise<T> {
     }));
 }
 
+const QUORUM_URL = __NETWORK__ === 'mainnet' || __NETWORK__ === 'testnet' ? `https://quorums.${__NETWORK__}.networks.dash.org` : '';
+let nodes: Promise<string[] | undefined> | undefined;
+/** Started with the verifier download, so that by the time the SDK runs its nodes are warm. */
+function pickNodes(): Promise<string[] | undefined> {
+  nodes ??= QUORUM_URL ? fastNodes({ quorumUrl: QUORUM_URL, fetch: (input, init) => fetch(input, init) }) : Promise.resolve(undefined);
+  return nodes;
+}
+
 const load = retryable(loadVerifier);
 const connect = retryable(async () => {
   const { verifier, sdk } = await load();
-  return verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk);
+  try {
+    return await verifier.connect(readerConfig(__NETWORK__ as Network, __CONTRACT_ID__), sdk, await pickNodes());
+  } catch (error) {
+    nodes = undefined;
+    throw error;
+  }
 });
 
 /** Earlier versions' verifier files are dropped once this worker is in charge. */
