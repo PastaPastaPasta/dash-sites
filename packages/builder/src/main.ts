@@ -721,9 +721,12 @@ function start(): void {
   if (AUTO_SIGN_OUT) {
     for (const type of ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart']) document.addEventListener(type, () => autoSignOut.activity(), { passive: true, capture: true });
     document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && autoSignOut.check());
-    window.addEventListener('pagehide', () => {
+    window.addEventListener('pagehide', (event) => {
       leftSignedIn = writer !== undefined;
-      autoSignOut.left();
+      $<HTMLInputElement>('key').value = '';
+      // A pending DashPay request survives a hand-off to the wallet app; only a page kept in the
+      // back/forward cache, or a signed-in one, is cleared.
+      if (leftSignedIn || event.persisted) autoSignOut.left();
     });
     window.addEventListener('pageshow', (event) => {
       if (event.persisted && leftSignedIn) $('signed-out').textContent = 'You were signed out when you left this page. Your draft is kept.';
