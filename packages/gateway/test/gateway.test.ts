@@ -418,6 +418,32 @@ describe('gateway: version 2 sites', () => {
     await h.start();
   });
 
+  it("cannot refuse another site's external file by naming its SHA-256 on a different file", async () => {
+    h.platform.registerName('trent', 'trent-id');
+    const other = sdk.slice();
+    other[7] ^= 1;
+    const bundle = buildSite([{ path: '/index.html', bytes: text('m2') }, { path: '/sdk.wasm', bytes: other }], { external: { '/sdk.wasm': { npm: 'pkg', version: '3.0.0', path: 'o.wasm' } } });
+    const { encodeManifest, gzip, formatContentUri, sha256Hex } = await import('@dash-sites/core');
+    const entry = bundle.manifest.files['/sdk.wasm']!;
+    const doctored = { ...bundle.manifest, files: { ...bundle.manifest.files, '/sdk.wasm': { ...entry, sha256: sha256Hex(sdk) } } };
+    const piece = gzip(encodeManifest(doctored));
+    const hash = sha256Hex(piece);
+    const mallory = h.platform.as('trent-id');
+    for (const [chunkHash, data] of bundle.chunks) if (!bundle.manifestChunks.includes(chunkHash)) await mallory.createChunk(chunkHash, data);
+    await mallory.createChunk(hash, piece);
+    await mallory.putSite((await mallory.getDomain('trent')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    await h.stop();
+    h.external = cdnSource(async (url) => new Response(String(url).includes('o.wasm') ? other : sdk));
+    await h.start();
+    expect((await h.get('trent.id.example.org', '/sdk.wasm')).status).toBe(502);
+    const alice = await h.get('alice.id.example.org', '/sdk.wasm');
+    expect(alice.status).toBe(200);
+    expect(new Uint8Array(alice.body)).toEqual(sdk);
+    await h.stop();
+    h.external = counting;
+    await h.start();
+  });
+
   it('does not fetch an external file again for every request when its SHA-256 is wrong', async () => {
     h.platform.registerName('dave', 'dave-id');
     const bundle = buildSite([{ path: '/index.html', bytes: text('d') }, { path: '/y.wasm', bytes: sdk }], { external: { '/y.wasm': { npm: 'pkg', version: '2.0.0', path: 'y.wasm' } } });

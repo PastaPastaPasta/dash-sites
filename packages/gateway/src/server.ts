@@ -4,6 +4,7 @@ import {
   ContentError,
   ExternalAssetError,
   cdnSource,
+  type ExternalAsset,
   type ExternalSource,
   dashHeaders,
   decide,
@@ -132,8 +133,9 @@ export function createGateway(options: GatewayOptions): RequestListener {
   const externalFailed = new LruCache<{ until: number; error: unknown }>(10_000);
   // Verified bytes, so a file evicted from `files` (or read for another entry) is not fetched again.
   const externalBytes = new LruCache<Uint8Array>(config.chunkCacheBytes / 4, (bytes) => bytes.length);
+  const externalKey = (asset: ExternalAsset, size: number): string => `${asset.npm}@${asset.version}/${asset.path}#${asset.integrity}:${size}`;
   const external: ExternalSource = (asset, size) => {
-    const key = `${asset.npm}@${asset.version}/${asset.path}#${asset.integrity}:${size}`;
+    const key = externalKey(asset, size);
     const kept = externalBytes.get(key);
     if (kept) return Promise.resolve(kept);
     const failed = externalFailed.get(key);
@@ -155,7 +157,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
     return pending;
   };
   // An external file whose bytes match its SHA-384 but not the entry's SHA-256 or size: refused
-  // for a while without reading it again.
+  // for a while without reading it again. Keyed by the whole entry, so it never refuses another site's file.
   const badExternalFiles = new LruCache<number>(10_000);
 
   const chunkSource = (ownerId: string): ChunkSource => async (hashes) => {
@@ -299,7 +301,8 @@ export function createGateway(options: GatewayOptions): RequestListener {
     // the stored bytes are only reused for an entry stored the same way.
     const fileKey = `${entry.sha256}:${entry.ext ? 'ext' : (entry.enc ?? 'plain')}`;
     let content = files.get(fileKey);
-    if (!content && entry.ext && (badExternalFiles.get(fileKey) ?? 0) > now()) {
+    const badKey = entry.ext ? `${externalKey(entry.ext, entry.size)}#${entry.sha256}` : '';
+    if (!content && entry.ext && (badExternalFiles.get(badKey) ?? 0) > now()) {
       return html(502, messagePage('Unavailable', 'This file cannot be served', 'Its stored content is incomplete or does not match the hash its owner published.', config), domain);
     }
     if (!content) {
@@ -312,7 +315,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
           return html(502, messagePage('Unavailable', 'This file cannot be served', `It is a file of the npm package ${escapeHtml(`${error.asset.npm}@${error.asset.version}`)}, and no npm mirror served it with the hash its owner published.`, config), domain);
         }
         if (!(error instanceof ContentError)) throw error;
-        if (entry.ext) badExternalFiles.set(fileKey, now() + 5 * 60 * SECOND);
+        if (entry.ext) badExternalFiles.set(badKey, now() + 5 * 60 * SECOND);
         log({ event: 'bad-file', name: normalized, path: decision.path, error: error.message });
         return html(502, messagePage('Unavailable', 'This file cannot be served', 'Its stored content is incomplete or does not match the hash its owner published.', config), domain);
       }
