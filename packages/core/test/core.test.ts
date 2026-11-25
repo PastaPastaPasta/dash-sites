@@ -19,9 +19,12 @@ import {
   readFile,
   resolveName,
   sha256Hex,
+  unpublishSite,
   utf8,
   validateManifest,
   type ContentRef,
+  type PlatformReader,
+  type PlatformWriter,
   type SiteFile,
 } from '../src/index.js';
 import { MemoryPlatform } from '../src/memory.js';
@@ -244,7 +247,7 @@ describe('resolve and publish', () => {
     expect(first.uploaded).toBe(bundle.chunks.size);
     const second = await publishSite(alice, 'ALICE', bundle);
     expect(second.uploaded).toBe(0);
-    expect(second.site.revision).toBe(2);
+    expect(second.site.revision).toBe(3);
 
     const resolved = await resolveName(alice, 'a1ice.dash');
     expect(resolved.status).toBe('ok');
@@ -270,31 +273,78 @@ describe('resolve and publish', () => {
     await expect(publishSite(platform.as('bob-id'), 'carol', buildSite(SITE))).rejects.toThrow(/not registered/);
   });
 
-  it('ignores a site published by someone who does not own the name', async () => {
+  it('resolves a published name with one read, and never reads DPNS for it', async () => {
     const platform = setup();
-    await platform.as('mallory-id').putSite(platform.domains.get('a11ce')!, buildSite(SITE).contentUri);
+    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
+    const inner = platform.as('anyone');
+    const reads: string[] = [];
+    const reader: PlatformReader = {
+      getDomain: (label) => (reads.push('domain'), inner.getDomain(label)),
+      getSite: (label) => (reads.push('site'), inner.getSite(label)),
+      getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
+    };
+    expect((await resolveName(reader, 'alice.dash')).status).toBe('ok');
+    expect(reads).toEqual(['site']);
+    expect((await resolveName(reader, 'bob.dash')).status).toBe('no-site');
+    expect(reads).toEqual(['site', 'site', 'domain']);
+  });
+
+  it('has no way to write a site record for a name the identity does not own', async () => {
+    const platform = setup();
+    const alice = platform.domains.get('a11ce')!;
+    await expect(platform.as('mallory-id').putSite(alice, buildSite(SITE).contentUri)).rejects.toThrow(/does not own/);
+    await expect(platform.as('alice-id').putSite({ ...alice, label: 'a1ice' }, buildSite(SITE).contentUri)).rejects.toThrow(/does not own/);
     expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('no-site');
   });
 
-  it('follows the name when it changes hands', async () => {
+  it('keeps the previous owner\'s site after a name changes hands, until the new owner writes', async () => {
     const platform = setup();
-    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
+    const reader = platform.as('anyone');
+    const aliceSite = buildSite(SITE);
+    await publishSite(platform.as('alice-id'), 'alice', aliceSite);
     platform.transferName('alice', 'carol-id');
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('no-site');
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id' });
+    await expect(publishSite(platform.as('alice-id'), 'alice', buildSite(SITE))).rejects.toThrow(/owned by carol-id/);
+    await expect(platform.as('alice-id').putSite(platform.domains.get('a11ce')!, 'ipfs://bafyold')).rejects.toThrow(/does not own/);
+
     const carolSite = buildSite([{ path: '/index.html', bytes: text('carol') }]);
     await publishSite(platform.as('carol-id'), 'alice', carolSite);
-    const resolved = await resolveName(platform.as('anyone'), 'alice.dash');
-    expect(resolved.status === 'ok' && resolved.site.content).toBe(carolSite.contentUri);
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'carol-id', site: { content: carolSite.contentUri } });
   });
 
-  it('does not bring back an old site when a name returns to a previous owner', async () => {
+  it('lets a new owner take down a site without publishing one', async () => {
     const platform = setup();
     await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
     platform.transferName('alice', 'carol-id');
-    platform.transferName('alice', 'alice-id');
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('no-site');
+    expect(await unpublishSite(platform.as('carol-id'), 'alice')).toBe(true);
+    expect(await resolveName(platform.as('anyone'), 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'carol-id', canonicalLabel: 'alice' });
+    expect(await unpublishSite(platform.as('carol-id'), 'alice')).toBe(false);
+  });
+
+  it('never brings an earlier owner\'s site back when the latest one is taken down', async () => {
+    const platform = setup();
+    const reader = platform.as('anyone');
     await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
-    expect((await resolveName(platform.as('anyone'), 'alice.dash')).status).toBe('ok');
+    platform.transferName('alice', 'carol-id');
+    await publishSite(platform.as('carol-id'), 'alice', buildSite([{ path: '/index.html', bytes: text('carol') }]));
+    await unpublishSite(platform.as('carol-id'), 'alice');
+    expect((await resolveName(reader, 'alice.dash')).status).toBe('no-site');
+
+    platform.transferName('alice', 'alice-id');
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'no-site', ownerId: 'carol-id' });
+    await publishSite(platform.as('alice-id'), 'alice', buildSite(SITE));
+    expect(await resolveName(reader, 'alice.dash')).toMatchObject({ status: 'ok', ownerId: 'alice-id', site: { revision: 3 } });
+  });
+
+  const stored = async (writer: PlatformWriter) => (await Promise.all((await writer.listSites()).map((site) => writer.listChunks(site.id)))).flat();
+
+  it('stores chunks under the owner\'s site record, and nobody else can add to it', async () => {
+    const platform = setup();
+    const bundle = buildSite(SITE);
+    const { site } = await publishSite(platform.as('alice-id'), 'alice', bundle);
+    expect((await platform.as('anyone').getChunks(site.id, [...bundle.chunks.keys()])).size).toBe(bundle.chunks.size);
+    const [hash, data] = [...buildSite([{ path: '/index.html', bytes: text('mallory') }]).chunks][0]!;
+    await expect(platform.as('mallory-id').createChunk(site.id, hash, data)).rejects.toThrow(/did not write site record/);
   });
 
   it('collects chunks no site references', async () => {
@@ -304,10 +354,38 @@ describe('resolve and publish', () => {
     const v2 = buildSite([{ path: '/index.html', bytes: text('new') }]);
     await publishSite(alice, 'alice', v1);
     await publishSite(alice, 'alice', v2);
-    const before = (await alice.listChunks()).length;
+    const before = (await stored(alice)).length;
     const deleted = await collectGarbage(alice);
     expect(deleted).toBe(v1.chunks.size);
-    expect((await alice.listChunks()).length).toBe(before - deleted);
-    expect((await alice.listChunks()).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+    expect((await stored(alice)).length).toBe(before - deleted);
+    expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
+  });
+
+  it('collects the chunks of a site taken down, and of a sold name once the buyer has written a record', async () => {
+    const platform = setup();
+    platform.registerName('second', 'alice-id');
+    const alice = platform.as('alice-id');
+    const kept = buildSite([{ path: '/index.html', bytes: text('kept') }]);
+    await publishSite(alice, 'alice', buildSite(SITE));
+    await publishSite(alice, 'second', kept);
+    await unpublishSite(alice, 'alice');
+    await collectGarbage(alice);
+    expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...kept.chunks.keys()].sort());
+
+    platform.transferName('second', 'carol-id');
+    expect(await collectGarbage(alice)).toBe(0);
+    expect((await resolveName(alice, 'second')).status).toBe('ok');
+
+    await unpublishSite(platform.as('carol-id'), 'second');
+    await collectGarbage(alice);
+    expect(await stored(alice)).toEqual([]);
+  });
+
+  it('writes nothing on a first publish the identity cannot pay for', async () => {
+    const platform = setup();
+    platform.funds = 1n;
+    const alice = platform.as('alice-id');
+    await expect(publishSite(alice, 'alice', buildSite(SITE))).rejects.toThrow(/costs about/);
+    expect(await alice.listSites()).toEqual([]);
   });
 });

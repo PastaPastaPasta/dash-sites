@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSite, normalizeLabel, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, normalizeLabel, publishSite, unpublishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
@@ -47,12 +47,12 @@ class Harness {
   start(label = 'alice'): SiteHost {
     const inner = this.platform.as('reader');
     const reader: PlatformReader = {
-      getDomain: async (name) => {
+      getDomain: (name) => inner.getDomain(name),
+      getSite: async (name) => {
         this.reads += 1;
         if (this.down) throw new Error('platform down');
-        return inner.getDomain(name);
+        return inner.getSite(name);
       },
-      getSite: (owner, domain) => inner.getSite(owner, domain),
       getChunks: (owner, hashes) => {
         this.chunkReads += 1;
         return inner.getChunks(owner, hashes);
@@ -250,7 +250,7 @@ describe('site host', () => {
     }
   });
 
-  it('resets open pages when the name changes owner while the worker is running', async () => {
+  it('resets open pages when a new owner of the name writes its record while the worker is running', async () => {
     const h = new Harness();
     await h.publish('alice-id', 'one');
     await h.open();
@@ -258,6 +258,7 @@ describe('site host', () => {
     await h.settle();
     expect(h.store.chunks.size).toBeGreaterThan(0);
     h.platform.transferName('alice', 'bob-id');
+    await unpublishSite(h.platform.as('bob-id'), 'alice');
     h.clock += 60_000;
     expect(body(await h.get('/'))).toContain('one');
     await h.settle();

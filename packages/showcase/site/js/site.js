@@ -38,7 +38,6 @@ async function fill() {
     set('r-name', r.name);
     set('r-network', r.network);
     set('r-owner', r.ownerId);
-    set('r-domain', r.domainId);
     set('r-site', r.site.id);
     set('r-revision', String(r.site.revision));
     set('r-published', new Date(r.site.updatedAt).toLocaleString());

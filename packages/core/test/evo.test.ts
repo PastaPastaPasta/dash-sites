@@ -1,12 +1,12 @@
-import { ensureInitialized, PrivateKey } from '@dashevo/evo-sdk';
+import { ensureInitialized, PrivateKey, type Document } from '@dashevo/evo-sdk';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as secp from '@noble/secp256k1';
 import { base58 } from '@scure/base';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { toHex } from '../src/bytes.js';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { sha256Hex, toHex } from '../src/bytes.js';
 import { networkConfig } from '../src/config.js';
-import { EvoWriter, KeyRefused, withReadDeadline } from '../src/evo.js';
+import { EvoReader, EvoWriter, KeyRefused, withReadDeadline } from '../src/evo.js';
 
 const CONFIG = networkConfig('testnet');
 const IDENTITY = base58.encode(new Uint8Array(32).fill(4));
@@ -77,6 +77,112 @@ describe('signing key', () => {
     expect(await writer.keyLive()).toBe(true);
     keys[0] = key({ disabledAt: 9n });
     expect(await writer.keyLive()).toBe(false);
+  });
+});
+
+describe('reading a site', () => {
+  const SITE_ID = base58.encode(new Uint8Array(32).fill(6));
+  const metadata = { toJSON: () => ({ height: 9, timeMs: 1, coreChainLockedHeight: 1, protocolVersion: 14 }) };
+  const record = {
+    id: { toBase58: () => SITE_ID },
+    ownerId: { toBase58: () => IDENTITY },
+    revision: 2n,
+    updatedAt: 5n,
+    toObject: () => ({ label: 'Alice', normalizedLabel: 'a11ce', content: 'ipfs://x' }),
+  };
+  const bytes = [new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])];
+  const hashes = bytes.map(sha256Hex);
+  const chunk = (index: number) => ({ toObject: () => ({ hash: Uint8Array.from(Buffer.from(hashes[index] as string, 'hex')), d0: bytes[index] }) });
+
+  function reader(composite: () => Promise<unknown>) {
+    const queries: Array<{ documentTypeName: string; where: unknown[][] }> = [];
+    const documents = {
+      compositeWithProof: composite,
+      queryWithProof: async (query: { documentTypeName: string; where: unknown[][] }) => {
+        queries.push(query);
+        const data = query.documentTypeName === 'site' ? new Map([[SITE_ID, record]]) : new Map([['c', chunk(2)]]);
+        return { data, metadata };
+      },
+    };
+    return { reader: new EvoReader({ documents } as never, CONFIG), queries };
+  }
+  const withChunks = async () => ({ data: { pageDocuments: [record], subResults: [{ kind: 'documents', documents: [chunk(0), chunk(1)] }] }, metadata });
+
+  it('gets the record and its chunks in one query, and asks only for chunks it was not sent', async () => {
+    const { reader: platform, queries } = reader(withChunks);
+    const site = await platform.getSite('a11ce', true);
+    expect(site).toEqual({ value: { id: SITE_ID, ownerId: IDENTITY, label: 'Alice', normalizedLabel: 'a11ce', content: 'ipfs://x', revision: 2, updatedAt: 5 }, meta: { height: 9, timeMs: 1, coreChainLockedHeight: 1, protocolVersion: 14 } });
+    expect(await platform.getChunks(SITE_ID, [hashes[0] as string, hashes[1] as string])).toEqual(new Map([[hashes[0], bytes[0]], [hashes[1], bytes[1]]]));
+    expect(queries).toEqual([]);
+
+    const mixed = await platform.getChunks(SITE_ID, [hashes[0] as string, hashes[2] as string]);
+    expect([...mixed.keys()].sort()).toEqual([hashes[0], hashes[2]].sort());
+    expect(queries).toHaveLength(1);
+    expect(queries[0]?.where).toEqual([['site', '==', SITE_ID], ['hash', 'in', [base58.encode(Buffer.from(hashes[2] as string, 'hex'))]]]);
+  });
+
+  it('does not hand out chunks sent for another record', async () => {
+    const { reader: platform, queries } = reader(withChunks);
+    await platform.getSite('a11ce', true);
+    await platform.getChunks(base58.encode(new Uint8Array(32).fill(1)), [hashes[0] as string]);
+    expect(queries).toHaveLength(1);
+  });
+
+  it('reads the record alone when the combined query fails, and when no chunks are wanted', async () => {
+    const failing = reader(() => Promise.reject(new Error('unsupported')));
+    expect((await failing.reader.getSite('a11ce', true)).value?.id).toBe(SITE_ID);
+    expect(failing.queries.map((query) => query.documentTypeName)).toEqual(['site']);
+
+    let composites = 0;
+    const plain = reader(async () => {
+      composites += 1;
+      return withChunks();
+    });
+    await plain.reader.getSite('a11ce');
+    expect(composites).toBe(0);
+    expect(plain.queries.map((query) => query.documentTypeName)).toEqual(['site']);
+  });
+});
+
+describe('writing a site record', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('replaces the record it wrote even when a node still answers from before the write', async () => {
+    vi.useFakeTimers();
+    const metadata = { toJSON: () => ({}) };
+    const writes: string[] = [];
+    let stored: Document | undefined;
+    let stale = 0;
+    const sdk = {
+      ...(sdkWith([key()]) as object),
+      wasm: { version: () => 14 },
+      documents: {
+        queryWithProof: async () => ({ data: new Map(stored && stale-- <= 0 ? [['id', stored]] : []), metadata }),
+        create: async ({ document }: { document: Document }) => {
+          writes.push('create');
+          stored = document;
+        },
+        replace: async ({ document }: { document: Document }) => {
+          writes.push('replace');
+          stored = document;
+        },
+      },
+    };
+    const writer = await EvoWriter.on(sdk as never, CONFIG, { identityId: IDENTITY, privateKey: SECRET });
+    const domain = { id: 'domain', ownerId: IDENTITY, label: 'Alice', normalizedLabel: 'a11ce' };
+    expect(await writer.putSite(domain)).toMatchObject({ revision: 1, label: 'Alice' });
+
+    stale = 2;
+    const second = writer.putSite(domain, 'ipfs://x');
+    await vi.runAllTimersAsync();
+    expect(await second).toMatchObject({ revision: 2, content: 'ipfs://x' });
+
+    const third = writer.putSite(domain);
+    await vi.runAllTimersAsync();
+    const down = await third;
+    expect(down.revision).toBe(3);
+    expect(down.content).toBeUndefined();
+    expect(writes).toEqual(['create', 'replace', 'replace']);
   });
 });
 

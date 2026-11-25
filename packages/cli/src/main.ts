@@ -13,8 +13,8 @@ import {
   publishSite,
   readFile,
   decide,
-  requireOwnedName,
   resolveName,
+  unpublishSite,
   type Network,
   type NetworkConfig,
   type PlatformReader,
@@ -28,7 +28,7 @@ const USAGE = `dash-sites: websites on Dash Platform names
 
   dash-sites publish <dir> --name <name> [--spa] [--dry-run]   publish a folder as <name>.dash
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
-  dash-sites unpublish --name <name>                           remove the site record
+  dash-sites unpublish --name <name>                           take the site down
   dash-sites gc                                                delete stored chunks no site uses
   dash-sites register <label>                                  register <label>.dash for this identity
   dash-sites names                                             list the names this identity owns
@@ -151,8 +151,7 @@ const commands: Record<string, () => Promise<void>> = {
   async unpublish() {
     const name = requireName();
     const writer = await EvoWriter.connectAs(network(), credentials());
-    const domain = await requireOwnedName(writer, name);
-    print({ removed: await writer.deleteSite(domain.id) });
+    print({ removed: await unpublishSite(writer, name) });
   },
 
   async gc() {
@@ -182,9 +181,9 @@ const commands: Record<string, () => Promise<void>> = {
   async fetch() {
     const name = positionals[1] ?? fail('fetch needs a name');
     const reader = await EvoReader.connect(network());
-    const resolution = await resolveName(reader, name);
+    const resolution = await resolveName(reader, name, { preload: true });
     if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
-    const source = (hashes: string[]) => reader.getChunks(resolution.ownerId, hashes);
+    const source = (hashes: string[]) => reader.getChunks(resolution.site.id, hashes);
     const manifest = await loadManifest(resolution.content, source);
     const decision = decide(manifest, positionals[2] ?? '/');
     if (decision.kind !== 'file') fail(`no file at ${positionals[2] ?? '/'}`);

@@ -2,7 +2,7 @@ import { createServer, request, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { gunzipSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildSite, publishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, publishSite, unpublishSite, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { createGateway, emptyDenylist, parseDenylist, parseDomain, RefreshingCache, type GatewayConfig } from '../src/index.js';
 
@@ -54,12 +54,12 @@ class Harness {
     this.platform.now = () => this.clock;
     const inner = this.platform.as('reader');
     const reader: PlatformReader = {
-      getDomain: async (label) => {
+      getDomain: (label) => inner.getDomain(label),
+      getSite: async (label) => {
         this.reads += 1;
         if (this.failReads) throw new Error('platform down');
-        return inner.getDomain(label);
+        return inner.getSite(label);
       },
-      getSite: (owner, domain) => inner.getSite(owner, domain),
       getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
     };
     this.config = config(overrides);
@@ -210,7 +210,7 @@ describe('gateway', () => {
     const nav = await h.get('alice.id.example.org', '/', { 'sec-fetch-dest': 'document' });
     expect(nav.headers['clear-site-data']).toBe('"cache", "storage"');
     const cookie = String((nav.headers['set-cookie'] as string[])[0]);
-    expect(cookie).toMatch(/^__Host-dash-epoch=alice-id\.\d+; Path=\/; Max-Age=\d+; Secure; HttpOnly; SameSite=Lax$/);
+    expect(cookie).toMatch(/^__Host-dash-epoch=alice-id; Path=\/; Max-Age=\d+; Secure; HttpOnly; SameSite=Lax$/);
     expect(nav.headers['cache-control']).toBe('private, no-cache');
     const pair = cookie.split(';')[0] as string;
 
@@ -318,6 +318,7 @@ describe('gateway resilience', () => {
 
       h.failReads = false;
       h.platform.transferName('alice', 'carol-id');
+      await unpublishSite(h.platform.as('carol-id'), 'alice');
       h.clock += 10 * 60 * 1000;
       const sold = await h.get('alice.id.example.org', '/');
       expect(sold.status).toBe(404);

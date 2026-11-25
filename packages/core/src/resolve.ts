@@ -1,6 +1,6 @@
 import { parseContentUri, type ContentRef } from './content.js';
 import { parseName } from './names.js';
-import type { DomainRecord, PlatformReader, ProofMeta, SiteRecord } from './platform.js';
+import type { PlatformReader, ProofMeta, PublishedSite } from './platform.js';
 
 interface Named {
   normalized: string;
@@ -8,9 +8,9 @@ interface Named {
 }
 
 interface Owned extends Named {
-  domain: DomainRecord;
   /** The one host label a name is served under: the registered label, lowercased. */
   canonicalLabel: string;
+  /** The identity that wrote the name's site record; for a name without one, the name's owner. */
   ownerId: string;
 }
 
@@ -18,35 +18,43 @@ export type Resolution =
   | { status: 'invalid' }
   | ({ status: 'unregistered' } & Named)
   | ({ status: 'no-site' } & Owned)
-  | ({ status: 'unsupported'; site: SiteRecord } & Owned)
-  | ({ status: 'ok'; site: SiteRecord; content: ContentRef } & Owned);
+  | ({ status: 'unsupported'; site: PublishedSite } & Owned)
+  | ({ status: 'ok'; site: PublishedSite; content: ContentRef } & Owned);
 
 /**
- * Resolves a name to its site record. The site is the one published by the name's current
- * owner (`$ownerId` of the DPNS domain document) since the name last changed hands; documents
- * by anyone else, or from before the transfer, are never served.
+ * Resolves a name with one proved read: the site record written last for it, and with
+ * `preload` the first chunks stored under that record in the same read. Platform takes a
+ * site record only from the identity that owns the DPNS name at that moment and never deletes
+ * one, so the last record is the last word of the last owner who published. A name that changes
+ * hands keeps the previous owner's site until the new owner writes a record. DPNS is read only
+ * for a name without a record, to tell a registered name from a free one.
  */
-export async function resolveName(reader: PlatformReader, input: string): Promise<Resolution> {
+export async function resolveName(reader: PlatformReader, input: string, options: { preload?: boolean } = {}): Promise<Resolution> {
   const name = parseName(input);
   if (!name) return { status: 'invalid' };
-  const domain = await reader.getDomain(name.normalized);
-  if (!domain.value) return { status: 'unregistered', normalized: name.normalized, meta: domain.meta };
-  if (domain.value.normalizedLabel !== name.normalized) throw new Error('DPNS answered with a different name');
-  const ownerId = domain.value.ownerId;
-  const site = reader.noSiteContract ? { value: undefined, meta: domain.meta } : await reader.getSite(ownerId, domain.value.id);
-  const base = {
-    normalized: name.normalized,
-    domain: domain.value,
-    canonicalLabel: domain.value.label.toLowerCase(),
-    ownerId,
-    meta: site.meta,
-  };
-  if (!site.value || site.value.updatedAt < domain.value.transferredAt) return { status: 'no-site', ...base };
-  if (site.value.ownerId !== ownerId || site.value.domainId !== domain.value.id) throw new Error('Platform answered with a different site');
-  const content = parseContentUri(site.value.content);
-  if (!content) return { status: 'unsupported', ...base, site: site.value };
-  return { status: 'ok', ...base, site: site.value, content };
+  const normalized = name.normalized;
+  const site = reader.noSiteContract ? undefined : await reader.getSite(normalized, options.preload);
+  if (site?.value) {
+    const record = site.value;
+    if (record.normalizedLabel !== normalized) throw new Error('Platform answered with a different site');
+    const base = { normalized, canonicalLabel: record.label.toLowerCase(), ownerId: record.ownerId, meta: site.meta };
+    if (record.content === undefined) return { status: 'no-site', ...base };
+    const published = { ...record, content: record.content };
+    const content = parseContentUri(record.content);
+    if (!content) return { status: 'unsupported', ...base, site: published };
+    return { status: 'ok', ...base, site: published, content };
+  }
+  const domain = await reader.getDomain(normalized);
+  if (!domain.value) return { status: 'unregistered', normalized, meta: domain.meta };
+  if (domain.value.normalizedLabel !== normalized) throw new Error('DPNS answered with a different name');
+  return { status: 'no-site', normalized, canonicalLabel: domain.value.label.toLowerCase(), ownerId: domain.value.ownerId, meta: domain.meta };
 }
+
+/**
+ * What a browser's storage for a name belongs to. When it changes, a new owner has published,
+ * and a host clears what the previous owner's site stored.
+ */
+export const ownerEpoch = (resolution: Resolution): string => ('ownerId' in resolution ? resolution.ownerId : '');
 
 /**
  * What a host tells a site about a name: the answer of `site.json` and `resolve/<name>` under
@@ -63,8 +71,6 @@ export function describeResolution(resolution: Resolution, network: string): Rec
   if (resolution.status === 'unregistered') return out;
   out.name = `${resolution.canonicalLabel}.dash`;
   out.ownerId = resolution.ownerId;
-  out.domainId = resolution.domain.id;
-  out.transferredAt = resolution.domain.transferredAt;
   if (resolution.status === 'no-site') return out;
   out.site = { id: resolution.site.id, revision: resolution.site.revision, updatedAt: resolution.site.updatedAt, content: resolution.site.content };
   return out;

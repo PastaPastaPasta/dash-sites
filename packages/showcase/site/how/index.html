@@ -29,12 +29,12 @@
     <p>Open it through a gateway host such as <code>p2p.id.dashhq.org</code>, or type the name itself with the extension installed.</p>
   </li>
   <li>
-    <div class="what">Name document <span class="live" id="r-domain">…</span><br>owned by <span class="live" id="r-owner">…</span></div>
-    <p>Names live in Dash Platform's name service, DPNS. The reader asks for the name's document and gets it with a proof signed by the network's validators. The document's owner is the only identity whose site will be shown.</p>
+    <div class="what">The name's owner, <span class="live" id="r-owner">…</span></div>
+    <p>Names live in Dash Platform's name service, DPNS. The network takes a site document for a name only from the identity that owns the name at that moment, and checks this itself each time one is written. Nobody else can publish under the name, so the reader does not have to ask who owns it.</p>
   </li>
   <li>
     <div class="what">Site document <span class="live" id="r-site">…</span><br>revision <span class="live" id="r-revision">…</span>, content <span class="live" id="r-content">…</span></div>
-    <p>The owner keeps one site document per name. It holds a single line: the hash of the site's manifest. Publishing a new version replaces that line, and the revision goes up by one.</p>
+    <p>The owner keeps one site document per name. It holds a single line: the hash of the site's manifest. Publishing a new version replaces that line, and the revision goes up by one. The reader asks for the document written last for the name and gets it with a proof signed by the network's validators.</p>
   </li>
   <li>
     <div class="what">Manifest: <span class="live" id="m-files">…</span> files in <span class="live" id="m-documents">…</span> chunk documents</div>

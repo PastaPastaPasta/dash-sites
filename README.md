@@ -16,10 +16,13 @@ Platform; there is no web host.
 | Design | [docs/DESIGN.md](docs/DESIGN.md) |
 
 The testnet data contract is
-`3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx`. The mainnet contract is
-`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`. `dash.site` opens mainnet
-names (`alice.dash.site`) as a static site: the same static page for every
-name, served from a Cloudflare Worker with no server.
+`6mfB1X8wg4xfYbac7U88rHeJmTApLb3Y3CNf8UhCSRhK`. Dash Platform accepts a site
+record for a name only from the identity that owns the name. This contract is
+not registered on mainnet yet; the earlier mainnet contract,
+`5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s`, had no such rule and is no
+longer read. `dash.site` opens mainnet names (`alice.dash.site`) as a static
+site: the same static page for every name, served from a Cloudflare Worker
+with no server.
 
 ## How a site is opened
 
@@ -64,8 +67,8 @@ and set the extension's gateway to `http://localhost:8080`.
 
 ## Publish a site
 
-The hosted builder publishes on testnet. To publish on mainnet, use the CLI
-below with `--network mainnet`.
+The hosted builder publishes on testnet. Mainnet publishing opens when the
+contract is registered there; the CLI below then takes `--network mainnet`.
 
 **In the browser**: open the [builder](https://dash-sites.thepasta.org/) and
 choose **Sign in with DashPay**. Scan the code with the DashPay app (More,

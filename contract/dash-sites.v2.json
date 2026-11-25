@@ -1,0 +1,178 @@
+{
+  "site": {
+    "type": "object",
+    "documentsMutable": true,
+    "canBeDeleted": false,
+    "properties": {
+      "normalizedParentDomainName": {
+        "type": "string",
+        "pattern": "^[a-hj-km-np-z0-9][a-hj-km-np-z0-9-\\.]{0,61}[a-hj-km-np-z0-9]$",
+        "minLength": 2,
+        "maxLength": 63,
+        "position": 0,
+        "description": "normalizedParentDomainName of the DPNS domain the site is published under: dash"
+      },
+      "normalizedLabel": {
+        "type": "string",
+        "pattern": "^[a-hj-km-np-z0-9][a-hj-km-np-z0-9-]{0,61}[a-hj-km-np-z0-9]$",
+        "minLength": 3,
+        "maxLength": 63,
+        "position": 1,
+        "description": "normalizedLabel of that DPNS domain, e.g. a11ce. Platform accepts a create or replace only from the identity that owns the domain, and only with its label.",
+        "refersTo": {
+          "type": "deletableDocument",
+          "contractId": "GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec",
+          "documentType": "domain",
+          "findBy": {
+            "normalizedParentDomainName": "normalizedParentDomainName",
+            "normalizedLabel": "."
+          },
+          "where": {
+            "$ownerId": "$ownerId",
+            "label": "label"
+          }
+        }
+      },
+      "label": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$",
+        "minLength": 3,
+        "maxLength": 63,
+        "position": 2,
+        "description": "label of that DPNS domain as registered, e.g. Alice"
+      },
+      "content": {
+        "type": "string",
+        "pattern": "^[\\x21-\\x7e]+$",
+        "minLength": 1,
+        "maxLength": 2048,
+        "position": 3,
+        "description": "Content URI: dash-manifest:v1:<hex>[,<hex>...] or ipfs://<cid>. A record without one says the name has no site."
+      }
+    },
+    "indices": [
+      {
+        "name": "ownerAndName",
+        "properties": [
+          {
+            "$ownerId": "asc"
+          },
+          {
+            "normalizedParentDomainName": "asc"
+          },
+          {
+            "normalizedLabel": "asc"
+          }
+        ],
+        "unique": true
+      },
+      {
+        "name": "name",
+        "properties": [
+          {
+            "normalizedParentDomainName": "asc"
+          },
+          {
+            "normalizedLabel": "asc"
+          },
+          {
+            "$updatedAt": "asc"
+          }
+        ]
+      },
+      {
+        "name": "updated",
+        "properties": [
+          {
+            "$updatedAt": "asc"
+          }
+        ]
+      }
+    ],
+    "required": [
+      "normalizedParentDomainName",
+      "normalizedLabel",
+      "label",
+      "$createdAt",
+      "$updatedAt"
+    ],
+    "additionalProperties": false,
+    "transferable": 0,
+    "tradeMode": 0
+  },
+  "chunk": {
+    "type": "object",
+    "documentsMutable": false,
+    "canBeDeleted": true,
+    "properties": {
+      "site": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 0,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "$id of the site record the chunk belongs to. Platform accepts a chunk only from the identity that wrote that record.",
+        "refersTo": {
+          "type": "permanentDocument",
+          "documentType": "site",
+          "where": {
+            "$ownerId": "$ownerId"
+          }
+        }
+      },
+      "hash": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 32,
+        "maxItems": 32,
+        "position": 1,
+        "contentMediaType": "application/x.dash.dpp.identifier",
+        "description": "sha256 of d0 || d1 || d2. Typed as an identifier so that queries take it in base58."
+      },
+      "d0": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 4900,
+        "position": 2
+      },
+      "d1": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 4900,
+        "position": 3
+      },
+      "d2": {
+        "type": "array",
+        "byteArray": true,
+        "minItems": 1,
+        "maxItems": 4900,
+        "position": 4
+      }
+    },
+    "indices": [
+      {
+        "name": "siteAndHash",
+        "properties": [
+          {
+            "site": "asc"
+          },
+          {
+            "hash": "asc"
+          }
+        ],
+        "unique": true
+      }
+    ],
+    "required": [
+      "site",
+      "hash",
+      "d0"
+    ],
+    "additionalProperties": false,
+    "transferable": 0,
+    "tradeMode": 0
+  }
+}

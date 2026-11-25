@@ -80,21 +80,11 @@ describe('denylist', () => {
 
 describe('networks without a dash-sites contract', () => {
   it('gives readers a config with no contract instead of throwing', () => {
-    const mainnet = DEPLOYMENTS.mainnet;
-    delete DEPLOYMENTS.mainnet;
-    try {
-      expect(() => networkConfig('mainnet')).toThrow(/no contract on mainnet/);
-      expect(readerConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '' });
-      expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
-    } finally {
-      DEPLOYMENTS.mainnet = mainnet;
-    }
+    expect(DEPLOYMENTS.mainnet).toBeUndefined();
+    expect(() => networkConfig('mainnet')).toThrow(/no contract on mainnet/);
+    expect(readerConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '' });
+    expect(readerConfig('mainnet', 'override')).toEqual({ network: 'mainnet', contractId: 'override' });
     expect(readerConfig('testnet').contractId).toBe(networkConfig('testnet').contractId);
-  });
-
-  it('knows the mainnet contract', () => {
-    expect(networkConfig('mainnet')).toEqual({ network: 'mainnet', contractId: '5cDiGVXZzsLs5e8Tqyje9UR5corRxjHFck7VxC6k7m4s' });
-    expect(readerConfig('mainnet')).toEqual(networkConfig('mainnet'));
   });
 
   it('resolves registered names to no-site without asking for a site record', async () => {
@@ -106,9 +96,9 @@ describe('networks without a dash-sites contract', () => {
     const reader: PlatformReader = {
       noSiteContract: true,
       getDomain: (label) => inner.getDomain(label),
-      getSite: (owner, domain) => {
+      getSite: (label) => {
         siteReads += 1;
-        return inner.getSite(owner, domain);
+        return inner.getSite(label);
       },
       getChunks: (owner, hashes) => inner.getChunks(owner, hashes),
     };

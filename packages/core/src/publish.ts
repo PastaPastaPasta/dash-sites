@@ -1,4 +1,5 @@
 import { parseContentUri } from './content.js';
+import { estimateCredits, formatDash } from './cost.js';
 import { parseName } from './names.js';
 import type { SiteBundle } from './pack.js';
 import type { DomainRecord, PlatformWriter, SiteRecord } from './platform.js';
@@ -26,10 +27,10 @@ export interface PublishResult {
 
 const QUERY_BATCH = 100;
 
-async function storedHashes(writer: PlatformWriter, hashes: string[]): Promise<Set<string>> {
+async function storedHashes(writer: PlatformWriter, siteId: string, hashes: string[]): Promise<Set<string>> {
   const present = new Set<string>();
   for (let i = 0; i < hashes.length; i += QUERY_BATCH) {
-    const found = await writer.getChunks(writer.identityId, hashes.slice(i, i + QUERY_BATCH));
+    const found = await writer.getChunks(siteId, hashes.slice(i, i + QUERY_BATCH));
     for (const hash of found.keys()) present.add(hash);
   }
   return present;
@@ -45,7 +46,11 @@ export async function requireOwnedName(writer: PlatformWriter, name: string): Pr
   return domain.value;
 }
 
-/** Uploads the chunks the owner does not already store, then points the name at the new manifest. */
+/**
+ * Uploads the chunks the site does not already store, then points the name at the new manifest.
+ * Chunks are stored under the owner's site record, so a first publish writes that record empty
+ * before the chunks.
+ */
 export async function publishSite(
   writer: PlatformWriter,
   name: string,
@@ -55,12 +60,15 @@ export async function publishSite(
   onProgress({ step: 'check' });
   const domain = await requireOwnedName(writer, name);
   const before = await writer.balance();
+  const existing = (await writer.listSites()).find((site) => site.normalizedLabel === domain.normalizedLabel);
+  if (!existing && before < estimateCredits(bundle)) throw new Error(`the identity holds ${formatDash(before)}, and this site costs about ${formatDash(estimateCredits(bundle))} to store`);
+  const record = existing ?? (await writer.putSite(domain));
   const all = [...bundle.chunks.keys()];
-  const present = await storedHashes(writer, all);
+  const present = await storedHashes(writer, record.id, all);
   const missing = all.filter((hash) => !present.has(hash));
   let done = 0;
   for (const hash of missing) {
-    await writer.createChunk(hash, bundle.chunks.get(hash) as Uint8Array);
+    await writer.createChunk(record.id, hash, bundle.chunks.get(hash) as Uint8Array);
     done += 1;
     onProgress({ step: 'upload', done, total: missing.length, hash });
   }
@@ -76,21 +84,33 @@ export async function publishPointer(writer: PlatformWriter, name: string, conte
   return writer.putSite(await requireOwnedName(writer, name), contentUri);
 }
 
-/** Deletes the chunks no site of this identity references, and returns how many were deleted. */
+/**
+ * Takes down the site of a name the writer owns, a previous owner's included, by writing a record
+ * without content: Platform never deletes a site record. Returns false when there was no site.
+ */
+export async function unpublishSite(writer: PlatformWriter, name: string): Promise<boolean> {
+  const domain = await requireOwnedName(writer, name);
+  if ((await writer.getSite(domain.normalizedLabel)).value?.content === undefined) return false;
+  await writer.putSite(domain);
+  return true;
+}
+
+/**
+ * Deletes the chunks this identity's sites no longer use, and returns how many were deleted.
+ * A record keeps the chunks of its site only while it is the one the name resolves to.
+ */
 export async function collectGarbage(writer: PlatformWriter, onDelete: (hash: string) => void = () => {}): Promise<number> {
-  const keep = new Set<string>();
-  const source = (hashes: string[]) => writer.getChunks(writer.identityId, hashes);
-  for (const site of await writer.listSites()) {
-    const ref = parseContentUri(site.content);
-    if (ref?.scheme !== 'dash-manifest') continue;
-    for (const hash of referencedChunks(ref, await loadManifest(ref, source))) keep.add(hash);
-  }
   let deleted = 0;
-  for (const chunk of await writer.listChunks()) {
-    if (keep.has(chunk.hash)) continue;
-    await writer.deleteChunk(chunk.id);
-    onDelete(chunk.hash);
-    deleted += 1;
+  for (const site of await writer.listSites()) {
+    const ref = site.content === undefined ? undefined : parseContentUri(site.content);
+    const served = ref?.scheme === 'dash-manifest' && (await writer.getSite(site.normalizedLabel)).value?.id === site.id;
+    const keep = served ? referencedChunks(ref, await loadManifest(ref, (hashes) => writer.getChunks(site.id, hashes))) : new Set<string>();
+    for (const chunk of await writer.listChunks(site.id)) {
+      if (keep.has(chunk.hash)) continue;
+      await writer.deleteChunk(chunk.id);
+      onDelete(chunk.hash);
+      deleted += 1;
+    }
   }
   return deleted;
 }

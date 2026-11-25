@@ -2,6 +2,7 @@ import {
   buildSite,
   collectGarbage,
   contentTypeFor,
+  DEPLOYMENTS,
   estimateCredits,
   formatDash,
   isValidLabel,
@@ -10,6 +11,7 @@ import {
   parseName,
   publishSite,
   requireOwnedName,
+  unpublishSite,
   type DomainRecord,
   type Network,
   type SiteBundle,
@@ -27,6 +29,7 @@ declare const __REMEMBER_WALLET__: boolean;
 
 const GATEWAY = __GATEWAY_DOMAIN__;
 const NETWORK = __NETWORK__ as Network;
+const OPEN = DEPLOYMENTS[NETWORK] !== undefined;
 const DRAFT_KEY = 'dash-sites.draft';
 const PICTURE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
 
@@ -183,10 +186,9 @@ async function choose(domain: DomainRecord): Promise<void> {
   renderNames();
   refresh();
   if (!writer) return;
-  const site = (await writer.getSite(writer.identityId, domain.id)).value;
+  const site = (await writer.getSite(domain.normalizedLabel)).value;
   if (chosen?.id !== domain.id) return;
-  const live = site && site.updatedAt >= domain.transferredAt;
-  $('site-status').textContent = live
+  $('site-status').textContent = site?.content !== undefined
     ? `${label()}.dash has a site already (revision ${site.revision}, ${new Date(site.updatedAt).toLocaleDateString()}). Publishing replaces it.`
     : `${label()}.dash has no site yet.`;
 }
@@ -400,7 +402,7 @@ async function signInWithWallet(): Promise<void> {
 }
 
 async function resumeWallet(): Promise<void> {
-  const saved = loadSession(storage('sessionStorage'), NETWORK);
+  const saved = OPEN ? loadSession(storage('sessionStorage'), NETWORK) : undefined;
   if (!saved) return;
   const attempt = ++session;
   const button = $<HTMLButtonElement>('wallet-button');
@@ -687,7 +689,8 @@ function takeHandoff(): void {
 
 function start(): void {
   $('net').textContent = NETWORK;
-  $('net-note').textContent = `This builder publishes on ${NETWORK}.`;
+  $('net-note').textContent = OPEN ? `This builder publishes on ${NETWORK}.` : `Publishing on ${NETWORK} is not open yet.`;
+  for (const id of ['signin-button', 'wallet-button']) $<HTMLButtonElement>(id).disabled = !OPEN;
   $<HTMLInputElement>('title').value = draft.title;
   $<HTMLInputElement>('tagline').value = draft.tagline;
   $<HTMLTextAreaElement>('body').value = draft.body;
@@ -810,7 +813,7 @@ function start(): void {
   $<HTMLButtonElement>('unpublish').addEventListener('click', (event) => {
     if (!confirm(`Take down the site at ${label()}.dash? The name stays yours.`)) return;
     void manage(event.currentTarget as HTMLButtonElement, async (w, domain) => {
-      const removed = await w.deleteSite(domain.id);
+      const removed = await unpublishSite(w, domain.label);
       $('site-status').textContent = `${label()}.dash has no site.`;
       return removed ? 'The site is down. Its files stay stored until you delete them.' : 'There was no site to take down.';
     });

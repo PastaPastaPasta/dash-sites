@@ -13,6 +13,7 @@ import {
   messagePage,
   nameFromPath,
   readFile,
+  ownerEpoch,
   resolveName,
   sha256Hex,
   type ChunkSource,
@@ -90,8 +91,6 @@ export const RESET_PATH = `${HOST_API}reset`;
 /** Where a page goes to have its storage cleared before returning to `url`. */
 export const resetLocation = (url: URL): string => `${RESET_PATH}#${encodeURIComponent(url.pathname + url.search)}`;
 
-const epochOf = (resolution: Resolution): string => ('ownerId' in resolution ? `${resolution.ownerId}.${resolution.domain.transferredAt}` : '');
-
 const resetPage = (nonce: string): string =>
   hostPage(
     'Clearing old data',
@@ -153,12 +152,13 @@ export class SiteHost {
   }
 
   private async check(): Promise<Resolution> {
-    const resolution = await resolveName(await this.options.reader(), this.options.label);
     const before = this.answer?.resolution;
-    if (before && 'meta' in resolution && 'meta' in before && resolution.meta.height < before.meta.height) return before;
     if (!before) this.saved = parseSaved(await this.options.store.loadState().catch(() => undefined));
-    const epoch = epochOf(resolution);
-    const ownerChanged = (before ? epochOf(before) : this.saved?.epoch) !== epoch;
+    const firstVisit = !before && !this.saved;
+    const resolution = await resolveName(await this.options.reader(), this.options.label, { preload: firstVisit });
+    if (before && 'meta' in resolution && 'meta' in before && resolution.meta.height < before.meta.height) return before;
+    const epoch = ownerEpoch(resolution);
+    const ownerChanged = (before ? ownerEpoch(before) : this.saved?.epoch) !== epoch;
     if (ownerChanged) {
       await this.options.store.wipe().catch((error: unknown) => this.options.log?.({ event: 'wipe-failed', error: String(error) }));
       this.manifests.clear();
@@ -199,7 +199,7 @@ export class SiteHost {
     };
   }
 
-  private chunks(ownerId: string): ChunkSource {
+  private chunks(siteId: string): ChunkSource {
     return async (hashes) => {
       const out = new Map<string, Uint8Array>();
       const missing: string[] = [];
@@ -209,7 +209,7 @@ export class SiteHost {
         else missing.push(hash);
       }
       if (missing.length === 0) return out;
-      for (const [hash, data] of await (await this.options.reader()).getChunks(ownerId, missing)) {
+      for (const [hash, data] of await (await this.options.reader()).getChunks(siteId, missing)) {
         if (sha256Hex(data) !== hash) continue;
         out.set(hash, data);
         void this.options.store.putChunk(hash, data).catch(() => undefined);
@@ -224,7 +224,7 @@ export class SiteHost {
     const key = `${resolution.ownerId}/${resolution.site.content}`;
     let manifest = this.manifests.get(key);
     if (!manifest) {
-      manifest = loadManifest(ref, this.chunks(resolution.ownerId));
+      manifest = loadManifest(ref, this.chunks(resolution.site.id));
       this.manifests.set(key, manifest);
       manifest.catch(() => this.manifests.delete(key));
     }
@@ -303,7 +303,7 @@ export class SiteHost {
     if (decision.kind === 'not-found') return this.page(404, '404', 'Page not found', `<code>${dashName}</code> has no page at this address.`);
     let file: Awaited<ReturnType<typeof readFile>>;
     try {
-      file = await readFile(manifest, decision.path, this.chunks(resolution.ownerId));
+      file = await readFile(manifest, decision.path, this.chunks(resolution.site.id));
     } catch (error) {
       if (!(error instanceof ContentError)) throw error;
       return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');

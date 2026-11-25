@@ -9,7 +9,7 @@ const NETWORK = __NETWORK__ as Network;
 const CREDITS_PER_DASH = 1e11;
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
-const cost = (size: number): number => (size * 27_500 + Math.ceil(size / 14_700) * 28_000_000 + 60_000_000) / CREDITS_PER_DASH;
+const cost = (size: number): number => (size * 28_500 + Math.ceil(size / 14_700) * 50_000_000 + 110_000_000) / CREDITS_PER_DASH;
 const dash = (amount: number): string => `${amount < 0.01 ? amount.toFixed(4) : amount.toFixed(3)} DASH`;
 const sizeText = (n: number): string => (n < 10_240 ? `${(n / 1024).toFixed(1)} KB` : n < 1e6 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -68,13 +68,13 @@ input.addEventListener('input', () => {
         const domain = (await platform.getDomain(name.normalized)).value;
         if (mine !== turn) return;
         if (!domain) return say(span('mark', `${full} is free`), ...notes);
-        const site = platform.noSiteContract ? undefined : (await platform.getSite(domain.ownerId, domain.id)).value;
+        const site = platform.noSiteContract ? undefined : (await platform.getSite(name.normalized)).value;
         if (mine !== turn) return;
-        if (site && site.updatedAt >= domain.transferredAt) {
-          const url = `https://${domain.label.toLowerCase()}.${GATEWAY}/`;
+        if (site?.content !== undefined) {
+          const url = `https://${site.label.toLowerCase()}.${GATEWAY}/`;
           return say(`${full} is taken and has a site. `, Object.assign(document.createElement('a'), { href: url, textContent: 'Visit it', target: '_blank', rel: 'noopener' }));
         }
-        say(`${full} is registered and has no site yet. If it is yours, sign in below to publish one.`);
+        say(`${full} is registered and has no site yet. ${platform.noSiteContract ? `Publishing on ${NETWORK} is not open yet.` : 'If it is yours, sign in below to publish one.'}`);
       } catch {
         if (mine === turn) say(span('span', `Could not reach Dash Platform to check ${full}. The editor checks again when you sign in.`, 'bad'));
       }
