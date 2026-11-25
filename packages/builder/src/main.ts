@@ -16,6 +16,7 @@ import {
   type SiteFile,
 } from '@dash-sites/core';
 import type { EvoWriter } from '@dash-sites/core/evo';
+import { AutoSignOut, type SignOutReason } from './sign-out.js';
 import { allowanceText, clearSession, connectionId, countdown, loadSession, qrShape, quietly, saveSession, type KeyValue } from './wallet.js';
 import { dataUrl, normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { EMPTY_DRAFT, isBlank, renderPage, THEMES, type PageDraft, type Theme } from './template.js';
@@ -35,6 +36,14 @@ const loadEvo = () => import('@dash-sites/core/evo');
 const loadConnect = () => import('@dash-sites/core/connect');
 const SVG = 'http://www.w3.org/2000/svg';
 const EXPIRY_MARGIN_MS = 5 * 60_000;
+/** On dash.site the builder shares a site with every user's pages, so a sign-in never outlives its use. */
+const AUTO_SIGN_OUT = !__REMEMBER_WALLET__;
+const IDLE_SIGN_OUT_MS = 10 * 60_000;
+const SIGNED_OUT: Record<SignOutReason, string> = {
+  idle: 'You were signed out after 10 minutes without activity. Your draft is kept.',
+  published: 'Published, and signed out. Sign in again to publish more changes.',
+  left: '',
+};
 const storage = (kind: 'localStorage' | 'sessionStorage'): KeyValue | undefined => quietly(() => window[kind]);
 
 function expiring(key: EvoWriter): boolean {
@@ -53,6 +62,9 @@ let upload: SiteFile[] = [];
 let bundle: SiteBundle | undefined;
 let publishing = false;
 let wantedName: string | undefined;
+let working = 0;
+let leftSignedIn = false;
+const autoSignOut = new AutoSignOut({ idleMs: IDLE_SIGN_OUT_MS, signOut: (reason) => signOut(SIGNED_OUT[reason]), busy: () => publishing || working > 0 });
 
 function loadDraft(): PageDraft {
   try {
@@ -91,8 +103,8 @@ function refresh(): void {
   $('addr-url').textContent = `${label()}.${GATEWAY}`;
   $('preview-url').textContent = `${label()}.${GATEWAY}`;
   setLocked('step-name', !writer);
-  setLocked('step-content', !writer || !chosen);
   setLocked('step-publish', !writer || !chosen);
+  $<HTMLButtonElement>('signout').disabled = publishing || working > 0;
 
   const current = files();
   bundle = undefined;
@@ -107,6 +119,8 @@ function refresh(): void {
   const cost = $('cost');
   if (!bundle) {
     cost.textContent = mode === 'write' ? 'Write something in step 3 first.' : 'Add your site in step 3 first.';
+  } else if (!writer || !chosen) {
+    cost.textContent = writer ? 'Pick a name in step 2 to publish this.' : 'Sign in and pick a name to publish this. Your draft is kept.';
   } else {
     const kb = Math.max(1, Math.round(bundle.stats.storedBytes / 1024));
     const noIndex = bundle.manifest.files['/index.html'] ? '' : ' There is no index.html at the top, so the home page will be empty.';
@@ -184,9 +198,17 @@ function showRegistration(offered: boolean): void {
 }
 
 async function enter(connected: EvoWriter, attempt: number): Promise<void> {
-  const owned = await connected.listOwnedNames(connected.identityId);
-  if (attempt !== session) return;
+  const owned = await connected.listOwnedNames(connected.identityId).catch((error: unknown) => {
+    connected.forget();
+    throw error;
+  });
+  if (attempt !== session) {
+    connected.forget();
+    return;
+  }
   writer = connected;
+  $('signed-out').textContent = '';
+  if (AUTO_SIGN_OUT) autoSignOut.signedIn();
   $('who').textContent = connected.identityId;
   $('signin-ways').hidden = true;
   $('step-signin').querySelector<HTMLElement>('.done')!.hidden = false;
@@ -222,7 +244,10 @@ async function signIn(identity: string, key: string): Promise<void> {
       identityId = domain.ownerId;
     }
     const connected = await evo.EvoWriter.connectAs(config, { identityId, privateKeyWif: key.trim() });
-    if (attempt !== session) return;
+    if (attempt !== session) {
+      connected.forget();
+      return;
+    }
     $<HTMLInputElement>('key').value = '';
     await enter(connected, attempt);
     if (attempt === session) clearSession(storage('sessionStorage'), NETWORK);
@@ -345,12 +370,16 @@ async function signInWithWallet(): Promise<void> {
       }
       progress.textContent = 'Signing in…';
       const connected = await evo.EvoWriter.on(sdk, config, { identityId: grant.identityId, privateKey: grant.privateKey });
-      if (attempt !== session) return;
-      if (expiring(connected)) throw new Error('The key your wallet approved has run out. Start again.');
+      if (attempt !== session || expiring(connected)) {
+        connected.forget();
+        if (attempt !== session) return;
+        throw new Error('The key your wallet approved has run out. Start again.');
+      }
       if (__REMEMBER_WALLET__) {
         saveSession(storage('sessionStorage'), NETWORK, { identityId: grant.identityId, privateKey: grant.privateKey });
         saved = true;
       }
+      grant.privateKey.fill(0);
       await enter(connected, attempt);
       if (attempt === session) cancelWallet();
     } finally {
@@ -380,7 +409,10 @@ async function resumeWallet(): Promise<void> {
   try {
     const evo = await loadEvo();
     const connected = await evo.EvoWriter.connectAs(networkConfig(NETWORK), saved);
-    if (expiring(connected)) throw new evo.KeyRefused('expired');
+    if (expiring(connected)) {
+      connected.forget();
+      throw new evo.KeyRefused('expired');
+    }
     await enter(connected, attempt);
     if (attempt === session) $('wallet-progress').textContent = '';
   } catch (caught) {
@@ -397,39 +429,51 @@ async function resumeWallet(): Promise<void> {
   }
 }
 
-function signOut(): void {
+function signOut(reason = ''): void {
   session += 1;
   cancelWallet();
   clearSession(storage('sessionStorage'), NETWORK);
+  writer?.forget();
   writer = undefined;
   names = [];
   chosen = undefined;
+  autoSignOut.signedOut();
+  $<HTMLInputElement>('key').value = '';
   $('signin-ways').hidden = false;
   $('step-signin').querySelector<HTMLElement>('.done')!.hidden = true;
+  $('signed-out').textContent = reason;
   $('allowance').hidden = true;
   $('balance').textContent = '';
   $('result').hidden = true;
   $('site-status').textContent = '';
+  $('manage-status').textContent = '';
   showRegistration(true);
   renderNames();
   refresh();
 }
 
 async function withName(action: (writer: EvoWriter) => Promise<DomainRecord>, button: HTMLButtonElement, busyText: string): Promise<void> {
-  if (!writer) return;
+  const signer = writer;
+  if (!signer) return;
   const error = $('name-error');
   const text = button.textContent;
   error.textContent = '';
   button.disabled = true;
   button.textContent = busyText;
+  working += 1;
+  refresh();
   try {
-    await choose(await action(writer));
+    const domain = await action(signer);
+    if (signer !== writer) return;
+    await choose(domain);
     await refreshBalance();
   } catch (caught) {
-    error.textContent = message(caught);
+    if (signer === writer) error.textContent = message(caught);
   } finally {
+    working -= 1;
     button.disabled = false;
     button.textContent = text;
+    refresh();
   }
 }
 
@@ -576,6 +620,17 @@ async function publish(): Promise<void> {
     link.textContent = `${published}.${GATEWAY}`;
     $('result').hidden = false;
     if (label() === published) $('site-status').textContent = `${published}.dash has a site (revision ${result.site.revision}). Publishing again replaces it.`;
+    if (signer === writer) {
+      autoSignOut.published();
+      if (!writer) {
+        const open = document.createElement('a');
+        open.href = url;
+        open.target = '_blank';
+        open.rel = 'noopener';
+        open.textContent = `${published}.${GATEWAY}`;
+        $('signed-out').replaceChildren('Published. Open ', open, '. You were signed out; sign in again to publish more changes.');
+      }
+    }
   } catch (caught) {
     status.textContent = '';
     const live = signer.keyLimits.bound ? await signer.keyLive().catch(() => true) : true;
@@ -593,17 +648,23 @@ async function publish(): Promise<void> {
 }
 
 async function manage(button: HTMLButtonElement, action: (writer: EvoWriter, domain: DomainRecord) => Promise<string>): Promise<void> {
-  if (!writer || !chosen) return;
+  const signer = writer;
+  if (!signer || !chosen) return;
   const status = $('manage-status');
   button.disabled = true;
+  working += 1;
+  refresh();
   status.textContent = 'Working…';
   try {
-    status.textContent = await action(writer, chosen);
+    const done = await action(signer, chosen);
+    if (signer === writer) status.textContent = done;
     await refreshBalance();
   } catch (caught) {
-    status.textContent = message(caught);
+    if (signer === writer) status.textContent = message(caught);
   } finally {
+    working -= 1;
     button.disabled = false;
+    refresh();
   }
 }
 
@@ -655,7 +716,22 @@ function start(): void {
       }
     });
   });
-  $('signout').addEventListener('click', signOut);
+  $('signout').addEventListener('click', () => signOut('Signed out.'));
+  $('auto-signout').hidden = !AUTO_SIGN_OUT;
+  if (AUTO_SIGN_OUT) {
+    for (const type of ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart']) document.addEventListener(type, () => autoSignOut.activity(), { passive: true, capture: true });
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && autoSignOut.check());
+    window.addEventListener('pagehide', (event) => {
+      leftSignedIn = writer !== undefined;
+      $<HTMLInputElement>('key').value = '';
+      // A pending DashPay request survives a hand-off to the wallet app; only a page kept in the
+      // back/forward cache, or a signed-in one, is cleared.
+      if (leftSignedIn || event.persisted) autoSignOut.left();
+    });
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted && leftSignedIn) $('signed-out').textContent = 'You were signed out when you left this page. Your draft is kept.';
+    });
+  }
   $('wallet-button').addEventListener('click', () => void signInWithWallet());
   $('wallet-cancel').addEventListener('click', () => {
     session += 1;
