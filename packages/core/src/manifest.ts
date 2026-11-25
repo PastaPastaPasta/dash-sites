@@ -90,7 +90,7 @@ const ENCODING = /^[a-z0-9-]{1,16}$/;
 
 const UNREAD_PLACES = 'lists where it is stored in a form this version cannot read';
 const UNREAD_BOTH = 'is stored outside Platform and on it at once, which this version cannot read';
-const UNREAD_SIZE = 'is larger than this version loads from outside Platform';
+const UNREAD_SIZE = 'is empty, or larger than this version loads from outside Platform';
 const UNREAD_PARTS = 'is stored in a form this version cannot read';
 
 function placesProblem(file: Record<string, unknown>): string | undefined {
@@ -168,6 +168,7 @@ export function encodeManifest(manifest: Manifest): Uint8Array {
   for (const [path, file] of Object.entries(valid.files)) {
     const unread = manifest.files[path]?.unread ?? file.unread;
     if (unread) throw new ManifestError(`${path} ${unread}`);
+    if (file.enc !== undefined && file.enc !== 'gzip') throw new ManifestError(`bad enc in ${path}`);
   }
   return utf8.encode(JSON.stringify(sortKeys(valid)));
 }

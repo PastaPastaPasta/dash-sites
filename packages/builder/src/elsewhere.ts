@@ -192,12 +192,15 @@ export function ipfsInWorker(options: { waitMs?: number; idleMs?: number; fetch?
     };
     started.onerror = () => {
       URL.revokeObjectURL(url);
-      started.terminate();
-      for (const request of waiting.values()) request.reject(new Error('the IPFS client stopped'));
-      waiting.clear();
-      worker = undefined;
+      stop(started, 'the IPFS client stopped');
     };
     return started;
+  };
+  const stop = (running: Worker, problem: string): void => {
+    running.terminate();
+    worker = undefined;
+    for (const request of [...waiting.values()]) request.reject(new Error(problem));
+    waiting.clear();
   };
   return async (uri, size) => {
     worker ??= start().catch((error: unknown) => {
@@ -209,7 +212,7 @@ export function ipfsInWorker(options: { waitMs?: number; idleMs?: number; fetch?
     const idleMs = options.idleMs ?? PLACE_IDLE_MS;
     return new Promise((resolve, reject) => {
       const id = next++;
-      const timer = setTimeout(() => waiting.get(id)?.reject(new Error('the IPFS client did not answer')), waitMs + idleMs + (size / SLOWEST_BYTES_PER_SECOND) * 1000 + 5000);
+      const timer = setTimeout(() => stop(running, 'the IPFS client did not answer'), waitMs + idleMs + (size / SLOWEST_BYTES_PER_SECOND) * 1000 + 5000);
       const settle = <T>(done: (value: T) => void) => (value: T) => {
         clearTimeout(timer);
         waiting.delete(id);

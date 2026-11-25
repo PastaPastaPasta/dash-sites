@@ -125,12 +125,19 @@ export function readPageModel(value: unknown, options: { repair?: boolean } = {}
 
 /** Rich text cut so that its cleaned form, which closes what the cut left open, still fits. */
 function fitRichText(value: string): string {
-  let keep = Math.min(value.length, MAX_RICH);
-  for (;;) {
-    const clean = cleanRichText(value.slice(0, keep)).trim();
-    if (clean.length <= MAX_RICH) return clean;
-    keep = Math.min(keep - 1, Math.floor((keep * MAX_RICH) / clean.length));
+  const cleaned = (keep: number): string => cleanRichText(value.slice(0, keep)).trim();
+  let fits = '';
+  let low = 0;
+  let high = Math.min(value.length, MAX_RICH) + 1;
+  while (high - low > 1) {
+    const keep = (low + high) >> 1;
+    const clean = cleaned(keep);
+    if (clean.length <= MAX_RICH) {
+      fits = clean;
+      low = keep;
+    } else high = keep;
   }
+  return fits;
 }
 
 function tidyValue(field: Field, value: unknown): unknown {

@@ -263,7 +263,11 @@ export function createGateway(options: GatewayOptions): RequestListener {
       } catch (error) {
         if (!(error instanceof ContentError)) throw error;
         log({ event: 'bad-file', name: normalized, path: decision.path, error: error.message });
-        const detail = entry.src ? 'Its owner keeps it outside Dash Platform, and this gateway serves only what is stored on Platform.' : 'Its stored content is incomplete or does not match the hash its owner published.';
+        const detail = entry.unread
+          ? 'It is stored in a form this gateway does not read.'
+          : entry.src
+            ? 'Its owner keeps it outside Dash Platform, and this gateway serves only what is stored on Platform.'
+            : 'Its stored content is incomplete or does not match the hash its owner published.';
         return html(502, messagePage('Unavailable', 'This file cannot be served', detail, config), domain);
       }
       files.set(entry.sha256, content);

@@ -337,7 +337,8 @@ export class SiteHost {
         this.options.log?.({ event: 'elsewhere-failed', path: error.path, attempts: error.attempts });
         return this.page(502, 'Unavailable', 'This file cannot be shown', `<code>${dashName}</code> keeps this file outside Dash Platform, and none of the places its owner listed served the file that was published.`);
       }
-      return this.page(502, 'Unavailable', 'This file cannot be shown', 'Its stored content is incomplete or does not match the hash its owner published.');
+      const unread = manifest.files[decision.path]?.unread;
+      return this.page(502, 'Unavailable', 'This file cannot be shown', unread ? 'It is stored in a form this version of the page does not read yet.' : 'Its stored content is incomplete or does not match the hash its owner published.');
     }
     const headers: Record<string, string> = {
       'Content-Type': file.file.type,

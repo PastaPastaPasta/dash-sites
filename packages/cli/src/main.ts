@@ -225,8 +225,11 @@ const commands: Record<string, () => Promise<void>> = {
     const resolution = await resolveName(reader, name);
     if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
     const manifest = await loadManifest(resolution.content, siteChunks(reader, resolution));
+    const unread = Object.entries(manifest.files).filter(([, file]) => file.unread);
+    for (const [path, file] of unread) console.log(`FAIL ${path}  ${file.unread}`);
+    if (unread.length > 0) process.exitCode = 1;
     const count = Object.values(manifest.files).filter((file) => file.src).length;
-    if (count === 0) return console.log(`${resolution.canonicalLabel}.dash keeps every file on Platform`);
+    if (count === 0) return console.log(unread.length > 0 ? 'some files are stored in a form this version cannot read' : `${resolution.canonicalLabel}.dash keeps every file on Platform`);
     const good = await checkPlaces(manifest.files, outside(resolution.canonicalLabel).fetchers, (line) => console.log(line));
     console.log(good ? `every one of the ${count} files kept outside Platform can be loaded` : 'some files cannot be loaded from any place they list');
     if (!good) process.exitCode = 1;

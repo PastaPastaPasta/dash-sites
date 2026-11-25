@@ -269,7 +269,7 @@ file is instead of holding it:
   checked again on every read. If no place serves the file, that request gets
   a 502 and the rest of the site is unaffected.
 - A file kept outside is read whole before any of it is served, so it is
-  capped at 64 MB, with at most 8 places. It does not count against the 50 MB
+  capped at 64 MiB, with at most 8 places. It does not count against the 50 MB
   a site may store on Platform.
 
 **Staying compatible.** A version 2 reader ignores keys it does not know (in
@@ -279,7 +279,7 @@ know. It refuses only the files it cannot read, each with a 502 of its own:
 - a file whose `enc` it does not know;
 - a file whose `src` is in a form it does not know: not a list of 1 to 8
   different URIs, given together with parts or an `enc`, or for a file that is
-  empty or larger than 64 MB;
+  empty or larger than 64 MiB;
 - a file whose parts do not add up to its size, which is how a file stored
   under a key added later looks to it.
 
@@ -631,7 +631,9 @@ queries for browsers.
   SHA-256, so a wrong answer from it is refused. A flaw in it that lets a
   hostile provider or routing service run code, though, would run as the
   worker of that one name: it could serve that name's visitors bytes the
-  owner never published until the worker is replaced. Three things bound
+  owner never published until the worker is replaced, and it could change
+  what the worker keeps in that browser for the name (the marker of who owns
+  it, the saved denylist), which lasts longer. Three things bound
   this. The worker loads the client only for a site that lists an IPFS place,
   so a site without one never runs it. Each name is its own origin with its
   own worker, so other names are out of reach. And the client is pinned by

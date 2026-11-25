@@ -155,13 +155,14 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     problems.delete(hash);
     unconfirmed.delete(hash);
     try {
-      const room = MAX_PLACES - outsidePlaces(file.bytes).length;
-      if (room <= 0) throw new Error(`A file can list ${MAX_PLACES} places. Remove one first`);
+      const has = outsidePlaces(file.bytes);
+      if (has.length >= MAX_PLACES) throw new Error(`A file can list ${MAX_PLACES} places, and this one already does`);
       if (how === 'address') {
         const { places, unknown } = readPlaces(address);
         if (unknown.length > 0) throw new Error(`${unknown[0]} is not an https:// address or an IPFS CID`);
         if (places.length === 0) throw new Error('Give the address or the IPFS CID of the file');
-        if (places.length > room) throw new Error(`A file can list ${MAX_PLACES} places, and this would make ${MAX_PLACES - room + places.length}`);
+        const total = new Set([...has, ...places]).size;
+        if (total > MAX_PLACES) throw new Error(`A file can list ${MAX_PLACES} places, and this would make ${total}`);
         busy.set(hash, 'Asking for the file…');
         render();
         const failed = (await confirmPlaces(asOutside(file), places, fetchers)).find((result) => result.problem);

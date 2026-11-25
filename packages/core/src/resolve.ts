@@ -49,7 +49,7 @@ export async function resolveName(reader: PlatformReader, input: string): Promis
   return { status: 'ok', ...base, site: site.value, content };
 }
 
-/** Where the chunks of a resolved site are stored. Every reader of a site's files asks through this. */
+/** Where the chunks of a resolved site are read from. */
 export const siteChunks = (reader: PlatformReader, resolution: Extract<Resolution, { status: 'ok' }>): ChunkSource => (hashes) => reader.getChunks(resolution.ownerId, hashes);
 
 /**

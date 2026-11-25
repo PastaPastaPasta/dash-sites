@@ -41,9 +41,9 @@ A version 2 reader:
 - ignores keys it does not know, in the manifest and in a file entry;
 - skips places whose kind it does not know, and uses the ones it does;
 - refuses only the files it cannot read, and serves the rest: a file whose
-  encoding it does not know, whose `src` is in a form it does not know (more
-  than 8 places, or places together with parts), or whose parts do not add up
-  to its size, which is how a file stored under a key added later looks.
+  encoding it does not know, whose `src` is in a form it does not know, or
+  whose parts do not add up to its size, which is how a file stored under a
+  key added later looks. [DESIGN.md](DESIGN.md) §3 lists every case.
 
 So a later shell can add a kind of place (`ar://`, a Blossom hash), a hash
 per piece so large media can be served in ranges, or another encoding, and a
@@ -158,7 +158,7 @@ Uploading is the builder's and the CLI's job, never the shell's.
 | --- | --- |
 | A file kept elsewhere can disappear | The page itself is on Platform and still loads; the missing file does not. List more than one place per file, and run `dash-sites check` |
 | Visitors' browsers contact hosts the owner chose | True of any site today: a page can already link to any address, with no check at all. This adds the check, and sends no cookies or referrer |
-| The whole file is hashed | It is downloaded in full before any of it is served, so a file is capped at 64 MB. Fine for images, documents and scripts; not for streaming video. A hash per piece, with range requests, is the addition the format leaves room for |
+| The whole file is hashed | It is downloaded in full before any of it is served, so a file is capped at 64 MiB. Fine for images, documents and scripts; not for streaming video. A hash per piece, with range requests, is the addition the format leaves room for |
 | The IPFS client is large and comes from npm | It is loaded only for IPFS places and only if its hash matches. If both mirrors are down, IPFS places fail and HTTPS places still load |
 | The site record can already say `ipfs://<cid>` for a whole site | Still unserved. A manifest whose files are all elsewhere does the same job and keeps the proved manifest |
 | The hosted testnet server | Does not fetch outside files, and answers them with an error. It is being retired |
