@@ -3,7 +3,7 @@ import type { EvoReader } from '@dash-sites/core/evo';
 import { onSiteAssetsChange, setSiteAssets, siteAssets } from './assets.js';
 import { keepOutside, onOutsideChange, outsidePlaces, rememberOutside } from './outside.js';
 import { BLOCKS } from './page/blocks.js';
-import { costSplit, fileCredits, sizeText, type CostSplit } from './page/cost.js';
+import { costSplit, platformPrice, sizeText, type CostSplit } from './page/cost.js';
 import { loadPageDraft, savePageDraft } from './page/draft.js';
 import { imagePaths, isBlankModel, tidyPageModel, type PageModel } from './page/model.js';
 import { renderSite } from './page/render.js';
@@ -29,6 +29,9 @@ let options: PageTabOptions;
 let model: PageModel;
 let draftNote = '';
 let reader: Promise<EvoReader> | undefined;
+let revision = 0;
+let reopening = false;
+let editing = false;
 
 /** The files of the page being built, or none while it is empty. */
 export function pageFiles(siteName: string): SiteFile[] {
@@ -55,6 +58,7 @@ function save(): void {
 }
 
 function changed(): void {
+  revision += 1;
   save();
   render();
   options.onChange();
@@ -96,7 +100,7 @@ function render(): void {
       const name = document.createElement('span');
       name.textContent = path;
       const size = document.createElement('span');
-      size.textContent = `${sizeText(asset.bytes.length)}, ${outsidePlaces(asset.bytes).length > 0 ? 'outside Platform' : formatDash(fileCredits(asset))}`;
+      size.textContent = `${sizeText(asset.bytes.length)}, ${outsidePlaces(asset.bytes).length > 0 ? 'outside Platform' : (platformPrice(asset) ?? 'too large for Platform')}`;
       item.append(name, size);
       return [item];
     }),
@@ -107,23 +111,29 @@ function render(): void {
 
 async function openEditor(): Promise<void> {
   const button = $<HTMLButtonElement>('edit-page');
+  if (reopening) return;
   const text = button.textContent;
   button.disabled = true;
   button.textContent = 'Loading the editor…';
   $('page-error').textContent = '';
   try {
     const editor = await import('./editor/editor.js');
+    if (reopening) return;
     if (isBlankModel(model)) setPageModel(editor.starterPage(model.theme));
     editor.openEditor({
       model,
       siteName: options.siteName,
       onChange: setPageModel,
-      onClose: () => button.focus(),
+      onClose: () => {
+        editing = false;
+        button.focus();
+      },
     });
+    editing = true;
   } catch (error) {
     $('page-error').textContent = `The editor did not load: ${message(error)}`;
   } finally {
-    button.disabled = false;
+    button.disabled = reopening;
     button.textContent = text;
   }
 }
@@ -135,9 +145,14 @@ async function reopen(input: string): Promise<void> {
     status.textContent = 'Enter a name such as alice.dash.';
     return;
   }
+  if (editing || reopening) return;
   if (!isBlankModel(model) && !confirm(`Replace the page you are building with the one published at ${name.label}.dash?`)) return;
   const button = $<HTMLFormElement>('reopen-form').querySelector('button') as HTMLButtonElement;
+  const edit = $<HTMLButtonElement>('edit-page');
   button.disabled = true;
+  edit.disabled = true;
+  reopening = true;
+  const started = revision;
   status.textContent = `Reading ${name.label}.dash from Dash Platform…`;
   try {
     reader ??= import('@dash-sites/core/evo').then((evo) => evo.EvoReader.connect(networkConfig(options.network)));
@@ -147,6 +162,10 @@ async function reopen(input: string): Promise<void> {
     });
     const { readPublishedPage, trustedOutside } = await import('./page/reopen.js');
     const opened = await readPublishedPage(connected, `${name.label}.dash`, options.places);
+    if (revision !== started) {
+      status.textContent = `The page you are building changed while ${opened.name} was being read, so it was not replaced. Open ${opened.name} again to load it.`;
+      return;
+    }
     const trusted = trustedOutside(opened, options.identity());
     for (const file of trusted) rememberOutside(file.sha256, file.places);
     setSiteAssets(opened.assets);
@@ -159,7 +178,9 @@ async function reopen(input: string): Promise<void> {
   } catch (error) {
     status.textContent = message(error);
   } finally {
+    reopening = false;
     button.disabled = false;
+    edit.disabled = false;
   }
 }
 

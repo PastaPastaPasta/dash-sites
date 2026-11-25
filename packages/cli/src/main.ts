@@ -359,8 +359,10 @@ if (values.help || !command) {
   process.exit(values.help || positionals.length === 0 ? 0 : 1);
 }
 command().then(
-  () => {
-    if (places?.ipfsStarted()) process.exit(process.exitCode ?? 0);
+  async () => {
+    if (!places?.ipfsStarted()) return;
+    for (const stream of [process.stdout, process.stderr]) await new Promise((written) => stream.write('', written));
+    process.exit(process.exitCode ?? 0);
   },
   (error: unknown) => fail(String((error as Error)?.message ?? error)),
 );

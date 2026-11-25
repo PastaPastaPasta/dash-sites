@@ -144,6 +144,13 @@ describe('page model', () => {
       expect(readPageModel(JSON.parse(serializePageModel(tidy)))).toEqual(tidy);
     }
   });
+
+  it('keeps rich text whole when it fits exactly, although a cut inside its last entity would not', () => {
+    const body = `<p>${'a'.repeat(19989)}&lt;</p>`;
+    expect(body.length).toBe(20000);
+    const tidy = tidyPageModel({ theme: 'paper', pages: { '/': [{ type: 'text', props: { body } }] } });
+    expect((tidy.pages['/'][0]?.props as { body: string }).body).toBe(body);
+  });
 });
 
 describe('blocks', () => {

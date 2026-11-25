@@ -98,7 +98,7 @@ export function ImageField({ value, onChange, kind, label }: { value: string; on
           <input type="file" accept={ACCEPTED_IMAGES} disabled={busy} onChange={(event) => void add(event.target.files?.[0]).finally(() => (event.target.value = ''))} />
         </label>
         {value ? (
-          <button type="button" className="ed-link" onClick={() => onChange('')}>
+          <button type="button" className="ed-link" onClick={() => onChange('')} disabled={busy}>
             Remove
           </button>
         ) : null}

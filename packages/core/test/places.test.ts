@@ -23,6 +23,7 @@ import {
   validateManifest,
   WRONG_BYTES,
   type Manifest,
+  type ManifestFile,
   type PlaceFetchers,
   type SiteFile,
 } from '../src/index.js';
@@ -190,6 +191,14 @@ describe('forward compatibility', () => {
     const error = await reading(manifest, using({})).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ElsewhereError);
     expect((error as ElsewhereError).attempts).toEqual([{ place: 'ar://kZ9', problem: UNKNOWN_PLACE }]);
+  });
+
+  it('ignores a key added later whatever its name', () => {
+    const text = `{"__proto__":{"b":1,"a":2},${utf8.decode(encodeManifest(bundle.manifest)).slice(1)}`;
+    expect(() => decodeManifest(utf8.encode(text))).toThrow(/canonical/);
+    const manifest = decodeManifest(utf8.encode(text.replace('{"b":1,"a":2}', '{"a":2,"b":1}')));
+    expect(manifest.partial).toBe(true);
+    expect(manifest.files).toEqual(bundle.manifest.files);
   });
 
   it('still holds version 1 and the canonical form strictly', () => {

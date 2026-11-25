@@ -19,6 +19,9 @@ import {
   type VerifiedFetch,
 } from '@dash-sites/core';
 
+/** As many redirects as a browser follows. */
+const MAX_REDIRECTS = 20;
+
 const cacheDir = (): string => join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'dash-sites');
 
 /** The IPFS client, downloaded from npm once and checked against its pinned hash on every start. */
@@ -50,15 +53,30 @@ export interface CliPlaces {
 export function cliPlaces(origin: string): CliPlaces {
   let ipfs: Promise<VerifiedFetch> | undefined;
   const https = async (uri: string, size: number): Promise<Uint8Array> => {
-    let readable = true;
+    let problem: string | undefined;
     const asBrowser: typeof fetch = async (input, init) => {
-      const response = await fetch(input, { ...init, headers: { Origin: origin } });
-      const allowed = response.headers.get('access-control-allow-origin');
-      readable = allowed === '*' || allowed === origin;
-      return response;
+      let url = new URL(String(input));
+      let from = origin;
+      for (let hops = 0; ; hops += 1) {
+        const response = await fetch(url, { ...init, redirect: 'manual', headers: { Origin: from } });
+        const allowed = response.headers.get('access-control-allow-origin');
+        const next = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null;
+        if ((response.ok || next !== null) && allowed !== '*' && allowed !== from) problem = `it does not let other sites read it: ${url.host} must answer with Access-Control-Allow-Origin: *`;
+        if (next === null || problem) return response;
+        await response.body?.cancel().catch(() => undefined);
+        const target = new URL(next, url);
+        if (target.protocol !== 'https:' || hops === MAX_REDIRECTS) {
+          problem = target.protocol === 'https:' ? 'it redirects too many times' : `it redirects to ${target.protocol}//, which a browser does not follow from a site`;
+          return response;
+        }
+        if (target.origin !== url.origin) from = 'null';
+        url = target;
+      }
     };
-    const bytes = await httpsFetcher({ fetch: asBrowser })(uri, size);
-    if (!readable) throw new Error('it does not let other sites read it: it must answer with Access-Control-Allow-Origin: *');
+    const bytes = await httpsFetcher({ fetch: asBrowser })(uri, size).catch((error: unknown) => {
+      throw problem ? new Error(problem) : error;
+    });
+    if (problem) throw new Error(problem);
     return bytes;
   };
   return {

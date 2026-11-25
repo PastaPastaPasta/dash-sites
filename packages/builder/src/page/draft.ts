@@ -112,17 +112,10 @@ export function savePageDraft(store: KeyValue | undefined, model: PageModel, ass
     return 'failed';
   }
   const used = new Set(imagePaths(model));
-  const images: Record<string, string> = {};
-  let size = 0;
-  for (const asset of assets) {
-    if (!used.has(asset.path)) continue;
-    const data = toBase64(asset.bytes);
-    size += data.length;
-    images[asset.path] = data;
-  }
-  if (size <= IMAGE_BUDGET) {
+  const kept = assets.filter((asset) => used.has(asset.path));
+  if (kept.reduce((size, asset) => size + 4 * Math.ceil(asset.bytes.length / 3), 0) <= IMAGE_BUDGET) {
     try {
-      store.setItem(PAGE_IMAGES_KEY, JSON.stringify(images));
+      store.setItem(PAGE_IMAGES_KEY, JSON.stringify(Object.fromEntries(kept.map((asset) => [asset.path, toBase64(asset.bytes)]))));
       return 'saved';
     } catch {
       // too large for this browser's storage

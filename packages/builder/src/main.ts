@@ -21,7 +21,7 @@ import { normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { browserFetchers } from './elsewhere.js';
 import { keepOutside, loadOutside, onOutsideChange } from './outside.js';
 import { mountOutsidePanel } from './outside-panel.js';
-import { fileCredits, sizeText } from './page/cost.js';
+import { platformPrice, sizeText } from './page/cost.js';
 import { mountPageTab, pageFiles, suggestReopen } from './page-tab.js';
 
 declare const __GATEWAY_DOMAIN__: string;
@@ -626,7 +626,11 @@ function start(): void {
   const places = browserFetchers();
   loadOutside(storage('localStorage'));
   mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, identity: () => writer?.identityId, places, onChange: refresh });
-  outsidePanel = mountOutsidePanel($('outside-panel'), { origin: location.origin, price: (file) => `about ${formatDash(fileCredits(file))}`, size: sizeText, fetchers: places });
+  const price = (file: SiteFile): string | undefined => {
+    const costs = platformPrice(file);
+    return costs && `about ${costs} on Platform`;
+  };
+  outsidePanel = mountOutsidePanel($('outside-panel'), { origin: location.origin, price, size: sizeText, fetchers: places });
   onOutsideChange(refresh);
 
   $<HTMLFormElement>('signin').addEventListener('submit', (event) => {

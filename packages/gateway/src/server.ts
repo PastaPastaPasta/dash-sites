@@ -298,8 +298,9 @@ export function createGateway(options: GatewayOptions): RequestListener {
     if (decision.status === 200 && !epochChanged && etagMatches(req.headers['if-none-match'], etag)) return { status: 304, headers };
 
     // The same file can be stored differently by different sites (gzip, brotli, plain, external):
-    // the stored bytes are only reused for an entry stored the same way.
-    const fileKey = `${entry.sha256}:${entry.ext ? 'ext' : (entry.enc ?? 'plain')}`;
+    // the stored bytes are only reused for an entry stored the same way, and never for one this
+    // gateway does not read.
+    const fileKey = `${entry.sha256}:${entry.unread ? 'unread' : entry.src ? 'src' : entry.ext ? 'ext' : (entry.enc ?? 'plain')}`;
     let content = files.get(fileKey);
     const badKey = entry.ext ? `${externalKey(entry.ext, entry.size)}#${entry.sha256}` : '';
     if (!content && entry.ext && (badExternalFiles.get(badKey) ?? 0) > now()) {

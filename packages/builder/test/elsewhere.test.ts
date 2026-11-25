@@ -72,6 +72,7 @@ describe('uploading to a bucket', () => {
     const [url, init] = sent[0] as [string, RequestInit];
     expect(url).toBe(`https://account.r2.cloudflarestorage.com/media/site/${hash}.webp`);
     expect(init).toMatchObject({ method: 'PUT', credentials: 'omit', body: photo.bytes });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     const headers = init.headers as Record<string, string>;
     expect(headers).toMatchObject({ 'content-type': 'image/webp', 'x-amz-content-sha256': hash, 'x-amz-date': '20261125T010203Z' });
     expect(headers.authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20261125\/auto\/s3\/aws4_request,SignedHeaders=host;x-amz-content-sha256;x-amz-date,Signature=[0-9a-f]{64}$/);
@@ -83,6 +84,9 @@ describe('uploading to a bucket', () => {
     await expect(uploadToBucket(bucket, photo, answering(403))).rejects.toThrow(/refused the upload \(403: check the keys/);
     await expect(uploadToBucket(bucket, photo, answering(500))).rejects.toThrow(/refused the upload \(500\)/);
     await expect(uploadToBucket(bucket, photo, { fetch: (async () => Promise.reject(new TypeError('Failed to fetch'))) as typeof fetch })).rejects.toThrow(/CORS rules/);
+    const stalled = { fetch: (async () => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError'))) as typeof fetch };
+    await expect(uploadToBucket(bucket, photo, stalled)).rejects.toThrow(/did not answer in time/);
+    await expect(uploadToPinata('jwt', photo, stalled)).rejects.toThrow(/did not answer in time/);
     await expect(uploadToBucket({ ...bucket, endpoint: 'http://minio.local:9000' }, photo, answering(200))).rejects.toThrow(/API address must be an https/);
     await expect(uploadToBucket({ ...bucket, publicUrl: 'media.example.com' }, photo, answering(200))).rejects.toThrow(/public address must be an https/);
     await expect(uploadToBucket({ ...bucket, bucket: 'a/b' }, photo, answering(200))).rejects.toThrow(/bucket name/);
@@ -123,6 +127,15 @@ describe('places an owner gives', () => {
       unknown: ['http://x.example/a', 'ar://abc'],
     });
     expect(readPlaces(`${CID} ipfs://${CID}`).places).toEqual([`ipfs://${CID}`]);
+  });
+
+  it('keeps the commas an address holds, and still reads a list written with commas', () => {
+    const sized = 'https://media.example.com/image/upload/w_800,h_600/photo.webp';
+    expect(readPlaces(sized)).toEqual({ places: [sized], unknown: [] });
+    expect(readPlaces(`${sized},https://b.example/a.webp, ${CID},QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG,ipfs://${CID}/a.webp,`)).toEqual({
+      places: [sized, 'https://b.example/a.webp', `ipfs://${CID}`, 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG', `ipfs://${CID}/a.webp`],
+      unknown: [],
+    });
   });
 
   it('are each asked for the file before they are accepted', async () => {

@@ -1,4 +1,4 @@
-import { MAX_PLACES, parsePlace, sha256Hex, type SiteFile } from '@dash-sites/core';
+import { MAX_FILES, MAX_PLACES, parsePlace, sha256Hex, type SiteFile } from '@dash-sites/core';
 import { quietly, type KeyValue } from './wallet.js';
 
 /**
@@ -7,7 +7,7 @@ import { quietly, type KeyValue } from './wallet.js';
  * new version has a place of its own.
  */
 const KEY = 'dash-sites.outside';
-const REMEMBERED = 300;
+const REMEMBERED = MAX_FILES;
 
 const hashes = new WeakMap<Uint8Array, string>();
 const listeners = new Set<() => void>();

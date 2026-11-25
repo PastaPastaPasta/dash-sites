@@ -239,14 +239,15 @@ export class SiteHost {
   private readonly elsewhere = async (path: string, file: ManifestFile): Promise<Uint8Array> => {
     const kept = await this.options.store.getChunk(file.sha256).catch(() => undefined);
     if (kept && (await matchesFile(kept, file))) return kept;
-    let download = this.fetching.get(file.sha256);
+    const key = JSON.stringify([file.sha256, file.src]);
+    let download = this.fetching.get(key);
     if (!download) {
       download = readElsewhere(path, file, this.options.places ?? {});
-      this.fetching.set(file.sha256, download);
+      this.fetching.set(key, download);
       void download
         .then((bytes) => this.options.store.putChunk(file.sha256, bytes))
         .catch(() => undefined)
-        .finally(() => this.fetching.delete(file.sha256));
+        .finally(() => this.fetching.delete(key));
     }
     return download;
   };

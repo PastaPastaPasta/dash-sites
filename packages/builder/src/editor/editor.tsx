@@ -5,7 +5,7 @@ import puckCss from '@puckeditor/core/no-external.css';
 import { formatDash } from '@dash-sites/core';
 import { THEMES, type Theme } from '../template.js';
 import { BLOCKS } from '../page/blocks.js';
-import { BLOCK_TYPES, newBlock, tidyPageModel, type Block, type BlockType, type PageModel } from '../page/model.js';
+import { BLOCK_TYPES, MAX_BLOCKS, newBlock, tidyPageModel, type Block, type BlockType, type PageModel } from '../page/model.js';
 import { pageStylesheet, renderSite, viewBlock } from '../page/render.js';
 import { costSplit } from '../page/cost.js';
 import { siteAssets } from '../assets.js';
@@ -23,6 +23,8 @@ export interface EditorOptions {
 
 const CANVAS = 'dsp';
 const ZONE = 'root:default-zone';
+const ROOM = { insert: true, duplicate: true };
+const FULL = { insert: false, duplicate: false };
 const ThemeContext = createContext<Theme>('paper');
 const usePuck = createUsePuck();
 
@@ -142,7 +144,7 @@ function Meter({ model, siteName }: { model: PageModel; siteName: string }) {
 }
 
 /** Adds a block after the selected one, or before the footer: a way to add blocks without dragging. */
-function AddBlock() {
+function AddBlock({ full }: { full: boolean }) {
   const getPuck = useGetPuck();
   const add = (type: string): void => {
     const { appState, dispatch, selectedItem, getSelectorForId } = getPuck();
@@ -158,12 +160,14 @@ function AddBlock() {
       className="ed-add"
       aria-label="Add a block"
       value=""
+      disabled={full}
+      title={full ? `A page holds ${MAX_BLOCKS} blocks at most` : undefined}
       onChange={(event) => {
         if (event.target.value) add(event.target.value);
         event.target.value = '';
       }}
     >
-      <option value="">Add a block…</option>
+      <option value="">{full ? `${MAX_BLOCKS} blocks is the most` : 'Add a block…'}</option>
       {BLOCK_TYPES.map((type) => (
         <option key={type} value={type}>
           {BLOCKS[type].label}
@@ -185,7 +189,7 @@ function Bar({ theme, chooseTheme, model, siteName, done }: { theme: Theme; choo
         <button type="button" className="ed-icon" onClick={history.forward} disabled={!history.hasFuture} aria-label="Redo" title="Redo">
           ↷
         </button>
-        <AddBlock />
+        <AddBlock full={model.pages['/'].length >= MAX_BLOCKS} />
       </div>
       <div className="ed-group">
         <div className="chips ed-themes" role="radiogroup" aria-label="Look">
@@ -240,6 +244,7 @@ function Editor({ options, close }: { options: EditorOptions; close: () => void 
         config={config}
         data={initial}
         iframe={{ enabled: false }}
+        permissions={model.pages['/'].length >= MAX_BLOCKS ? FULL : ROOM}
         height="100%"
         onChange={(data) => {
           latest.current = data;

@@ -1,12 +1,12 @@
-import { MAX_PLACES, parsePlace, type PlaceFetchers, type SiteFile } from '@dash-sites/core';
+import { MAX_ELSEWHERE_FILE_BYTES, MAX_PLACES, parsePlace, type PlaceFetchers, type SiteFile } from '@dash-sites/core';
 import { BUCKET_CORS, browserFetchers, confirmPlaces, readPlaces, uploadToBucket, uploadToPinata, type Bucket, type OutsideFile } from './elsewhere.js';
 import { fileHash, outsidePlaces, setOutsidePlaces } from './outside.js';
 
 export interface OutsidePanelOptions {
   /** This page's origin, which a bucket must let upload to it. */
   origin: string;
-  /** What storing a file on Platform costs, as text. */
-  price(file: SiteFile): string;
+  /** What storing a file on Platform costs, as text, or nothing when Platform cannot store it. */
+  price(file: SiteFile): string | undefined;
   size(bytes: number): string;
   fetchers?: PlaceFetchers;
   /** How long to keep asking IPFS for a file that was only just pinned. */
@@ -52,6 +52,7 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
   const fetchers = options.fetchers ?? browserFetchers();
   let method: Method = 'address';
   let files: SiteFile[] = [];
+  let listAll = false;
   const busy = new Map<string, string>();
   const problems = new Map<string, string>();
   const unconfirmed = new Map<string, string>();
@@ -115,6 +116,11 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
   const all = el('button', { type: 'button', class: 'second', hidden: true });
   const list = el('ul', { class: 'files outside-files' });
   const note = el('p', { class: 'hint' });
+  const more = el('button', { type: 'button', class: 'quiet', hidden: true });
+  more.addEventListener('click', () => {
+    listAll = true;
+    render();
+  });
   root.replaceChildren(
     el('p', { class: 'hint' }, 'Storing on Dash Platform costs about 0.3 DASH per MB. A photo or a large script can be kept somewhere cheaper. Platform then stores only its size and hash, and a visitor’s browser shows the file only if it matches.'),
     chooser,
@@ -123,6 +129,7 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     el('div', { class: 'actions' }, all),
     list,
     note,
+    more,
   );
 
   const asOutside = (file: SiteFile): OutsideFile => ({ path: file.path, type: file.type ?? 'application/octet-stream', bytes: file.bytes });
@@ -157,6 +164,7 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     try {
       const has = outsidePlaces(file.bytes);
       if (has.length >= MAX_PLACES) throw new Error(`A file can list ${MAX_PLACES} places, and this one already does`);
+      if (file.bytes.length > MAX_ELSEWHERE_FILE_BYTES) throw new Error(`A file kept outside Platform can be ${options.size(MAX_ELSEWHERE_FILE_BYTES)} at most, and this one is ${options.size(file.bytes.length)}`);
       if (how === 'address') {
         const { places, unknown } = readPlaces(address);
         if (unknown.length > 0) throw new Error(`${unknown[0]} is not an https:// address or an IPFS CID`);
@@ -192,7 +200,7 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     const hash = fileHash(file.bytes);
     const places = outsidePlaces(file.bytes);
     const working = busy.get(hash);
-    const head = el('div', { class: 'outside-head' }, el('span', {}, file.path), el('span', {}, `${options.size(file.bytes.length)}, ${places.length > 0 ? 'outside Platform' : `${options.price(file)} on Platform`}`));
+    const head = el('div', { class: 'outside-head' }, el('span', {}, file.path), el('span', {}, `${options.size(file.bytes.length)}, ${places.length > 0 ? 'outside Platform' : (options.price(file) ?? 'too large for Platform')}`));
     const item = el('li', {}, head);
     if (places.length > 0) item.append(el('div', { class: 'outside-places' }, `Kept at ${places.map(placeLabel).join(' and ')}`));
     const actions = el('div', { class: 'outside-actions' });
@@ -263,7 +271,10 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
       for (const file of waiting) if (outsidePlaces(file.bytes).length === 0) await move(file, '', how);
     };
     const focused = document.activeElement instanceof HTMLInputElement && list.contains(document.activeElement) ? document.activeElement : undefined;
-    list.replaceChildren(...shown.slice(0, SHOWN).map(row));
+    const cut = !listAll && shown.length > SHOWN;
+    list.replaceChildren(...(cut ? shown.slice(0, SHOWN) : shown).map(row));
+    more.hidden = !cut;
+    more.textContent = `List all ${shown.length}`;
     if (focused?.dataset.file) {
       const again = list.querySelector<HTMLInputElement>(`input[data-file="${focused.dataset.file}"]`);
       again?.focus();
@@ -274,7 +285,7 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
         ? 'Add your site first; its larger files are listed here.'
         : shown.length === 0
           ? 'This site has no file large enough to be worth moving.'
-          : shown.length > SHOWN
+          : cut
             ? `The ${SHOWN} largest of ${shown.length} files are listed.`
             : '';
   }

@@ -89,6 +89,10 @@ function httpsBase(value: string, what: string): string {
   return place.uri;
 }
 
+/** An upload is given up when it is slower than the slowest download a visitor's browser waits for. */
+const uploadDeadline = (file: OutsideFile): AbortSignal => AbortSignal.timeout(PLACE_IDLE_MS + Math.ceil((file.bytes.length / SLOWEST_BYTES_PER_SECOND) * 1000));
+const tookTooLong = (error: unknown): boolean => (error as Error)?.name === 'TimeoutError';
+
 /** The name a file gets in a bucket: its hash, so that a file is never replaced by a different one. */
 export function bucketKey(prefix: string | undefined, file: OutsideFile): string {
   const extension = /\.[A-Za-z0-9]{1,8}$/.exec(file.path)?.[0] ?? '';
@@ -110,8 +114,9 @@ export async function uploadToBucket(bucket: Bucket, file: OutsideFile, options:
   const authorization = await signS3({ method: 'PUT', url, headers: signed, payloadSha256, region: bucket.region.trim() || 'auto', accessKeyId: bucket.accessKeyId.trim(), secretAccessKey: bucket.secretAccessKey.trim(), now });
   let response: Response;
   try {
-    response = await (options.fetch ?? fetch)(url, { method: 'PUT', headers: { ...signed, authorization, 'content-type': file.type }, body: file.bytes as BodyInit, credentials: 'omit', referrerPolicy: 'no-referrer' });
-  } catch {
+    response = await (options.fetch ?? fetch)(url, { method: 'PUT', headers: { ...signed, authorization, 'content-type': file.type }, body: file.bytes as BodyInit, credentials: 'omit', referrerPolicy: 'no-referrer', signal: uploadDeadline(file) });
+  } catch (error) {
+    if (tookTooLong(error)) throw new Error('the bucket did not answer in time. Try again: uploading the same file twice does no harm');
     throw new Error('the bucket could not be reached. Check the API address, and that the bucket allows uploads from this page (its CORS rules)');
   }
   if (!response.ok) throw new Error(`the bucket refused the upload (${response.status}${response.status === 403 ? ': check the keys and that they may write to this bucket' : ''})`);
@@ -127,8 +132,9 @@ export async function uploadToPinata(jwt: string, file: OutsideFile, options: { 
   form.append('network', 'public');
   let response: Response;
   try {
-    response = await (options.fetch ?? fetch)(PINATA_UPLOAD, { method: 'POST', headers: { authorization: `Bearer ${jwt.trim()}` }, body: form, credentials: 'omit', referrerPolicy: 'no-referrer' });
-  } catch {
+    response = await (options.fetch ?? fetch)(PINATA_UPLOAD, { method: 'POST', headers: { authorization: `Bearer ${jwt.trim()}` }, body: form, credentials: 'omit', referrerPolicy: 'no-referrer', signal: uploadDeadline(file) });
+  } catch (error) {
+    if (tookTooLong(error)) throw new Error('Pinata did not answer in time. Try again: pinning the same file twice does no harm');
     throw new Error('Pinata could not be reached');
   }
   if (!response.ok) throw new Error(`Pinata refused the upload (${response.status}${response.status === 401 || response.status === 403 ? ': check the key and that it may write files' : ''})`);
@@ -250,7 +256,11 @@ export async function confirmPlaces(file: OutsideFile, places: string[], fetcher
 export function readPlaces(input: string): { places: string[]; unknown: string[] } {
   const places: string[] = [];
   const unknown: string[] = [];
-  for (const entry of input.split(/[\s,]+/).filter(Boolean)) {
+  const entries = input
+    .split(/\s+|,(?=\s|$|https:\/\/|ipfs:\/\/)/)
+    .flatMap((entry) => (entry.includes('://') ? [entry] : entry.split(',')))
+    .filter(Boolean);
+  for (const entry of entries) {
     const place = parsePlace(/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/.test(entry) ? `ipfs://${entry}` : entry);
     if (!place) unknown.push(entry);
     else if (!places.includes(place.uri)) places.push(place.uri);

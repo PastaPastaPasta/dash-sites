@@ -1,4 +1,4 @@
-import { contentTypeFor, ElsewhereError, loadManifest, parsePlace, readElsewhere, readFile, resolveName, siteChunks, utf8, type PlaceFetchers, type PlatformReader } from '@dash-sites/core';
+import { contentTypeFor, ElsewhereError, loadManifest, parsePlace, readElsewhere, readFile, resolveName, siteChunks, utf8, type ManifestFile, type PlaceFetchers, type PlatformReader } from '@dash-sites/core';
 import type { SiteAsset } from '../assets.js';
 import { imagePaths, PAGE_MODEL_PATH, readPageModel, type PageModel } from './model.js';
 
@@ -45,9 +45,10 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
   const chunks = siteChunks(reader, resolution);
   const manifest = await loadManifest(resolution.content, chunks);
   if (!manifest.files[PAGE_MODEL_PATH]) throw new ReopenError(`The site at ${name} was not made with the page editor, so there is nothing to open. Upload its files instead.`);
+  const outsidePlatform = { elsewhere: (at: string, file: ManifestFile) => readElsewhere(at, file, places) };
   let parsed: unknown;
   try {
-    parsed = JSON.parse(utf8.decode((await readFile(manifest, PAGE_MODEL_PATH, chunks)).bytes));
+    parsed = JSON.parse(utf8.decode((await readFile(manifest, PAGE_MODEL_PATH, chunks, outsidePlatform)).bytes));
   } catch {
     throw new ReopenError(`The page stored at ${name} cannot be read.`);
   }
@@ -60,7 +61,7 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
     const entry = manifest.files[path];
     if (!entry) continue;
     try {
-      const { bytes } = await readFile(manifest, path, chunks, { elsewhere: (at, file) => readElsewhere(at, file, places) });
+      const { bytes } = await readFile(manifest, path, chunks, outsidePlatform);
       assets.push({ path, type: contentTypeFor(path), bytes });
       const known = (entry.src ?? []).flatMap((place) => parsePlace(place)?.uri ?? []);
       unknownPlaces += (entry.src ?? []).length - known.length;

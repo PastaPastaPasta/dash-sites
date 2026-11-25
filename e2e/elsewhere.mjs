@@ -66,13 +66,14 @@ try {
   check(images.length > 0 && images.every((image) => image.width > 0), `the page shows its images: ${images.map((image) => `${image.id} ${image.width}px`).join(', ')}`);
 
   const hosts = [...new Set(byWorker.map((url) => new URL(url).host))];
-  const kinds = new Set(outside.flatMap(([, file]) => file.src.map((uri) => uri.split(':')[0])));
-  if (kinds.has('ipfs')) {
-    const module = byWorker.filter((url) => /@helia\/verified-fetch@/.test(url));
-    check(module.length > 0 && module.every((url) => /^https:\/\/(cdn\.jsdelivr\.net\/npm|unpkg\.com)\//.test(url)), `the IPFS client came from an npm mirror: ${module[0]}`);
+  const onIpfs = (uri) => uri.startsWith('ipfs://');
+  const module = byWorker.filter((url) => /@helia\//.test(url));
+  if (outside.some(([, file]) => file.src.some(onIpfs))) {
+    if (outside.some(([, file]) => file.src.every(onIpfs))) check(module.length > 0, 'a file kept only on IPFS made the worker load the IPFS client');
+    check(module.every((url) => /^https:\/\/(cdn\.jsdelivr\.net\/npm|unpkg\.com)\/@helia\/verified-fetch@/.test(url)), `the IPFS client came from an npm mirror${module[0] ? `: ${module[0]}` : ', or was not needed'}`);
     check(!hosts.some((host) => /(^|\.)(ipfs\.io|dweb\.link|trustless-gateway\.link|4everland\.io)$/.test(host)), 'no recursive IPFS gateway was asked');
   } else {
-    check(!byWorker.some((url) => /@helia\//.test(url)), 'a site with no IPFS place does not download the IPFS client');
+    check(module.length === 0, 'a site with no IPFS place does not download the IPFS client');
   }
   console.log(`     the worker contacted: ${hosts.filter((host) => !host.endsWith(`localhost:${port}`)).join(', ')}`);
 

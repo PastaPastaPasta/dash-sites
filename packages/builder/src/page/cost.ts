@@ -1,4 +1,4 @@
-import { buildSite, estimateCredits, PackError, type SiteFile } from '@dash-sites/core';
+import { buildSite, estimateCredits, formatDash, MAX_SITE_BYTES, PackError, type SiteFile } from '@dash-sites/core';
 
 const known = new WeakMap<Uint8Array, bigint>();
 
@@ -12,6 +12,17 @@ export function fileCredits(file: SiteFile): bigint {
   const credits = estimateCredits(bundle, own) - estimateCredits(bundle, []);
   known.set(file.bytes, credits);
   return credits;
+}
+
+/** What storing one file on Platform costs, as text; nothing when the file is too large for Platform. */
+export function platformPrice(file: SiteFile): string | undefined {
+  if (file.bytes.length > MAX_SITE_BYTES) return undefined;
+  try {
+    return formatDash(fileCredits(file));
+  } catch (error) {
+    if (error instanceof PackError) return undefined;
+    throw error;
+  }
 }
 
 export interface CostSplit {
