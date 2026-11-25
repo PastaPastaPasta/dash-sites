@@ -19,7 +19,8 @@
     "e2e:shell": "node e2e/shell.mjs",
     "e2e:extension": "node e2e/extension.mjs",
     "e2e:builder": "node e2e/builder.mjs",
-    "e2e:elsewhere": "node e2e/elsewhere.mjs"
+    "e2e:elsewhere": "node e2e/elsewhere.mjs",
+    "check:pins": "node scripts/check-pins.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
