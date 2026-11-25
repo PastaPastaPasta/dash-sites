@@ -109,14 +109,17 @@ is sent.
 npm ci && npm run build
 alias dash-sites="node $PWD/packages/cli/bundle/dash-sites.mjs"
 
+dash-sites login --network mainnet                # scan QR with DashPay for a limited key
+dash-sites whoami --network mainnet               # check signed-in identity, names and allowance
 dash-sites preview ./my-site                      # http://preview.localhost:8080/
-dash-sites publish ./my-site --name alice --identity-file identity.json
-dash-sites resolve alice
+dash-sites publish ./my-site --name alice --network mainnet
+dash-sites resolve alice --network mainnet
 dash-sites publish ./my-site --name alice --identity-file identity.json \
   --brotli --external external.json             # version 2: see below
 dash-sites publish ./my-site --name alice --identity-file identity.json --prune
 dash-sites gc --identity-file identity.json --dry-run   # what would be deleted, and the refund
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
+dash-sites logout --network mainnet
 ```
 
 `--prune` deletes, after the new record is written, the chunks of releases older than the
@@ -141,8 +144,13 @@ the CLI) while one of them deletes, so run one publisher at a time; and `unpubli
 which the removed site's chunks count as unused at once. An identity that updates some site
 more often than the grace period never prunes on publish; run `gc` in a quiet period.
 
-`--identity-file` takes the identity JSON that dash-bridge writes. You can
-also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
+`dash-sites login` signs in with the DashPay mobile wallet over App Connect and
+saves the contract-bound limited key (`0600`) under `~/.config/dash-sites/`
+(or `DASH_SITES_CONFIG_DIR`). Pass `--name <name>` or `--identity <id>` to pin
+the expected owner, or confirm interactively in the terminal; `dash-sites whoami`
+shows the active identity and remaining allowance, and `dash-sites logout`
+deletes the saved session. `--identity-file` takes the identity JSON that
+dash-bridge writes. You can also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
 0.3 DASH per megabyte, paid once. Deleting a chunk refunds its storage fee less
 what Platform has already paid out to masternodes: 0.125% per mainnet epoch (9.125 days)
 in the first year, so about 99.9% after a day and 94.9% after a year. The delete itself

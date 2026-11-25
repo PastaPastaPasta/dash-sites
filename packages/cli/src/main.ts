@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { brotliCompressSync, constants as zlib } from 'node:zlib';
 import { decompress as brotliDecompress } from 'brotli/decompress';
@@ -10,6 +11,7 @@ import {
   type BuildOptions,
   estimateCredits,
   formatDash,
+  fromHex,
   loadManifest,
   networkConfig,
   parseName,
@@ -31,14 +33,20 @@ import {
   type PlatformReader,
   type SiteBundle,
 } from '@dash-sites/core';
+import { connectPort } from '@dash-sites/core/connect';
 import { MemoryPlatform } from '@dash-sites/core/memory';
-import { EvoReader, EvoWriter, registerContract, type Credentials } from '@dash-sites/core/evo';
+import { connectSdk, EvoReader, EvoWriter, KeyRefused, registerContract, type Credentials } from '@dash-sites/core/evo';
 import { createGateway, emptyDenylist, parseDomain } from '@dash-sites/gateway';
 import { readSiteDirectory } from './files.js';
 import { checkPlaces, cliPlaces, parsePlaceMap, storeElsewhere, type CliPlaces } from './places.js';
+import { clearSession, configDir, connectionId, loadSession, qrSvg, qrTerminal, runWalletLogin, saveSession, sessionPath } from './wallet.js';
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
+  dash-sites login [--name <name>] [--identity <id>] [--qr <file.svg>] [--yes]
+                                                               sign in with DashPay mobile wallet for a limited key
+  dash-sites whoami                                            show the signed-in identity, names and key allowance
+  dash-sites logout                                            remove the saved wallet login for this network
   dash-sites publish <dir> --name <name> [--spa] [--prune] [--brotli] [--external <file>] [--elsewhere <file>] [--dry-run]
                                                                publish a folder as <name>.dash
   dash-sites check <name>                                      ask every outside place of a site for its file
@@ -57,7 +65,9 @@ Options
   --network testnet|mainnet     default testnet
   --contract <id>               dash-sites contract id, if not the built-in one
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
-  --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
+  --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF), or pins login
+  --qr <file>                   also write the login QR code as an SVG file
+  -y, --yes                     skip the interactive confirmation prompt on login
   --prune                       after publishing, delete chunks of releases before the one replaced
   --grace <hours>               gc and --prune delete nothing until every site record is this old, and keep chunks younger than this (default 25)
   --brotli                      store a file as brotli when that is smaller than gzip (needs a current shell)
@@ -66,6 +76,7 @@ Options
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity
+  DASH_SITES_CONFIG_DIR         directory for saved wallet logins (default $XDG_CONFIG_HOME/dash-sites or ~/.config/dash-sites)
 
 Files kept outside Platform
   --elsewhere takes a JSON file that maps site paths to the places holding them, each an
@@ -81,6 +92,12 @@ interface IdentityFile {
   identityKeys: Array<{ purpose: string; securityLevel: string; privateKeyWif: string }>;
 }
 
+interface ResolvedCredentials {
+  credentials: Credentials;
+  source: 'identity-file' | 'env' | 'wallet-session';
+  sessionFile?: string;
+}
+
 function fail(message: string): never {
   console.error(`dash-sites: ${message}`);
   process.exit(1);
@@ -94,6 +111,8 @@ const { values, positionals } = parseArgs({
     contract: { type: 'string' },
     'identity-file': { type: 'string' },
     identity: { type: 'string' },
+    qr: { type: 'string' },
+    yes: { type: 'boolean', short: 'y', default: false },
     content: { type: 'string' },
     schema: { type: 'string' },
     port: { type: 'string', default: '8080' },
@@ -110,22 +129,65 @@ const { values, positionals } = parseArgs({
   },
 });
 
-function credentials(level: 'HIGH' | 'CRITICAL' = 'HIGH'): Credentials {
+function network(reading = false): NetworkConfig {
+  if (values.network !== 'testnet' && values.network !== 'mainnet') fail('--network must be testnet or mainnet');
+  return (reading ? readerConfig : networkConfig)(values.network as Network, values.contract);
+}
+
+function resolveCredentials(level: 'HIGH' | 'CRITICAL' = 'HIGH'): ResolvedCredentials {
   const file = values['identity-file'];
   if (file) {
     const identity = JSON.parse(readFileSync(file, 'utf8')) as IdentityFile;
     const key = identity.identityKeys?.find((k) => k.purpose === 'AUTHENTICATION' && k.securityLevel === level);
     if (!identity.identityId || !key) fail(`${file} has no identity id or no AUTHENTICATION/${level} key`);
-    return { identityId: identity.identityId, privateKeyWif: key.privateKeyWif };
+    return { credentials: { identityId: identity.identityId, privateKeyWif: key.privateKeyWif }, source: 'identity-file' };
   }
   const privateKeyWif = process.env.DASH_SITES_KEY;
-  if (!values.identity || !privateKeyWif) fail('pass --identity-file, or --identity with DASH_SITES_KEY set');
-  return { identityId: values.identity, privateKeyWif };
+  if (values.identity || privateKeyWif) {
+    if (!values.identity || !privateKeyWif) fail('pass both --identity and DASH_SITES_KEY');
+    return { credentials: { identityId: values.identity, privateKeyWif }, source: 'env' };
+  }
+  if (level === 'HIGH') {
+    const config = network();
+    const dir = configDir();
+    const saved = loadSession(dir, config.network);
+    if (saved) {
+      if (saved.contractId !== config.contractId) {
+        fail(`saved wallet login for ${config.network} is for contract ${saved.contractId}, not ${config.contractId}; run "dash-sites login --network ${config.network}"`);
+      }
+      if (saved.expiresAt <= Date.now()) {
+        fail(`saved wallet login for ${config.network} expired on ${new Date(saved.expiresAt).toISOString()}; run "dash-sites login --network ${config.network}"`);
+      }
+      return {
+        credentials: { identityId: saved.identityId, privateKey: fromHex(saved.privateKey) },
+        source: 'wallet-session',
+        sessionFile: sessionPath(dir, config.network),
+      };
+    }
+    fail(`not signed in on ${config.network}; run "dash-sites login --network ${config.network}", or pass --identity-file or --identity with DASH_SITES_KEY`);
+  }
+  fail('pass --identity-file, or --identity with DASH_SITES_KEY set');
 }
 
-function network(reading = false): NetworkConfig {
-  if (values.network !== 'testnet' && values.network !== 'mainnet') fail('--network must be testnet or mainnet');
-  return (reading ? readerConfig : networkConfig)(values.network as Network, values.contract);
+async function withWriter<T>(run: (writer: EvoWriter, resolved: ResolvedCredentials) => Promise<T>): Promise<T> {
+  const config = network();
+  const resolved = resolveCredentials('HIGH');
+  let writer: EvoWriter;
+  try {
+    writer = await EvoWriter.connectAs(config, resolved.credentials);
+  } catch (error) {
+    if (error instanceof KeyRefused && resolved.source === 'wallet-session') {
+      fail(`saved wallet login for ${config.network} is no longer valid (${error.message}); run "dash-sites login --network ${config.network}"`);
+    }
+    throw error;
+  } finally {
+    resolved.credentials.privateKey?.fill(0);
+  }
+  try {
+    return await run(writer, resolved);
+  } finally {
+    writer.forget();
+  }
 }
 
 function requireName(): string {
@@ -224,7 +286,146 @@ async function storedSite(name: string) {
   return { resolution, source, manifest: await loadManifest(resolution.content, source) };
 }
 
+async function promptConfirm(question: string, signal: AbortSignal): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = await rl.question(question, { signal });
+    return /^y(?:es)?$/i.test(answer.trim());
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw new DOMException('cancelled', 'AbortError');
+    throw error;
+  } finally {
+    rl.close();
+  }
+}
+
 const commands: Record<string, () => Promise<void>> = {
+  async login() {
+    const config = network();
+    const parsedName = values.name ? (parseName(values.name) ?? fail('--name must be a DPNS name such as alice or alice.dash')) : undefined;
+    const pinnedIdentity = values.identity?.trim() || undefined;
+    const needsConfirm = !values.yes && !parsedName && !pinnedIdentity;
+    if (needsConfirm && !process.stdin.isTTY) {
+      fail('cannot confirm the answering identity without a terminal; pass --name <name>, --identity <id>, or --yes');
+    }
+
+    const abort = new AbortController();
+    const onSigint = (): void => abort.abort();
+    process.on('SIGINT', onSigint);
+    try {
+      console.error(`connecting to Dash Platform (${config.network})…`);
+      const sdk = await connectSdk(config);
+      const reader = new EvoReader(sdk, config);
+      let expectedIdentityId = pinnedIdentity;
+      let expectedName: string | undefined;
+      if (parsedName) {
+        const domain = (await reader.getDomain(parsedName.normalized)).value;
+        if (!domain) fail(`${parsedName.label}.dash is not registered on ${config.network}`);
+        if (expectedIdentityId && domain.ownerId !== expectedIdentityId) {
+          fail(`${parsedName.label}.dash is owned by ${domain.ownerId}, not ${expectedIdentityId}`);
+        }
+        expectedIdentityId = domain.ownerId;
+        expectedName = domain.label;
+      }
+
+      const dir = configDir();
+      let lastStatus: string | undefined;
+      const result = await runWalletLogin({
+        config,
+        port: connectPort(sdk),
+        connectionId: connectionId(dir, config.network),
+        ...(expectedIdentityId ? { expectedIdentityId } : {}),
+        ...(expectedName ? { expectedName } : {}),
+        signal: abort.signal,
+        onRequest: (pending) => {
+          const useColor = Boolean(process.stderr.isTTY && !process.env.NO_COLOR);
+          console.error('');
+          console.error(qrTerminal(pending.uri, { color: useColor }));
+          console.error('');
+          console.error('Scan with DashPay (More -> Tools -> Connections -> Scan QR), or open:');
+          console.error(pending.uri);
+          if (values.qr) {
+            writeFileSync(values.qr, qrSvg(pending.uri));
+            console.error(`wrote QR SVG to ${values.qr}`);
+          }
+          console.error('Code expires in 10 minutes. Waiting for wallet approval…');
+        },
+        onStatus: (status) => {
+          if (status === lastStatus) return;
+          lastStatus = status;
+          if (status === 'answered') console.error('wallet answered; checking key…');
+          else if (status === 'incomplete-read') console.error('could not read every answer; trying again…');
+        },
+        listOwnedNames: (identityId) => reader.listOwnedNames(identityId),
+        ...(needsConfirm
+          ? {
+              confirm: async (grant, owned) => {
+                const ownedNames = owned.length > 0 ? owned.map((domain) => `${domain.label}.dash`).join(', ') : '(no registered names)';
+                const until = new Date(grant.expiresAt).toISOString().slice(0, 10);
+                console.error(`\nWallet answered:`);
+                console.error(`  identity:  ${grant.identityId}`);
+                console.error(`  names:     ${ownedNames}`);
+                console.error(`  allowance: ${formatDash(grant.remainingBudget)} until ${until}`);
+                return promptConfirm('Save this wallet login? [y/N] ', abort.signal);
+              },
+            }
+          : {}),
+        verifyWriter: async (identityId, privateKey) => {
+          const connected = await EvoWriter.on(sdk, config, { identityId, privateKey });
+          connected.forget();
+        },
+        save: (session) => saveSession(dir, session),
+      });
+
+      print({
+        network: result.network,
+        identityId: result.identityId,
+        names: result.names,
+        keyId: result.keyId,
+        totalBudget: formatDash(result.totalBudget),
+        remainingBudget: formatDash(result.remainingBudget),
+        expiresAt: new Date(result.expiresAt).toISOString(),
+        sessionFile: result.sessionFile,
+      });
+    } finally {
+      process.off('SIGINT', onSigint);
+    }
+  },
+
+  async whoami() {
+    const config = network();
+    await withWriter(async (writer, resolved) => {
+      const [owned, balance, remaining] = await Promise.all([
+        writer.listOwnedNames(writer.identityId),
+        writer.balance(),
+        writer.remainingBudget().catch(() => undefined),
+      ]);
+      const { keyId, bound, totalBudget, expiresAt } = writer.keyLimits;
+      print({
+        network: config.network,
+        source: resolved.source,
+        identityId: writer.identityId,
+        names: owned.map((domain) => `${domain.label}.dash`),
+        balance: formatDash(balance),
+        keyId,
+        bound,
+        ...(totalBudget !== undefined ? { totalBudget: formatDash(totalBudget) } : {}),
+        ...(remaining !== undefined ? { remainingBudget: formatDash(remaining) } : {}),
+        ...(expiresAt !== undefined ? { expiresAt: new Date(expiresAt).toISOString() } : {}),
+        ...(resolved.sessionFile ? { sessionFile: resolved.sessionFile } : {}),
+      });
+    });
+  },
+
+  async logout() {
+    const config = network();
+    const removed = clearSession(configDir(), config.network);
+    if (removed) {
+      console.error('removed saved session; to revoke the key immediately before it expires, remove "Dash Sites" in your wallet\'s Connections screen');
+    }
+    print({ network: config.network, removed });
+  },
+
   async publish() {
     const dir = positionals[1] ?? fail('publish needs a directory');
     const name = requireName();
@@ -241,70 +442,79 @@ const commands: Record<string, () => Promise<void>> = {
     if (!bundle.manifest.files['/index.html']) console.error('warning: the site has no /index.html');
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
-    const writer = await EvoWriter.connectAs(network(), credentials());
-    if (values.prune) console.error('after the record is written, --prune checks the site records again from a newer block before deleting (a few minutes)');
-    const result = await publishSite(
-      writer,
-      name,
-      bundle,
-      (progress) => {
-        if (progress.step === 'upload') console.error(`uploaded chunk ${progress.done}/${progress.total}`);
-      },
-      values.prune ? { prune: { graceMs: graceMs() } } : {},
-    );
-    print({
-      name: `${parseName(name)?.label}.dash`,
-      content: result.site.content,
-      revision: result.site.revision,
-      uploaded: result.uploaded,
-      reused: result.reused,
-      spent: formatDash(result.creditsSpent),
-      ...(result.pruned
-        ? {
-            pruned: {
-              deleted: result.pruned.deleted,
-              failed: result.pruned.failed,
-              skipped: result.pruned.skipped,
-              ...(result.pruned.deleted > 0 ? describePlan(result.pruned) : result.pruned.deferredUntil !== undefined ? { deferredUntil: new Date(result.pruned.deferredUntil).toISOString() } : {}),
-            },
-          }
-        : {}),
+    await withWriter(async (writer) => {
+      if (values.prune) console.error('after the record is written, --prune checks the site records again from a newer block before deleting (a few minutes)');
+      const result = await publishSite(
+        writer,
+        name,
+        bundle,
+        (progress) => {
+          if (progress.step === 'upload') console.error(`uploaded chunk ${progress.done}/${progress.total}`);
+        },
+        values.prune ? { prune: { graceMs: graceMs() } } : {},
+      );
+      print({
+        name: `${parseName(name)?.label}.dash`,
+        content: result.site.content,
+        revision: result.site.revision,
+        uploaded: result.uploaded,
+        reused: result.reused,
+        spent: formatDash(result.creditsSpent),
+        ...(result.pruned
+          ? {
+              pruned: {
+                deleted: result.pruned.deleted,
+                failed: result.pruned.failed,
+                skipped: result.pruned.skipped,
+                ...(result.pruned.deleted > 0 ? describePlan(result.pruned) : result.pruned.deferredUntil !== undefined ? { deferredUntil: new Date(result.pruned.deferredUntil).toISOString() } : {}),
+              },
+            }
+          : {}),
+      });
     });
   },
 
   async point() {
     const name = requireName();
     const content = values.content ?? fail('point needs --content');
-    const writer = await EvoWriter.connectAs(network(), credentials());
-    print(await publishPointer(writer, name, content));
+    await withWriter(async (writer) => {
+      print(await publishPointer(writer, name, content));
+    });
   },
 
   async unpublish() {
     const name = requireName();
-    const writer = await EvoWriter.connectAs(network(), credentials());
-    print({ removed: await unpublishSite(writer, name) });
+    await withWriter(async (writer) => {
+      print({ removed: await unpublishSite(writer, name) });
+    });
   },
 
   async gc() {
-    const writer = await EvoWriter.connectAs(network(), credentials());
-    const plan = await planPrune(writer, { graceMs: graceMs() });
-    if (values['dry-run']) return print({ dryRun: true, ...describePlan(plan) });
-    const before = await writer.balance();
-    console.error('checking the site records again from a newer block before deleting (a few minutes)');
-    const result = await prune(writer, plan, (hash) => console.error(`deleted chunk ${hash}`));
-    print({ deleted: result.deleted, failed: result.failed, skipped: result.skipped, refunded: formatDash((await writer.balance()) - before) });
+    await withWriter(async (writer) => {
+      const plan = await planPrune(writer, { graceMs: graceMs() });
+      if (values['dry-run']) return print({ dryRun: true, ...describePlan(plan) });
+      const before = await writer.balance();
+      console.error('checking the site records again from a newer block before deleting (a few minutes)');
+      const result = await prune(writer, plan, (hash) => console.error(`deleted chunk ${hash}`));
+      print({ deleted: result.deleted, failed: result.failed, skipped: result.skipped, refunded: formatDash((await writer.balance()) - before) });
+    });
   },
 
   async register() {
     const label = positionals[1] ?? fail('register needs a label');
-    const writer = await EvoWriter.connectAs(network(), credentials());
-    print(await writer.registerName(label));
+    await withWriter(async (writer) => {
+      print(await writer.registerName(label));
+    });
   },
 
   async names() {
-    const who = credentials();
-    const reader = await EvoReader.connect(network(true));
-    print((await reader.listOwnedNames(who.identityId)).map((domain) => `${domain.label}.dash`));
+    const resolved = resolveCredentials();
+    try {
+      const reader = await EvoReader.connect(network(true));
+      print((await reader.listOwnedNames(resolved.credentials.identityId)).map((domain) => `${domain.label}.dash`));
+    } finally {
+      resolved.credentials.privateKey?.fill(0);
+    }
   },
 
   async resolve() {
@@ -352,7 +562,7 @@ const commands: Record<string, () => Promise<void>> = {
     if (positionals[1] !== 'register') fail('usage: dash-sites contract register --schema <file>');
     const schema = JSON.parse(readFileSync(values.schema ?? fail('contract register needs --schema'), 'utf8'));
     if (values.network !== 'testnet' && values.network !== 'mainnet') fail('--network must be testnet or mainnet');
-    print({ contractId: await registerContract(values.network, credentials('CRITICAL'), schema) });
+    print({ contractId: await registerContract(values.network, resolveCredentials('CRITICAL').credentials, schema) });
   },
 };
 
