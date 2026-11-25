@@ -281,7 +281,10 @@ const commands: Record<string, () => Promise<void>> = {
     const name = positionals[1] ?? fail('fetch needs a name');
     const reader = await EvoReader.connect(network(true));
     const resolution = await resolveName(reader, name, { preload: true });
-    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
+    if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
+      const why = resolution.status === 'unsupported' ? `${resolution.status}: ${resolution.reason === 'newer' ? 'a newer format than this version reads' : 'content this project does not define'}` : resolution.status;
+      fail(`${name} does not resolve to a site stored on Platform (${why})`);
+    }
     const source = (hashes: string[]) => reader.getChunks(resolution.site.id, hashes);
     const manifest = await loadManifest(resolution.content, source);
     const decision = decide(manifest, positionals[2] ?? '/');

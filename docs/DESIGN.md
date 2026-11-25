@@ -139,6 +139,7 @@ site      mutable, never deleted, not transferable
   normalizedParentDomainName string  "dash"
   normalizedLabel            string  the DPNS name, e.g. a11ce
   content                    string  content URI, printable ASCII, ≤ 2048 chars; absent: no site
+  v                          integer format version, 1
   unique index (normalizedParentDomainName, normalizedLabel, $ownerId)
   unique index ($ownerId, normalizedParentDomainName, normalizedLabel)
   index        ($updatedAt)
@@ -147,6 +148,8 @@ chunk     immutable, deletable, not transferable
   site     32 bytes  $id of the site record the chunk belongs to; carries an owner check
   hash     32 bytes  sha256(d0 ‖ d1 ‖ d2)
   d0,d1,d2 bytes     up to 4,900 each (14,700 per chunk)
+  v        integer   format version, 1
+  $createdAt         required, so gc keeps chunks a publish is still uploading
   unique index (site, hash)
 ```
 

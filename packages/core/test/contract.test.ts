@@ -81,7 +81,7 @@ describe('the contract to register', () => {
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
-        required: ['site', 'hash', 'd0', 'v'],
+        required: ['site', 'hash', 'd0', 'v', '$createdAt'],
         indices: [{ name: 'siteAndHash', properties: [{ site: 'asc' }, { hash: 'asc' }], unique: true }],
         positions: { site: 0, hash: 1, d0: 2, d1: 3, d2: 4, v: 5 },
       },
@@ -89,15 +89,15 @@ describe('the contract to register', () => {
   });
 
   it('is the schema its cost was measured on', () => {
-    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('04044d0466fdda9db34795364e6871078c85454f16ac25da9b9fe50b8f54a7ec');
+    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('fd4d09f1840976095038ec5f7237c78eb6bc2e76ae33eb7a608966fba035ba5e');
   });
 
-  it('is the contract registered on testnet, but for the `v` fields: register it again before this ships', () => {
+  it('is the contract registered on testnet, but for `v` and the chunk `$createdAt`: register it again before this ships', () => {
     const { bytes } = KNOWN_CONTRACTS.testnet?.[DEPLOYMENTS.testnet?.contractId as string] as { bytes: string };
     const withoutVersions = schemas();
     for (const type of Object.values(withoutVersions)) {
       delete type.properties.v;
-      type.required = (type.required as string[] | undefined)?.filter((key) => key !== 'v');
+      type.required = (type.required as string[] | undefined)?.filter((key) => key !== 'v' && !(type === withoutVersions.chunk && key === '$createdAt'));
     }
     expect((knownContract(bytes).toJSON() as { documentSchemas: unknown }).documentSchemas).toEqual(withoutVersions);
   });

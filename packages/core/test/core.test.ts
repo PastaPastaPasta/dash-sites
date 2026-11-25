@@ -648,9 +648,10 @@ describe('resolve and publish', () => {
   });
 
   it('lets a dry run list what a deferred plan would delete', async () => {
-    const { alice, now } = aged();
+    const { alice, later, now } = aged();
     const v1 = buildSite(SITE);
     await publishSite(alice, 'alice', v1);
+    later();
     await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('new') }]));
     const plan = await planPrune(alice, { now: now() });
     expect(plan.deferredUntil).toBeDefined();
@@ -689,6 +690,19 @@ describe('resolve and publish', () => {
     expect((await stored(alice)).map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
   });
 
+  it('keeps chunks stored within the grace period, which a publish still uploading has not referenced yet', async () => {
+    const { platform, alice, later, now } = aged();
+    await publishSite(alice, 'alice', buildSite(SITE));
+    later();
+    const record = await alice.ensureSite(platform.domains.get('a11ce')!);
+    const next = buildSite([{ path: '/index.html', bytes: text('uploading') }]);
+    for (const [hash, data] of next.chunks) await alice.createChunk(record.id, hash, data);
+    expect((await collectGarbage(alice, { now: now(), recheckMs: 0 })).deleted).toBe(0);
+    for (const hash of next.chunks.keys()) expect(await holds(alice, hash)).toBe(true);
+    later();
+    expect((await collectGarbage(alice, { now: now(), recheckMs: 0 })).deleted).toBe(next.chunks.size);
+  });
+
   it('waits for a re-read from a block later than the plan before deleting, so a lagging node cannot hide a publish', async () => {
     const { platform, alice, later } = aged();
     const v1 = buildSite(SITE);
@@ -703,7 +717,7 @@ describe('resolve and publish', () => {
       ...alice,
       listSitesProved: async () => (platform.now() < planBlock + PRUNE_RECHECK_MS ? v1Listing : alice.listSitesProved()),
     };
-    const plan = await planPrune(lagging, { now: planBlock });
+    const plan = await planPrune(lagging, { now: platform.meta().timeMs, graceMs: 0 });
     expect(plan.remove.map((c) => c.hash).sort()).toEqual([...v2.chunks.keys()].sort());
     let slept = 0;
     const result = await prune(lagging, plan, { sleep: async (ms) => { slept += ms; platform.now = (() => { const t = platform.now() + ms; return () => t; })(); }, clock: () => 0 });

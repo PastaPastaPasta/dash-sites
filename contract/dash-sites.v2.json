@@ -164,7 +164,8 @@
       "site",
       "hash",
       "d0",
-      "v"
+      "v",
+      "$createdAt"
     ],
     "additionalProperties": false,
     "transferable": 0,

@@ -61,6 +61,8 @@ export interface PlatformReader {
 export interface StoredChunk {
   id: string;
   hash: string;
+  /** Block time the chunk was stored at. */
+  createdAt: number;
 }
 
 export interface PlatformWriter extends PlatformReader {

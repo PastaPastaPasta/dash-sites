@@ -1,6 +1,6 @@
 import { isHash, utf8 } from './bytes.js';
 import { isExternalAsset, type ExternalAsset } from './external.js';
-import { isNewer, NewerFormatError } from './formats.js';
+import { refuseNewer } from './formats.js';
 import {
   CHUNK_SIZE,
   DEFAULT_LIMITS,
@@ -94,7 +94,7 @@ export function validateManifest(input: unknown, limits: Limits = DEFAULT_LIMITS
     if (!['v', 'chunks', 'files', 'spa'].includes(key)) throw new ManifestError(`unknown key ${key}`);
   }
   if (raw.v !== 1 && raw.v !== 2) {
-    if (isNewer('manifest', raw.v)) throw new NewerFormatError('manifest', raw.v);
+    refuseNewer('manifest', raw.v);
     throw new ManifestError('unsupported version');
   }
   const v2 = raw.v === 2;

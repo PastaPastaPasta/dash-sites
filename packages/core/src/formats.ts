@@ -33,5 +33,10 @@ export function formatVersion(value: unknown): number {
   return typeof value === 'number' || typeof value === 'bigint' ? Number(value) : 1;
 }
 
+/** Throws {@link NewerFormatError} when `version` is newer than this code reads. */
+export function refuseNewer(format: FormatName, version: unknown): void {
+  if (isNewer(format, version)) throw new NewerFormatError(format, version);
+}
+
 /** Whether `version` is a format version that is newer than this code reads. */
 export const isNewer = (format: FormatName, version: unknown): version is number => Number.isSafeInteger(version) && (version as number) > FORMATS[format];

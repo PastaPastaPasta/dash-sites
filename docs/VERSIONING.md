@@ -48,23 +48,33 @@ Taken and not yet written:
   to 3 before it merges.
 
 Records written before the `v` field existed count as version 1. The only
-ones are on the testnet contract `zVqSAuc1…`.
+ones are on the testnet contract `zVqSAuc1…`, which has no `v` field. That
+contract has to be registered again, or updated, before this branch ships (see
+[Pending decisions](#pending-decisions)).
 
 ## What a reader does with each version
 
 | What it finds | dash.site page and worker | Testnet gateway | CLI |
 | --- | --- | --- | --- |
 | A version it reads | Serves the site | Serves the site | Reads the site |
-| A newer version (`reason: 'newer'`, or `NewerFormatError`) | "*name* needs a newer version of this page", HTTP 502. It asks the browser to check for a newer worker (`registration.update()`); a reload then gets it | "needs a newer gateway", HTTP 502 | `resolve` answers `unsupported` with `reason: "newer"`; `fetch` stops with "format N is newer than this version reads" |
-| A content URI this project never defined (`reason: 'unknown'`) | "cannot be shown here" | "cannot be served here" | `unsupported` with `reason: "unknown"` |
+| A newer version (`reason: 'newer'`, or `NewerFormatError`) | "*name* needs a newer version of this page", HTTP 502. It asks the browser to check for a newer worker (`registration.update()`); a reload then gets it | "needs a newer gateway", HTTP 502 | `resolve` answers `unsupported` with `reason: "newer"`. `fetch` stops with "unsupported: a newer format than this version reads" for a record or content URI, and "format N is newer than this version reads" for a manifest or chunk |
+| A content URI this project never defined (`reason: 'unknown'`) | "cannot be shown here" | "cannot be served here" | `unsupported` with `reason: "unknown"`; `fetch` says "content this project does not define" |
 | A malformed object at a known version | "incomplete or does not match the hashes its owner published" | Same | An "invalid manifest" or content error |
 
 The extension shows no site content itself. It compares the record the page
 claims with its own proved read, so it needs no format support beyond the
 site record.
 
-`gc` and `publish --prune` delete nothing while any of the identity's
-records is in a format they cannot read.
+Writers never rewrite what they cannot read:
+
+- `publish`, `unpublish` and a pointer publish refuse a name whose record is in
+  a newer format, before any chunk is paid for. Rewriting it would drop the
+  fields the newer format added.
+- `gc` and `publish --prune` delete nothing while any of the identity's
+  records is in a format they cannot read.
+- They also keep every chunk stored within the grace period (by the chunk's
+  `$createdAt`), so a publish still uploading in another tab keeps the chunks
+  its record does not reference yet.
 
 ## Changing the contract
 
@@ -77,8 +87,8 @@ protocols 14 and 15:
 | An update can | An update cannot |
 | --- | --- |
 | Add a document type | Remove a document type ([`validate_update/common/mod.rs:122`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/methods/validate_update/common/mod.rs#L122)) |
-| Add a property: optional, or required only for documents created after the update (`requiredSince`) ([`document_type/.../validate_update/v1/mod.rs:763`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/document_type/methods/validate_update/v1/mod.rs#L763)) | Remove a property, or make an existing one required |
-| Loosen a limit: raise `maxLength` or `maxItems`, lower `minLength`, drop a `pattern` ([`rule_set.rs`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-json-schema-compatibility-validator/src/rules/rule_set.rs#L423)) | Tighten a limit, change a `pattern`, or change `additionalProperties` |
+| Add a property: optional, or required only for documents created after the update (`requiredSince`). From protocol 15 a new property goes after the existing ones, which keep their order ([`v2/nested_members.rs:44`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/document_type/methods/validate_update/v2/nested_members.rs#L44)) ([`document_type/.../validate_update/v1/mod.rs:763`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/document_type/methods/validate_update/v1/mod.rs#L763)) | Remove a property, make an existing one required, or stop requiring one. A system field such as `$createdAt` can never become required later |
+| Loosen a limit: raise `maxLength` or `maxItems`, lower `minLength`, drop a `pattern` ([`rule_set.rs`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-json-schema-compatibility-validator/src/rules/rule_set.rs#L423)) | Tighten a limit, change a `pattern`, or change `additionalProperties`. Resize a fixed-size byte array (`minItems` = `maxItems`, like `site` and `hash`), whose stored layout depends on it ([`common/mod.rs:30`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/document_type/methods/validate_update/common/mod.rs#L30)) |
 | Change descriptions and comments | Add, remove or change an index on an existing type ([`v1/mod.rs:107`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/document_type/methods/validate_update/v1/mod.rs#L107)) |
 | | Change whether documents are mutable, deletable or transferable, or change how a stored value is encoded |
 | | Make the contract read-only later, or change anything once it is read-only ([`config/.../validate_update/v0/mod.rs:17`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/config/methods/validate_update/v0/mod.rs#L17)) |
@@ -202,3 +212,13 @@ that stops loading means a reader broke.
     An update can only add or loosen, never break stored documents.
   - The choice is made at registration and cannot be made read-only later.
   - This branch registers it updatable.
+- **How the testnet contract `zVqSAuc1…` gets `v` and the chunk
+  `$createdAt`.** Both are on-chain testnet writes and wait for a go.
+  - Register a new testnet contract from this schema, and replace the id in
+    `DEPLOYMENTS`, the bundled snapshot, the README and DESIGN. The few test
+    sites on `zVqSAuc1…` are published again.
+  - Or update `zVqSAuc1…` in place. `v` would then be required only from the
+    update on (`requiredSince`), which the mainnet schema would not carry, so
+    testnet and mainnet would differ. The chunk `$createdAt` cannot be added
+    this way at all.
+  - Registering again is the cleaner choice and is assumed here.

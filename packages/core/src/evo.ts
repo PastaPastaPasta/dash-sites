@@ -11,7 +11,7 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { base58 } from '@scure/base';
 import { concat, fromHex, sha256, toHex } from './bytes.js';
 import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
-import { FORMATS, formatVersion, isNewer, NewerFormatError } from './formats.js';
+import { FORMATS, formatVersion, isNewer, refuseNewer } from './formats.js';
 import { KNOWN_CONTRACTS } from './known-contracts.js';
 import { CHUNK_FIELD_SIZE, CHUNK_SIZE, PRELOAD_CHUNKS } from './limits.js';
 import { DASH_TLD, isValidLabel, normalizeLabel } from './names.js';
@@ -70,8 +70,7 @@ const dashName = (normalizedLabel: string): Where[] => [
 
 function toChunk(document: Document): [hash: string, data: Uint8Array] {
   const object = document.toObject() as Record<string, unknown>;
-  const version = formatVersion(object.v);
-  if (isNewer('chunk', version)) throw new NewerFormatError('chunk', version);
+  refuseNewer('chunk', formatVersion(object.v));
   const fields = [object.d0, object.d1, object.d2].filter((field): field is Uint8Array => field instanceof Uint8Array);
   return [toHex(object.hash as Uint8Array), concat(fields)];
 }
@@ -208,7 +207,7 @@ export class EvoReader implements PlatformReader {
     const domain = data.pageDocuments[0];
     const record = sites?.kind === 'documents' ? sites.documents[0] : undefined;
     if (record && chunks?.kind === 'documents' && chunks.documents.length > 0) {
-      this.preloaded.set(record.id.toBase58(), new Map(chunks.documents.map(toChunk)));
+      this.preloaded.set(record.id.toBase58(), new Map(chunks.documents.filter((chunk: Document) => !isNewer('chunk', formatVersion((chunk.toObject() as Record<string, unknown>).v))).map(toChunk)));
       for (const oldest of this.preloaded.keys()) {
         if (this.preloaded.size <= PRELOADED_SITES) break;
         this.preloaded.delete(oldest);
@@ -470,7 +469,11 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
   }
 
   async listChunks(siteId: string): Promise<StoredChunk[]> {
-    return (await this.all('chunk', ['site', '==', siteId], 'hash')).value.map(([id, document]) => ({ id, hash: toHex((document.toObject() as Record<string, unknown>).hash as Uint8Array) }));
+    return (await this.all('chunk', ['site', '==', siteId], 'hash')).value.map(([id, document]) => ({
+      id,
+      hash: toHex((document.toObject() as Record<string, unknown>).hash as Uint8Array),
+      createdAt: Number(document.createdAt ?? 0),
+    }));
   }
 
   async createChunk(siteId: string, hash: string, data: Uint8Array): Promise<void> {
@@ -509,6 +512,7 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, v: FORMATS.site, ...(content === undefined ? {} : { content }) };
     const revision = existing ? Number(existing[1].revision ?? 1) + 1 : 1;
     if (existing) {
+      refuseNewer('site', formatVersion(existing[1].toObject().v));
       const next = { ...(existing[1].toObject() as Record<string, unknown>), ...properties, $revision: BigInt(revision) };
       if (content === undefined) delete next.content;
       await this.sdk.documents.replace({ document: Document.fromObject(next as never, this.sdk.wasm.version() as never), ...this.key });
@@ -530,7 +534,7 @@ export class EvoWriter extends EvoReader implements PlatformWriter {
     const own = () => this.ownSite(normalizedLabel);
     let existing = await own();
     if (!existing) {
-      const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel };
+      const properties = { normalizedParentDomainName: DASH_TLD, normalizedLabel, v: FORMATS.site };
       await this.sdk.documents.create({ document: this.newDocument('site', properties), ...this.key }).catch((error: unknown) => {
         if (!/duplicate unique/.test(String(error))) throw error;
       });

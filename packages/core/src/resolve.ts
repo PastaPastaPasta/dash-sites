@@ -46,9 +46,9 @@ export async function resolveName(reader: PlatformReader, input: string, options
   if (site && (site.normalizedLabel !== normalized || site.ownerId !== domain.ownerId)) throw new Error('Platform answered with a different site');
   const base = { normalized, domain, canonicalLabel: domain.label.toLowerCase(), ownerId: domain.ownerId, meta };
   if (!site || !isCurrent(domain, site)) return { status: 'no-site', ...base };
-  if (isNewer('site', site.v)) return { status: 'unsupported', reason: 'newer', ...base, site: { ...site, content: site.content ?? '' } };
+  const published = { ...site, content: site.content ?? '' };
+  if (isNewer('site', site.v)) return { status: 'unsupported', reason: 'newer', ...base, site: published };
   if (site.content === undefined) return { status: 'no-site', ...base };
-  const published = { ...site, content: site.content };
   const content = parseContentUri(site.content);
   if (!content) return { status: 'unsupported', reason: contentUriIsNewer(site.content) ? 'newer' : 'unknown', ...base, site: published };
   return { status: 'ok', ...base, site: published, content };

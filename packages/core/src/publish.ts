@@ -1,5 +1,5 @@
 import { parseContentUri } from './content.js';
-import { isNewer } from './formats.js';
+import { isNewer, refuseNewer } from './formats.js';
 import { estimateCredits, formatDash } from './cost.js';
 import { parseName } from './names.js';
 import type { SiteBundle } from './pack.js';
@@ -66,6 +66,8 @@ export async function publishSite(
   const domain = await requireOwnedName(writer, name);
   const before = await writer.balance();
   const existing = (await writer.listSites()).find((site) => site.normalizedLabel === domain.normalizedLabel);
+  // An older writer must not rewrite a newer record, which would drop what it cannot read; refuse before paying for chunks.
+  if (existing) refuseNewer('site', existing.v);
   if (!existing && before < estimateCredits(bundle)) throw new Error(`the identity holds ${formatDash(before)}, and this site costs about ${formatDash(estimateCredits(bundle))} to store`);
   const record = existing ?? (await writer.ensureSite(domain));
   const all = [...bundle.chunks.keys()];
@@ -198,7 +200,7 @@ export interface PruneResult extends PrunePlan {
 
 const snapshot = (sites: SiteRecord[]): string[] => sites.map((site) => `${site.id} ${site.revision} ${site.content ?? ''}`).sort();
 
-async function listSites(writer: PlatformWriter, published?: SiteRecord): Promise<Proved<SiteRecord[]>> {
+async function listSettled(writer: PlatformWriter, published?: SiteRecord): Promise<Proved<SiteRecord[]>> {
   let listed = await writer.listSitesProved();
   const shows = (sites: SiteRecord[]) => !published || sites.some((site) => site.id === published.id && site.revision >= published.revision);
   for (let attempt = 1; attempt < LIST_ATTEMPTS && !shows(listed.value); attempt++) {
@@ -258,18 +260,20 @@ export async function planPrune(writer: PlatformWriter, options: PruneOptions = 
   const graceMs = options.graceMs ?? DEFAULT_PRUNE_GRACE_MS;
   const startedAt = Date.now();
   const { published } = options;
-  const listed = await listSites(writer, published?.site);
+  const listed = await listSettled(writer, published?.site);
   const sites = listed.value;
   // The grace period is measured in Platform's time (the listing's block), not this machine's clock.
   const now = options.now ?? listed.meta.timeMs;
   const ages = sites.map((site) => (site.id === published?.site.id ? (published.replaced?.updatedAt ?? 0) : site.updatedAt));
   const newest = Math.max(0, ...ages);
 
-  const keep = await referenced(writer, published?.replaced ? [...sites, published.replaced] : sites);
+  const records = published?.replaced ? [...sites, published.replaced] : sites;
+  const keep = await referenced(writer, records);
   const extra = new Set(options.keep ?? []);
   const stored: Array<StoredChunk & { siteId: string }> = [];
   for (const site of sites) for (const chunk of await writer.listChunks(site.id)) stored.push({ ...chunk, siteId: site.id });
-  const unused = stored.filter((chunk) => !extra.has(chunk.hash) && !keep.get(chunk.siteId)?.has(chunk.hash));
+  // A chunk stored within the grace period may belong to a publish still uploading, whose record does not reference it yet.
+  const unused = stored.filter((chunk) => chunk.createdAt <= now - graceMs && !extra.has(chunk.hash) && !keep.get(chunk.siteId)?.has(chunk.hash));
   const sizes = new Map<string, number>();
   for (const site of sites) {
     const hashes = unused.filter((chunk) => chunk.siteId === site.id).map((chunk) => chunk.hash);
@@ -282,7 +286,7 @@ export async function planPrune(writer: PlatformWriter, options: PruneOptions = 
     remove,
     bytes: remove.reduce((sum, chunk) => sum + chunk.bytes, 0),
     kept: stored.length - remove.length,
-    sites: snapshot(published?.replaced ? [...sites, published.replaced] : sites),
+    sites: snapshot(records),
     provedAt: listed.meta.timeMs,
     startedAt,
     ...(graceMs > 0 && newest > now - graceMs ? { deferredUntil: newest + graceMs } : {}),

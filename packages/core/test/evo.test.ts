@@ -8,6 +8,7 @@ import { sha256Hex, toHex } from '../src/bytes.js';
 import { DPNS_CONTRACT_ID, networkConfig, readerConfig } from '../src/config.js';
 import { EvoReader, EvoWriter, KeyRefused, withReadDeadline } from '../src/evo.js';
 import { PRELOAD_CHUNKS } from '../src/limits.js';
+import { NewerFormatError } from '../src/formats.js';
 
 const CONFIG = networkConfig('testnet');
 const IDENTITY = base58.encode(new Uint8Array(32).fill(4));
@@ -152,6 +153,14 @@ describe('reading a name', () => {
     expect(queries[0]?.where).toEqual([['site', '==', SITE_ID], ['hash', 'in', [base58.encode(Buffer.from(hashes[2] as string, 'hex'))]]]);
   });
 
+  it('leaves a chunk of a newer format out of the preload, so the read of the name still succeeds', async () => {
+    const newer = { toObject: () => ({ ...chunk(1).toObject(), v: 2 }) };
+    const { reader: platform, queries } = reader(answer([domain], documents(record), documents(chunk(0), newer)));
+    expect(await platform.getName('a11ce', true)).toEqual({ value: read, meta });
+    await platform.getChunks(SITE_ID, [hashes[0] as string, hashes[1] as string]);
+    expect(queries).toHaveLength(1);
+  });
+
   it('asks for the record alone when no chunks are wanted', async () => {
     const { reader: platform, queries, asked } = reader(answer([domain], documents(record)));
     expect(await platform.getName('a11ce')).toEqual({ value: read, meta });
@@ -250,6 +259,13 @@ describe('writing a site record', () => {
     const listed = writer.listSites();
     await vi.runAllTimersAsync();
     expect(await listed).toMatchObject([{ revision: 3 }]);
+
+    const current = stored as Document;
+    stored = { revision: current.revision, updatedAt: current.updatedAt, ownerId: current.ownerId, toObject: () => ({ ...(current.toObject() as object), v: 2 }) } as never;
+    const refused = writer.putSite(domain, 'ipfs://y').catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    expect(await refused).toBeInstanceOf(NewerFormatError);
+    expect(writes).toHaveLength(3);
   });
 
   it('takes the record another tab created first as its own, and reports any other refusal', async () => {
@@ -276,6 +292,7 @@ describe('writing a site record', () => {
     visible = true;
     await vi.runAllTimersAsync();
     expect(await ensured).toMatchObject({ revision: 1, normalizedLabel: 'a11ce' });
+    expect(stored?.toObject()).toMatchObject({ normalizedLabel: 'a11ce', v: 1n });
 
     visible = false;
     refusal = 'Insufficient identity balance';

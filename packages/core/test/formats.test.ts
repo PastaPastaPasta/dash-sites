@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSite,
   FORMATS,
-  formatContentUri,
-  gzip,
   loadManifest,
   NewerFormatError,
+  publishPointer,
+  publishSite,
   readFile,
   resolveName,
   sha256Hex,
   utf8,
+  unpublishSite,
   type Resolution,
 } from '../src/index.js';
 import { MemoryPlatform } from '../src/memory.js';
-import { FIXTURES, fixtureExternal, readFixture, storeFixture } from './fixtures/formats/load.js';
+import { FIXTURES, fixtureExternal, readFixture, storeFixture, storeManifestVersion } from './fixtures/formats/load.js';
 
 const ok = (resolution: Resolution) => {
   if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') throw new Error(`expected a stored site, got ${resolution.status}`);
@@ -83,15 +84,24 @@ describe('newer formats', () => {
 
   it('refuses a manifest of a newer version as newer, not as damaged', async () => {
     const { platform, site, reader } = await stored();
-    const future = { v: FORMATS.manifest + 1, chunks: [], files: {} };
-    const piece = gzip(utf8.encode(JSON.stringify(future)));
-    const hash = sha256Hex(piece);
-    await platform.as('owner-id').createChunk(site.id, hash, piece);
-    site.content = formatContentUri({ scheme: 'dash-manifest', chunks: [hash] });
+    await storeManifestVersion(platform, site, FORMATS.manifest + 1);
     const resolution = ok(await resolveName(reader, 'fixture'));
     const error = await loadManifest(resolution.content, (hashes) => reader.getChunks(site.id, hashes)).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(NewerFormatError);
     expect(error).toMatchObject({ format: 'manifest', version: FORMATS.manifest + 1 });
+  });
+
+  it('does not let this version rewrite a record of a newer format, which would drop what it cannot read', async () => {
+    const { platform, site } = await stored();
+    site.v = FORMATS.site + 1;
+    const writer = platform.as('owner-id');
+    const chunks = platform.chunks.size;
+    const bundle = buildSite([{ path: '/index.html', bytes: utf8.encode('<p>older writer</p>') }]);
+    await expect(publishSite(writer, 'fixture', bundle)).rejects.toBeInstanceOf(NewerFormatError);
+    expect(platform.chunks.size).toBe(chunks);
+    await expect(unpublishSite(writer, 'fixture')).rejects.toBeInstanceOf(NewerFormatError);
+    await expect(publishPointer(writer, 'fixture', `ipfs://${'b'.repeat(59)}`)).rejects.toBeInstanceOf(NewerFormatError);
+    expect(site.v).toBe(FORMATS.site + 1);
   });
 
   it('refuses a chunk of a newer format as newer', async () => {

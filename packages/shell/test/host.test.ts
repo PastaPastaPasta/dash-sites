@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildSite, cdnSource, formatContentUri, gzip, integrityOf, normalizeLabel, publishSite, sha256Hex, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, cdnSource, integrityOf, normalizeLabel, publishSite, sha256Hex, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
-import { FIXTURES, fixtureExternal, readFixture, storeFixture } from '../../core/test/fixtures/formats/load.js';
+import { FIXTURES, fixtureExternal, readFixture, storeFixture, storeManifestVersion } from '../../core/test/fixtures/formats/load.js';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
 
 const text = (s: string) => utf8.encode(s);
@@ -530,10 +530,7 @@ describe('stored formats', () => {
   it('asks for a newer worker when a manifest is of a newer version', async () => {
     const h = new Harness();
     const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
-    const piece = gzip(utf8.encode(JSON.stringify({ v: 99, chunks: [], files: {} })));
-    const hash = sha256Hex(piece);
-    await h.platform.as('alice-id').createChunk(site.id, hash, piece);
-    site.content = formatContentUri({ scheme: 'dash-manifest', chunks: [hash] });
+    await storeManifestVersion(h.platform, site, 99);
     await h.open();
     const reply = await h.get('/');
     expect(reply.status).toBe(502);
