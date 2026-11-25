@@ -11,7 +11,7 @@ export type Report = (ok: boolean, text: string) => void;
 export async function verify(label: string, network: Network, report: Report): Promise<boolean> {
   const reader = await EvoReader.connect(readerConfig(network));
   report(true, `Connected to Dash Platform ${network} from this browser`);
-  const resolution = await resolveName(reader, label);
+  const resolution = await resolveName(reader, label, { preload: true });
   if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') {
     report(false, `Platform has no stored site for ${label}.dash (${resolution.status})`);
     return false;
