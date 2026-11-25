@@ -12,6 +12,7 @@ import {
   publishPointer,
   publishSite,
   readFile,
+  readerConfig,
   decide,
   resolveName,
   unpublishSite,
@@ -90,9 +91,9 @@ function credentials(level: 'HIGH' | 'CRITICAL' = 'HIGH'): Credentials {
   return { identityId: values.identity, privateKeyWif };
 }
 
-function network(): NetworkConfig {
+function network(reading = false): NetworkConfig {
   if (values.network !== 'testnet' && values.network !== 'mainnet') fail('--network must be testnet or mainnet');
-  return networkConfig(values.network as Network, values.contract);
+  return (reading ? readerConfig : networkConfig)(values.network as Network, values.contract);
 }
 
 function requireName(): string {
@@ -169,18 +170,18 @@ const commands: Record<string, () => Promise<void>> = {
 
   async names() {
     const who = credentials();
-    const reader = await EvoReader.connect(network());
+    const reader = await EvoReader.connect(network(true));
     print((await reader.listOwnedNames(who.identityId)).map((domain) => `${domain.label}.dash`));
   },
 
   async resolve() {
     const name = positionals[1] ?? fail('resolve needs a name');
-    print(await resolveName(await EvoReader.connect(network()), name));
+    print(await resolveName(await EvoReader.connect(network(true)), name));
   },
 
   async fetch() {
     const name = positionals[1] ?? fail('fetch needs a name');
-    const reader = await EvoReader.connect(network());
+    const reader = await EvoReader.connect(network(true));
     const resolution = await resolveName(reader, name, { preload: true });
     if (resolution.status !== 'ok' || resolution.content.scheme !== 'dash-manifest') fail(`${name} does not resolve to a site stored on Platform (${resolution.status})`);
     const source = (hashes: string[]) => reader.getChunks(resolution.site.id, hashes);
@@ -193,7 +194,7 @@ const commands: Record<string, () => Promise<void>> = {
   },
 
   async gateway() {
-    await serve(await EvoReader.connect(network()));
+    await serve(await EvoReader.connect(network(true)));
   },
 
   async preview() {
