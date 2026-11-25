@@ -165,6 +165,7 @@ const commands: Record<string, () => Promise<void>> = {
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
     const writer = await EvoWriter.connectAs(network(), credentials());
+    if (values.prune) console.error('after the record is written, --prune checks the site records again from a newer block before deleting (a few minutes)');
     const result = await publishSite(
       writer,
       name,
