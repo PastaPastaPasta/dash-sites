@@ -20,8 +20,9 @@ mainnet and `3JRHRkyYZiwGS6xYQwNq2shemQ5mhGv36yK6VBweVtzx` on testnet
 
 ## How a name opens on dash.site
 
-dash.site is a static site with no backend service. It runs as an assets-only
-Cloudflare Worker, so no code runs on any request. Every host under it,
+dash.site is a static site with no backend service. It runs as two
+assets-only Cloudflare Workers (`dash-site` for every host and
+`dash-site-app` for `/new`), so no code runs on any request. Every host under it,
 `alice.dash.site` included, gets the same few files: a small page, a service
 worker (`sw.js`) and the verifier. The page holds no site content. When you
 open `https://alice.dash.site/`, your browser does the rest:
@@ -38,21 +39,23 @@ open `https://alice.dash.site/`, your browser does the rest:
 
 The bare `dash.site` is the landing page. Typing a name there goes to
 `https://<name>.dash.site/`. Each name is its own origin, with its own
-storage and service worker. Crawlers, link previews and browsers without
-service workers get the static page, not the site. What is still trusted is
+storage and service worker. Crawlers, link previews and command-line
+clients get the static page, not the site. A browser without service
+workers is told it cannot open Dash Sites. What is still trusted is
 in [the design doc](docs/DESIGN.md#6-security): the page you were sent, the
 quorum key service the Dash SDK uses, and Dash Platform's validators.
 
-The testnet host `id.dashhq.org` works the same way. It also runs the
-fallback process in `packages/gateway`, which renders sites for clients
-without service workers. With the extension you can type `alice.dash` instead.
+Names on the testnet host `id.dashhq.org` open the same way. Its landing
+page, and the copies served to crawlers, link previews and command-line
+clients (chosen by User-Agent), come from the fallback process in
+`packages/gateway`. With the extension you can type `alice.dash` instead.
 
 **Speed.**
 
 - The verifier is a 5.7 MB WebAssembly file (brotli quality 11) and a script
   of about 0.2 MB compressed. Both have content-hashed names and are cached
   as `immutable`.
-- A first visit to `d4shhq.dash.site` takes a median of about 1.1 s on a
+- A first visit to `d4shhq.dash.site` takes a median of about 1 to 1.5 s on a
   fast connection and 2.4 to 2.6 s at 50 Mbit/s (measured from a cloud
   sandbox).
 - Repeat visits are served by the installed worker.
@@ -61,18 +64,20 @@ without service workers. With the extension you can type `alice.dash` instead.
 
 **Theme.** Every dash.site page, from the loading page and errors to the
 landing page and `/new`, follows the system light or dark theme
-(`color-scheme: light dark` and system colors). [AGENTS.md](AGENTS.md) makes
+(`color-scheme: light dark`, with system colors or a light and dark
+palette). [AGENTS.md](AGENTS.md) makes
 this a rule for new pages.
 
 **Abuse reports and blocking.** The landing page and the loading page link
-to "Report abuse" (this repository's issues). dash.site cannot change or remove anything on
-Dash Platform, but it can stop opening a name. To do that, route the name's
-host to a second assets-only Worker that serves
+to "Report abuse" (this repository's issues). dash.site cannot change or
+remove anything on Dash Platform, but it can stop opening a name. None is
+blocked today. When one needs to be, route the name's host to a second
+assets-only Worker that serves
 `packages/shell/src/denied-sw.js` as `/sw.js` and an "unavailable" page for
 everything else. The new `sw.js` clears the site from browsers that already
-have it ([DESIGN §8](docs/DESIGN.md#8-hosting)). `id.dashhq.org` has an
+have it ([DESIGN §8](docs/DESIGN.md#dashsite-static-files-only)). `id.dashhq.org` has an
 operator denylist (`dash-sites-deny`) for names, owners and content
-([DESIGN](docs/DESIGN.md#operator-denylist)). A self-hosted shell has neither.
+([DESIGN](docs/DESIGN.md#operator-denylist-droplet-gateways)). A self-hosted shell has neither.
 
 ## Publish a site
 
@@ -136,7 +141,7 @@ listings yet. The steps are in [packages/extension](packages/extension/README.md
 | `packages/core` | Protocol library: names, manifest, packing, resolution, publishing, Platform access |
 | `packages/shell` | The static page, service worker and verifier that every name's host serves |
 | `packages/builder` | The page at `/new` on dash.site, and the testnet builder |
-| `packages/gateway` | The fallback process and resolve API on `id.dashhq.org` |
+| `packages/gateway` | The landing page, fallback process and resolve API on `id.dashhq.org` |
 | `packages/cli` | `dash-sites` command |
 | `packages/extension` | Browser extension (Chromium and Firefox, MV3) |
 | `packages/showcase` | The site published at `p2p.dash` |
@@ -152,25 +157,29 @@ npm test            # unit tests
 npm run lint
 ```
 
-The browser tests open a live name in a fresh Chromium profile. They fail
+`npm run e2e:shell` opens a live name in a fresh Chromium profile. It fails
 unless the host sent only the static page, every other host the browser
 contacted is a Dash Platform node or the quorum key service, and the site
-still loads with the host blocked.
+still loads with the host blocked. `e2e:extension` opens a live name through
+the extension, and `e2e:builder` publishes through the testnet builder and
+reads the page back.
 
 ```sh
 npx playwright install chromium
 npm run e2e:shell                      # p2p.dash through id.dashhq.org
 npm run e2e:shell -- d4shhq dash.site  # a mainnet name through dash.site
 npm run e2e:extension
-npm run e2e:builder
+npm run e2e:builder -- identity.json alice   # publishes on testnet (spends testnet credits)
 ```
 
 **dash.site on your machine.** Build both Workers' files the way
-`deploy/cloudflare/deploy.sh` does:
+`deploy/cloudflare/deploy.sh` does. The subshell keeps these settings out of
+later testnet builds:
 
 ```sh
-export NETWORK=mainnet GATEWAY_DOMAIN=dash.site DENYLIST=0 BUILDER_URL=https://dash.site/new
-npx tsc -b && node packages/shell/build.mjs && SITE=1 node packages/builder/build.mjs
+( export NETWORK=mainnet GATEWAY_DOMAIN=dash.site DENYLIST=0 \
+    BUILDER_URL=https://dash.site/new PEER_GATEWAY="testnet https://id.dashhq.org"
+  npx tsc -b && node packages/shell/build.mjs && SITE=1 node packages/builder/build.mjs )
 ```
 
 Then run one Worker at a time with Wrangler. Run the static page and test a
