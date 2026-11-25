@@ -171,7 +171,8 @@ bundling its icons, and turning its telemetry off. §5.2 to §5.5 do not change.
   the user is escaped; rich text is cut down to a short list of tags.
 - **Images**: the largest cost by far, so they are resized and re-encoded to
   WebP in the browser before they enter the page, with the stored size and
-  its price shown per image.
+  its price shown per image. An owner with many or large images can keep
+  them off Platform instead ([BULK-STORAGE.md](BULK-STORAGE.md)).
 - **Fonts**: system font stacks. Web fonts are deferred (§5.4).
 - **Cost meter**: the existing estimate, always visible while editing, split
   into text and images.
@@ -291,10 +292,12 @@ Things to settle on the branch before widgets rely on it:
 - The files are `@dashevo/wasm-sdk`'s `dist/raw/wasm_sdk_bg.wasm` (26.7 MB)
   and its 1.5 MB loader. Measured for 5.0.3: jsDelivr sends the WebAssembly
   as 7.5 MB; unpkg, the second mirror, sends all 26.7 MB uncompressed.
-- On the branch a named file counts toward a site's size limit. The
-  browser's 50 MB limit has room. The 25 MB default of the server process
-  that renders sites for crawlers on the testnet host (`packages/gateway`)
-  does not; `dash.site` runs no such process, so mainnet is unaffected.
+- On the branch a named file counts toward a site's 50 MB limit, and the
+  SDK takes 28 MB of it.
+- The same mechanism, made general, is how a site keeps large files off
+  Platform ([BULK-STORAGE.md](BULK-STORAGE.md)). That proposal replaces the
+  branch's npm-specific entry with a list of places, so the shell is changed
+  once for both.
 - Visitors' browsers contact jsDelivr or unpkg, which today's sites never do
   (`e2e/shell.mjs` asserts the list of hosts). With widgets that becomes
   normal for any site that has one.
