@@ -20,6 +20,7 @@
     "e2e:extension": "node e2e/extension.mjs",
     "e2e:builder": "node e2e/builder.mjs",
     "e2e:elsewhere": "node e2e/elsewhere.mjs",
+    "e2e:page-editor": "node e2e/page-editor.mjs",
     "check:pins": "node scripts/check-pins.mjs"
   },
   "devDependencies": {

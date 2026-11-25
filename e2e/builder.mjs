@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { closeEditor, fillItems, openEditor, typeInPlace } from './page-editor-steps.mjs';
 
 const args = process.argv.slice(2);
 const flags = args.filter((arg) => arg.startsWith('--'));
@@ -86,13 +87,13 @@ try {
   check((await page.textContent('#addr-label')) === label, `the address shows ${label}.dash`);
 
   const stamp = new Date().toISOString();
-  await page.fill('#title', 'Made with the Dash Sites builder');
-  await page.fill('#tagline', 'A page written in a browser and stored on Dash Platform.');
-  await page.fill('#body', `## What this is\n\nThis page was published from the web builder by its end-to-end test.\n\nBuild stamp: \`${stamp}\``);
-  await page.click('#add-link');
-  await page.fill('#links input[aria-label="Link label"]', 'Source code');
-  await page.fill('#links input[aria-label="Link address"]', 'github.com/PastaPastaPasta/dash-sites');
-  await page.click('#themes button:has-text("Night")');
+  await openEditor(page);
+  await typeInPlace(page, '.dsp h1', 'Made with the Dash Sites builder');
+  await typeInPlace(page, '.dsp .tagline', 'A page written in a browser and stored on Dash Platform.');
+  await typeInPlace(page, '.dsp .tx', `This page was published from the web builder by its end-to-end test. Build stamp: ${stamp}`);
+  await fillItems(page, '.links', [{ label: 'Source code', url: 'github.com/PastaPastaPasta/dash-sites' }]);
+  await page.click('.ed-themes button:has-text("Night")');
+  await closeEditor(page);
   await page.waitForTimeout(400);
   const preview = await page.frameLocator('#frame').locator('h1').textContent();
   check(preview === 'Made with the Dash Sites builder', `the preview shows the page: ${preview}`);
