@@ -17,8 +17,8 @@ It has three parts that share one protocol library: a **builder** (web app and
 CLI) that publishes, a **gateway** (a static shell with a service worker, plus
 a small server-rendered fallback) that opens sites in any browser, and an
 **extension** that resolves `.dash` names. On mainnet the shell is served as
-the static site dash.site, with no fallback process (§8); only the testnet
-host `id.dashhq.org` runs the gateway process.
+the static site dash.site, with no fallback process (§8); of the hosted
+deployments, only the testnet host `id.dashhq.org` runs the gateway process.
 
 ## 1. Prior art
 
@@ -338,7 +338,7 @@ and the extension all call the same functions.
 
 - **Web app** (static: the testnet builder on GitHub Pages, on a different
   registrable domain from user sites; the mainnet builder at `dash.site/new`,
-  on the same domain, with the limits §6 lists): sign in with a mobile wallet (below), or with an
+  on the same domain, with the cookie and PSL caveats in §6): sign in with a mobile wallet (below), or with an
   identity id or name plus an AUTHENTICATION key (HIGH or CRITICAL) that never
   leaves the page; choose a DPNS name (or register one, with a key sign-in);
   build a site from a template with a Markdown editor, or drop in a
@@ -434,7 +434,7 @@ queries for browsers.
   evonodes (`<ip>:443`, from the masternode list of the quorum key service);
   the quorum key service `quorums.<network>.networks.dash.org` (see §6); and,
   only for a site whose manifest names external npm files (§3),
-  `cdn.jsdelivr.net` and `unpkg.com`. Nothing else. `e2e/shell.mjs` asserts
+  `cdn.jsdelivr.net`, and `unpkg.com` if jsDelivr fails. Nothing else. `e2e/shell.mjs` asserts
   this list in Chromium for a site without external files.
 - **Choosing nodes**: while the verifier downloads, the worker reads that
   masternode list (enabled nodes that passed the service's version check),
@@ -635,7 +635,7 @@ queries for browsers.
 - **Phishing and reputation**: user content under `dash.site` shares its
   reputation with `dash.site/new` (Safe Browsing flags by registrable domain
   unless the suffix is on the PSL). `dash.site` is not on the PSL yet; an
-  entry is the recommended fix.
+  entry, or a dedicated domain on the PSL, is the recommended fix.
 - **Homographs**: DPNS normalization collapses `o/0`, `i/l/1`. Labels are
   ASCII, but DPNS allows `xn--…` labels, which browsers display as Unicode;
   the shell, gateway, CLI, builder and extension refuse them.
@@ -690,7 +690,7 @@ landing page says publishing has not opened.
 | --- | --- | --- |
 | `dash.site` | An assets-only Cloudflare Worker (`deploy/cloudflare`): no Worker script, so no request runs code and static asset requests are free and unmetered. Routes `dash.site/*` and `*.dash.site/*`; `not_found_handling: single-page-application` answers every path with the shell | No server to run. Cloudflare's free certificate covers `dash.site` and `*.dash.site` |
 | `id.dashhq.org` | A 1 GB droplet: Caddy serving the static shell on every name's host, the fallback process as a systemd service, and `agnos` for certificates | Wildcard TLS on a two-level name needs our own terminator; Cloudflare's free certificate covers only `*.dashhq.org` |
-| DNS | Zone `dash.site`: apex and `*` proxied A `192.0.2.1` and AAAA `100::` (placeholders; the Worker routes answer, over IPv4 and IPv6). Zone `dashhq.org`: `id` and `*.id`, A and AAAA, to the testnet droplet (DNS-only), `_acme-challenge.id` delegated to the droplet, CAA for Let's Encrypt DNS-01 | Existing access |
+| DNS | Zone `dash.site`: apex and `*` proxied A `192.0.2.1` and AAAA `100::` (placeholders; the Worker routes answer, over IPv4 and IPv6). Zone `dashhq.org`: `id` and `*.id`, A and AAAA, to the testnet droplet (DNS-only), `_acme-challenge.id` delegated to the droplet (its NS host `ns-dash-sites` has an A record only; the DNS-01 responder listens on IPv4), CAA for Let's Encrypt DNS-01 | Existing access |
 | Builder | GitHub Pages from the repo, `dash-sites.thepasta.org` | Static, free, deploys from CI, different registrable domain from user sites |
 | Extension | Zip on GitHub Releases; store listing later | Store accounts are the user's |
 
