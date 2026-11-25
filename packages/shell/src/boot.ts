@@ -1,5 +1,5 @@
 declare const __GATEWAY_DOMAIN__: string;
-declare const __VERIFIER__: string;
+declare const __VERIFIER_FILES__: string[];
 
 const label = location.hostname.split('.')[0] as string;
 const step = document.getElementById('step') as HTMLElement;
@@ -25,7 +25,8 @@ function landing(): boolean {
   (document.getElementById('landing') as HTMLElement).hidden = false;
   const form = document.getElementById('go') as HTMLFormElement;
   // Someone about to open a name will need the verifier; names share this domain's HTTP cache.
-  form.addEventListener('focusin', () => void fetch(__VERIFIER__, { mode: 'cors', credentials: 'omit' }).then((response) => response.arrayBuffer()).catch(() => undefined), { once: true });
+  const prefetch = (url: string): void => void fetch(url, { mode: 'cors', credentials: 'omit' }).then((response) => response.arrayBuffer()).catch(() => undefined);
+  form.addEventListener('focusin', () => __VERIFIER_FILES__.forEach(prefetch), { once: true });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const name = String(new FormData(form).get('name') ?? '').trim().toLowerCase().replace(/\.dash\.?$/, '');
@@ -65,13 +66,13 @@ async function start(): Promise<void> {
   }
   navigator.serviceWorker.addEventListener('message', (event: MessageEvent<{ dashSitesProgress?: number }>) => {
     const share = event.data?.dashSitesProgress;
-    if (typeof share !== 'number') return;
+    if (typeof share !== 'number' || document.body.classList.contains('failed')) return;
     bar.classList.add('known');
     bar.style.setProperty('--done', `${Math.round(share * 100)}%`);
-    say(`Downloading the verifier, about 9 MB: ${Math.round(share * 100)}%. This happens once.`);
+    say(`Downloading the verifier, about 6 MB: ${Math.round(share * 100)}%. This happens once.`);
   });
   if (!navigator.serviceWorker.controller) {
-    say('Downloading the verifier, about 9 MB. This happens once.');
+    say('Downloading the verifier, about 6 MB. This happens once.');
     const registration = await navigator.serviceWorker.register('/sw.js');
     if (registration.active) return reload();
     await controlled(registration);

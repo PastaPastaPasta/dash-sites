@@ -30,7 +30,7 @@ try {
     contacted.add(url.host);
     if (request.serviceWorker() && (url.origin === origin || url.host === gateway)) workerFetched.add(url.pathname);
   });
-  const isShell = (path) => path === '/' || path === '/sw.js' || /^\/dash-sites-verifier-[0-9a-f]+\.js$/.test(path);
+  const isShell = (path) => path === '/' || path === '/sw.js' || /^\/dash-sites-verifier-[0-9a-f]+\.(js|wasm\.br)$/.test(path);
   const page = await context.newPage();
   const fromServer = new Set();
   const elsewhere = new Set();

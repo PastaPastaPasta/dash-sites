@@ -9,6 +9,7 @@
     "serve": "node serve.mjs"
   },
   "dependencies": {
-    "@dash-sites/core": "0.1.0"
+    "@dash-sites/core": "0.1.0",
+    "brotli-dec-wasm": "2.3.2"
   }
 }

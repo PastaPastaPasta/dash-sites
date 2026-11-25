@@ -52,9 +52,9 @@ https://*.__DOMAIN__ {
 		header X-Content-Type-Options nosniff
 		header Referrer-Policy strict-origin-when-cross-origin
 		header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		@verifier path /dash-sites-verifier-*.js
+		@verifier path /dash-sites-verifier-*
 		header @verifier Cache-Control "public, max-age=31536000, immutable"
-		@mutable not path /dash-sites-verifier-*.js
+		@mutable not path /dash-sites-verifier-*
 		header @mutable Cache-Control "no-cache"
 		try_files {path} /index.html
 		encode zstd gzip
