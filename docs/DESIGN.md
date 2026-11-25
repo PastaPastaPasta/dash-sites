@@ -1,6 +1,6 @@
 # Dash Sites: websites on DPNS names
 
-Status: implemented on testnet. Date: 2026-11-21. Testnet contract: `zVqSAuc1SosVqcXHTvrigRdeiVyHh3i7dTpMFbRVU3L`.
+Status: implemented on testnet. Date: 2026-11-21. Testnet contract: `5BS87xCmGqFKv6fndGjv6cJWbokqWtGs6ui91oRn7q6u` (registered 2026-11-25).
 
 Dash Sites lets the owner of a DPNS name (`alice.dash`) publish a static website
 under that name, and lets anyone open it:
@@ -135,14 +135,14 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
 Two document types ([`contract/dash-sites.v2.json`](../contract/dash-sites.v2.json)). Each carries a format version `v`; how formats and the contract change later is in [VERSIONING.md](VERSIONING.md).
 
 ```
-site      mutable, never deleted, not transferable
+site      mutable (but not its name), never deleted, not transferable
   normalizedParentDomainName string  "dash"
   normalizedLabel            string  the DPNS name, e.g. a11ce
   content                    string  content URI, printable ASCII, ≤ 2048 chars; absent: no site
   v                          integer format version, 1
   unique index (normalizedParentDomainName, normalizedLabel, $ownerId)
   unique index ($ownerId, normalizedParentDomainName, normalizedLabel)
-  index        ($updatedAt)
+  index        ($updatedAt), counted, so a proved count of records changed in a time range is possible
 
 chunk     immutable, deletable, not transferable
   site     32 bytes  $id of the site record the chunk belongs to; carries an owner check

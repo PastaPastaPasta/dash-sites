@@ -31,7 +31,7 @@ index 9cdace46b4..0c3df4857b 100644
 +        .expect("expected the schema file to be JSON");
 +        let contract = serde_json::json!({
 +            "$formatVersion": "1",
-+            "id": "zVqSAuc1SosVqcXHTvrigRdeiVyHh3i7dTpMFbRVU3L",
++            "id": "5BS87xCmGqFKv6fndGjv6cJWbokqWtGs6ui91oRn7q6u",
 +            "ownerId": "AkhihKhRLGjKB1WTdUG7BWrGnTaTTHcMzdSBsKSJ5GNm",
 +            "version": 1,
 +            "documentSchemas": schemas,

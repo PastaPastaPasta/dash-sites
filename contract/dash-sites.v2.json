@@ -3,6 +3,10 @@
     "type": "object",
     "documentsMutable": true,
     "canBeDeleted": false,
+    "immutable": [
+      "normalizedParentDomainName",
+      "normalizedLabel"
+    ],
     "properties": {
       "normalizedParentDomainName": {
         "type": "string",
@@ -73,7 +77,9 @@
           {
             "$updatedAt": "asc"
           }
-        ]
+        ],
+        "countable": "countable",
+        "rangeCountable": true
       }
     ],
     "required": [

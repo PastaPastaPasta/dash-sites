@@ -63,6 +63,7 @@ describe('the contract to register', () => {
         type: 'object',
         documentsMutable: true,
         canBeDeleted: false,
+        immutable: ['normalizedParentDomainName', 'normalizedLabel'],
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
@@ -70,7 +71,7 @@ describe('the contract to register', () => {
         indices: [
           { name: 'nameAndOwner', properties: [{ normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }, { $ownerId: 'asc' }], unique: true },
           { name: 'ownerAndName', properties: [{ $ownerId: 'asc' }, { normalizedParentDomainName: 'asc' }, { normalizedLabel: 'asc' }], unique: true },
-          { name: 'updated', properties: [{ $updatedAt: 'asc' }] },
+          { name: 'updated', properties: [{ $updatedAt: 'asc' }], countable: 'countable', rangeCountable: true },
         ],
         positions: { normalizedParentDomainName: 0, normalizedLabel: 1, content: 2, v: 3 },
       },
@@ -89,17 +90,12 @@ describe('the contract to register', () => {
   });
 
   it('is the schema its cost was measured on', () => {
-    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('fd4d09f1840976095038ec5f7237c78eb6bc2e76ae33eb7a608966fba035ba5e');
+    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('ddb7a75a7ad0a4deb900b247f9e006d9af5d348d9b303a49bfcbc257a74f1fe4');
   });
 
-  it('is the contract registered on testnet, but for `v` and the chunk `$createdAt`: register it again before this ships', () => {
+  it('is the contract registered on testnet', () => {
     const { bytes } = KNOWN_CONTRACTS.testnet?.[DEPLOYMENTS.testnet?.contractId as string] as { bytes: string };
-    const withoutVersions = schemas();
-    for (const type of Object.values(withoutVersions)) {
-      delete type.properties.v;
-      type.required = (type.required as string[] | undefined)?.filter((key) => key !== 'v' && !(type === withoutVersions.chunk && key === '$createdAt'));
-    }
-    expect((knownContract(bytes).toJSON() as { documentSchemas: unknown }).documentSchemas).toEqual(withoutVersions);
+    expect((knownContract(bytes).toJSON() as { documentSchemas: unknown }).documentSchemas).toEqual(schemas());
   });
 
   it('gives every document type a required format version', () => {
