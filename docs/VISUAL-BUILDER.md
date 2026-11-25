@@ -48,7 +48,7 @@ shell this plan needed.
 | --- | --- |
 | Runs as static files in the browser, with no account and no server | The builder is static files at `dash.site/new`; there is no publishing server |
 | Passes the builder's Content-Security-Policy: scripts from its own host only, no `eval`, no third-party requests | `packages/builder/build.mjs`; the page holds a key that can publish |
-| Output is plain static files, and small | Storage is paid once at about 0.3 DASH per MB (0.275 per MB of bytes plus 0.00028 per 14.7 KB chunk) |
+| Output is plain static files, and small | Storage is paid once at about 0.32 DASH per MB (0.285 per MB of bytes plus 0.0005 per 14.7 KB chunk), and every site starts at about 0.002 DASH for its record and its first two chunks |
 | Extensible with our own blocks | Comments, polls and whatever follows |
 | MIT-compatible licence | The repository is MIT |
 | Usable on a phone | Sign-in is a mobile wallet; on a phone the builder already hands off to the wallet app |
@@ -358,10 +358,10 @@ stay on system stacks until it is made.
 
 | What | Who pays | About |
 | --- | --- | --- |
-| A one-page site of text | owner, once | 0.002 DASH (PR #14 measured 0.0016 for two chunks) |
+| A one-page site of text | owner, once | 0.0026 DASH estimated; one published on testnet for 0.0022 |
 | Its page model, for later editing | owner, once | under 0.0002 DASH |
-| A 60 KB photo | owner, once | 0.018 DASH |
-| A 200 KB photo | owner, once | 0.059 DASH |
+| A 60 KB photo | owner, once | 0.020 DASH |
+| A 200 KB photo | owner, once | 0.064 DASH |
 | Widgets on a site | owner, once per site | the script that shows them, to be measured; at 10 KB stored, 0.003 DASH |
 | A comment or a vote | the commenter or voter | to be measured; a 100-byte document costs 0.000265 DASH today, and these carry more indexes. Deleting refunds most of the storage part |
 | Registering the social contract | Pasta, once per network | to be measured on testnet; PR #14's two-type contract cost 0.18 DASH there, and this one has four types |
@@ -409,8 +409,11 @@ testnet (`page-demo-2511.dash`), then opened for editing in a second browser
 that was not signed in. The builder's policy is unchanged, and the editor
 makes no request to another host. Three things fall short of the row above:
 
-- The reference page's text costs 0.00172 DASH; with its 96-pixel picture
-  the estimate is 0.00242 DASH, over the 0.002 target.
+- The reference page's text is estimated at 0.00259 DASH, and at 0.00262
+  DASH with its 96-pixel picture, over the 0.002 target. Under the contract
+  of PR #14 any site starts at about 0.0021 DASH: 0.0011 for its record and
+  0.0005 for each of its first two chunks, before their bytes. The estimate
+  is an upper bound, and a text page published on testnet for 0.00219 DASH.
 - Phones were tested in Chromium's emulation with touch, not on a device,
   and Safari and Firefox were not tested.
 - The editor is not in a sandboxed frame (§5.1).

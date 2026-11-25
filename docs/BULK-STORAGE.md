@@ -85,7 +85,7 @@ Platform. Opened through a locally built shell in headless Chromium
 | A 120 KB image on IPFS | served with the published hash; no recursive gateway contacted |
 | The 26.7 MB Dash SDK WebAssembly, listed at jsDelivr and unpkg | fetched and checked in 1.6 s |
 | Reload | all three from the browser's own verified copies, no request |
-| Stored on Platform for the whole site | 463 bytes, 0.0015 DASH. Storing the three files there would have cost about 8 DASH |
+| Stored on Platform for the whole site | 463 bytes, 0.0017 DASH. Storing the three files there would have cost over 8 DASH |
 
 Also measured: the same pinned module fetches IPFS content in Node (the CLI
 uses it for `check`) and in a worker under the builder's Content Security
@@ -93,10 +93,10 @@ Policy, including files held only by Pinata and by Filecoin storage
 providers, each in 1.3 to 3.8 s.
 
 The builder's panel was run against testnet as well
-(`outside-demo-2511.dash`): a three-file upload that would have cost 0.056
+(`outside-demo-2511.dash`): a three-file upload that would have cost 0.062
 DASH with everything on Platform. The browser fetched the 66 KB image from
 its HTTPS address in 0.4 s and the 117 KB image from IPFS in 2.0 to 2.8 s,
-matched both, and the site published for 0.0018 DASH.
+matched both, and the site published for 0.0017 DASH.
 
 Three things to know:
 
