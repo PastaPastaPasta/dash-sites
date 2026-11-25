@@ -10,7 +10,7 @@ index 9cdace46b4..0c3df4857b 100644
      use dpp::data_contract::DataContract;
      use dpp::data_contracts::SystemDataContract;
      use dpp::document::{Document, DocumentV0};
-@@ -2298,4 +2299,346 @@ mod dpns_v3_tests {
+@@ -2298,4 +2299,352 @@ mod dpns_v3_tests {
              StateTransitionExecutionResult::SuccessfulExecution { .. }
          );
      }
@@ -283,6 +283,12 @@ index 9cdace46b4..0c3df4857b 100644
 +            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 17)
 +            .await;
 +        step("PV14 another identity creates its own record for the name", &result, true);
++        let mut moved = site.clone();
++        moved.set("normalizedLabel", text("e1sewhere8"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 18)
++            .await;
++        step("PV14 move a record to another name", &result, false);
 +
 +        fixture.activate_protocol_version_15(20);
 +
@@ -330,7 +336,7 @@ index 9cdace46b4..0c3df4857b 100644
 +            .await;
 +        step("PV15 delete a site record", &result, false);
 +        let mut moved = site.clone();
-+        moved.set("normalizedLabel", text("elsewhere7"));
++        moved.set("normalizedLabel", text("e1sewhere7"));
 +        let result = fixture
 +            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 30)
 +            .await;
