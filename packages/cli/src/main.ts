@@ -1,8 +1,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
+import { brotliCompressSync, constants as zlib } from 'node:zlib';
 import {
   buildSite,
+  externalUrls,
+  integrityOf,
+  type BuildOptions,
   collectGarbage,
   estimateCredits,
   formatDash,
@@ -26,7 +30,8 @@ import { readSiteDirectory } from './files.js';
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
-  dash-sites publish <dir> --name <name> [--spa] [--dry-run]   publish a folder as <name>.dash
+  dash-sites publish <dir> --name <name> [--spa] [--brotli] [--external <file>] [--dry-run]
+                                                               publish a folder as <name>.dash
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
   dash-sites unpublish --name <name>                           remove the site record
   dash-sites gc                                                delete stored chunks no site uses
@@ -43,6 +48,9 @@ Options
   --contract <id>               dash-sites contract id, if not the built-in one
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
   --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
+  --brotli                      store a file as brotli when that is smaller than gzip (needs a current shell)
+  --external <file>             JSON {"/site/path": {"npm": "pkg", "version": "1.2.3", "path": "dist/file"}}:
+                                files not stored, fetched by readers from npm CDNs and checked by SHA-384
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity
@@ -72,6 +80,8 @@ const { values, positionals } = parseArgs({
     domain: { type: 'string', default: 'localhost' },
     output: { type: 'string', short: 'o' },
     spa: { type: 'boolean', default: false },
+    brotli: { type: 'boolean', default: false },
+    external: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -98,6 +108,30 @@ function network(): NetworkConfig {
 function requireName(): string {
   if (!values.name || !parseName(values.name)) fail('--name must be a DPNS name such as alice or alice.dash');
   return values.name;
+}
+
+function brotli(data: Uint8Array): Uint8Array {
+  return new Uint8Array(brotliCompressSync(data, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_LGWIN]: 24, [zlib.BROTLI_PARAM_SIZE_HINT]: data.length } }));
+}
+
+function buildOptions(): BuildOptions {
+  const external = values.external ? (JSON.parse(readFileSync(values.external, 'utf8')) as BuildOptions['external']) : undefined;
+  return { spa: values.spa, ...(values.brotli ? { brotli } : {}), ...(external ? { external } : {}) };
+}
+
+/** Fetches every external asset from each CDN and refuses the site unless at least one copy matches the local file. */
+async function checkExternal(bundle: ReturnType<typeof buildSite>): Promise<void> {
+  for (const [path, file] of Object.entries(bundle.manifest.files)) {
+    if (!file.ext) continue;
+    let matched = 0;
+    for (const url of externalUrls(file.ext)) {
+      const response = await fetch(url, { redirect: 'error' }).catch((error: unknown) => error as Error);
+      const ok = response instanceof Response && response.ok && integrityOf(new Uint8Array(await response.arrayBuffer())) === file.ext.integrity;
+      console.error(`${ok ? 'ok      ' : 'MISMATCH'} ${path} <- ${url}${response instanceof Response ? '' : ` (${response.message})`}`);
+      if (ok) matched += 1;
+    }
+    if (matched === 0) fail(`${path} is not byte-identical to ${file.ext.npm}@${file.ext.version}/${file.ext.path} on any npm CDN`);
+  }
 }
 
 const print = (value: unknown): void => console.log(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
@@ -129,7 +163,8 @@ const commands: Record<string, () => Promise<void>> = {
   async publish() {
     const dir = positionals[1] ?? fail('publish needs a directory');
     const name = requireName();
-    const bundle = buildSite(await readSiteDirectory(dir), { spa: values.spa });
+    const bundle = buildSite(await readSiteDirectory(dir), buildOptions());
+    await checkExternal(bundle);
     console.error(`${bundle.stats.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
     if (!bundle.manifest.files['/index.html']) console.error('warning: the site has no /index.html');
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
@@ -203,7 +238,7 @@ const commands: Record<string, () => Promise<void>> = {
     const platform = new MemoryPlatform();
     platform.registerName(label, 'preview-identity');
     const writer = platform.as('preview-identity');
-    await publishSite(writer, label, buildSite(await readSiteDirectory(dir), { spa: values.spa }));
+    await publishSite(writer, label, buildSite(await readSiteDirectory(dir), buildOptions()));
     await serve(writer, `http://${label.toLowerCase()}.${values.domain}:${values.port}/`);
   },
 

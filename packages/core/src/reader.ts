@@ -1,4 +1,6 @@
+import { decompress as brotliDecompress } from 'brotli/decompress';
 import { concat, sha256Hex } from './bytes.js';
+import { cdnSource, integrityOf, type ExternalSource } from './external.js';
 import type { ContentRef } from './content.js';
 import { gunzip } from './gzip.js';
 import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_MANIFEST_BYTES, type Limits } from './limits.js';
@@ -47,14 +49,23 @@ export interface FileContent {
   file: ManifestFile;
   /** The decoded file. */
   bytes: Uint8Array;
-  /** The bytes as stored: gzip when `file.enc` is `gzip`, else the same as `bytes`. */
+  /** The bytes as stored: compressed when `file.enc` is set, else the same as `bytes`. */
   stored: Uint8Array;
 }
 
+const defaultExternal = cdnSource();
+
 /** Reads one file of a manifest and checks it against the manifest's size and hash. */
-export async function readFile(manifest: Manifest, path: string, source: ChunkSource): Promise<FileContent> {
+export async function readFile(manifest: Manifest, path: string, source: ChunkSource, external: ExternalSource = defaultExternal): Promise<FileContent> {
   const file = manifest.files[path];
   if (!file) throw new ContentError(`no such file: ${path}`);
+  if (file.ext) {
+    const bytes = await external(file.ext, file.size);
+    if (bytes.length !== file.size || integrityOf(bytes) !== file.ext.integrity || sha256Hex(bytes) !== file.sha256) {
+      throw new ContentError(`${path} does not match its hash`);
+    }
+    return { file, bytes, stored: bytes };
+  }
   const hashes = file.parts.map(([index]) => manifest.chunks[index] as string);
   const chunks = await fetchVerified(source, hashes);
   const pieces: Uint8Array[] = [];
@@ -65,9 +76,9 @@ export async function readFile(manifest: Manifest, path: string, source: ChunkSo
   }
   const stored = concat(pieces);
   let bytes = stored;
-  if (file.enc === 'gzip') {
+  if (file.enc) {
     try {
-      bytes = gunzip(stored, file.size);
+      bytes = file.enc === 'gzip' ? gunzip(stored, file.size) : brotliDecompress(stored, file.size);
     } catch (error) {
       throw new ContentError(`${path} cannot be decompressed: ${(error as Error).message}`);
     }

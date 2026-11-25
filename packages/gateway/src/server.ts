@@ -2,6 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import {
   CHUNK_SIZE,
   ContentError,
+  ExternalAssetError,
   dashHeaders,
   decide,
   DENIED_TITLE,
@@ -261,7 +262,7 @@ export function createGateway(options: GatewayOptions): RequestListener {
         const read = await readFile(manifest, decision.path, chunkSource(resolution.ownerId));
         content = { bytes: read.bytes, stored: read.stored };
       } catch (error) {
-        if (!(error instanceof ContentError)) throw error;
+        if (!(error instanceof ContentError) && !(error instanceof ExternalAssetError)) throw error;
         log({ event: 'bad-file', name: normalized, path: decision.path, error: error.message });
         return html(502, messagePage('Unavailable', 'This file cannot be served', 'Its stored content is incomplete or does not match the hash its owner published.', config), domain);
       }
