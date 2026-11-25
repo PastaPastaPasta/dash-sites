@@ -1,31 +1,25 @@
 # Bulk storage outside Dash Platform
 
-Status: proposal, nothing built. Date: 2026-11-25. Scope: the static stack
-only (`dash.site`, the builder, the CLI).
+Status: built in this PR for the static stack (`dash.site`, the builder, the
+CLI). Date: 2026-11-25. The format is specified in
+[DESIGN.md](DESIGN.md#files-kept-outside-platform-manifest-version-2); this
+page records why it has that shape, what was measured, and what is left.
 
-Storing a file on Dash Platform costs about 0.3 DASH per MB. That suits
-pages and is prohibitive for photos, media and large scripts. A site needs a
-way to keep its big files somewhere cheaper without giving up the guarantee
-that visitors get exactly what the owner published.
+Storing a file on Dash Platform costs about 0.3 DASH per MB. That suits pages
+and is prohibitive for photos, media and large scripts. A site can now keep
+its big files somewhere cheaper without giving up the guarantee that visitors
+get exactly what the owner published.
 
-## Recommendation
+## What was decided
 
-1. **One mechanism.** A file in a site's manifest may be stored elsewhere.
-   The manifest stays on Platform and is proved as today. For such a file it
-   keeps the size and the SHA-256, and lists where the bytes can be fetched.
-   The shell tries each place in order and serves only bytes that match. A
-   provider is relied on to be available, never trusted for content.
-2. **Two kinds of place, and no more**: an HTTPS address, and an IPFS CID.
-   Everything on the list below is one or the other, so the shell never
-   learns a provider's name.
-3. **IPFS through Helia, from the peers that hold the file**, not through a
-   gateway. Tested below: it works in a browser and in a service worker.
-4. **Uploading belongs to the builder and the CLI, not the shell.** Start
-   with "say where the file is", which works for every provider on day one.
-   Then add built-in upload for the two most likely to be used.
-5. **Fold the SDK-from-npm branch into this.** `feat/external-assets` is the
-   same idea for one provider. Generalised before it lands, the shell gets
-   one addition, once, and it covers both.
+| Question | Answer |
+| --- | --- |
+| How many mechanisms? | One. A file's manifest entry lists where the file is; Platform keeps its size and SHA-256; the shell serves only bytes that match |
+| Which kinds of place? | Two: an `https://` address and an `ipfs://` CID. Providers are a matter for uploading only, so the shell never learns a provider's name |
+| IPFS through a gateway? | No. Helia fetches blocks from the providers that hold them, with recursive gateways turned off |
+| Where does the IPFS client come from? | From npm, by hash, the same way a site takes the Dash SDK. It is not a file of whoever hosts the shell |
+| The earlier `feat/external-assets` branch? | Folded in. Its npm-only entry became two HTTPS places, so the format is settled once |
+| Later changes? | The format is built to take them without breaking older shells (below) |
 
 ## The manifest entry
 
@@ -36,117 +30,125 @@ that visitors get exactly what the owner published.
 }
 ```
 
-- `size` and `sha256` are already in every manifest entry. `src` is the
-  only new field, and its presence is what makes a manifest version 2.
-- The SDK becomes two HTTPS addresses, jsDelivr and unpkg. The branch's
-  npm-specific fields (package, version, path) and its second hash (SHA-384)
-  are not needed.
-- A file can list several places. The site's address for the file does not
-  change: pages still say `/img/hero.webp`.
+`src` is the only new field, and its presence is what makes a manifest
+version 2. Pages still say `/img/hero.webp`. A site with every file on
+Platform still produces a version 1 manifest, byte for byte as before.
+
+## Room for later changes
+
+A version 2 reader:
+
+- ignores keys it does not know, in the manifest and in a file entry;
+- skips places whose kind it does not know, and uses the ones it does;
+- refuses only the files whose encoding it does not know.
+
+So a later shell can add a kind of place (`ar://`, a Blossom hash), a hash
+per piece so large media can be served in ranges, or another encoding, and a
+shell someone set up years earlier keeps serving every file it still
+understands. Only a change older readers must not ignore raises the version.
+Places are URIs for the same reason: a new kind is a new scheme, not a new
+field.
 
 ## What the shell does
 
-- **HTTPS**: a plain GET with no cookies, following redirects (Arweave's
-  gateway redirects every file to a subdomain), reading at most `size`
+- **HTTPS**: a plain GET with no cookies and no referrer, following redirects
+  (Arweave's gateway answers every file with one), reading at most `size`
   bytes. The host must allow other sites to read it (CORS).
-- **IPFS**: Helia fetches the blocks from the peers that have them and
-  checks them against the CID; the shell then checks the whole file against
-  the manifest's SHA-256 like any other.
-- Bytes that match are kept in the site's storage and checked again on every
-  read, as the branch does today. If no place gives matching bytes, that one
-  file fails and the rest of the site is served.
-- Helia is its own file, pinned by hash in `sw.js` like the verifier, and
-  loaded only when a site lists an IPFS place. The path that loads an
-  ordinary site does not change.
+- **IPFS**: `@helia/verified-fetch` 8.1.2 with `gateways: []`. The worker
+  downloads the module's published browser build from jsDelivr or unpkg the
+  first time a site asks for a file at an IPFS place, and runs it only if its
+  SHA-256 matches the constant in `packages/core/src/ipfs.ts`. Both mirrors and
+  the npm tarball serve the same bytes (1.24 MB, 300 KB compressed).
+- Verified bytes are kept in the browser and checked again on every read. If
+  no place serves the file, that one request fails and the rest of the site
+  is served.
+- The path that loads a site with every file on Platform is unchanged: the
+  verifier's two files have the same hashes as before this change.
 
-## Helia without a gateway: what was measured
+## Measured
 
-`@helia/verified-fetch` 8.1.2, headless Chromium, recursive gateways turned
-off (`gateways: []`).
+The demo site `elsewhere-demo-2511.dash` on testnet keeps three files outside
+Platform. Opened through a locally built shell in headless Chromium
+(`npm run e2e:elsewhere`):
 
-| Test | Result |
+| | |
 | --- | --- |
-| A 120 KB image widely held on IPFS, from a page | fetched and verified in 0.7 s |
-| The same, from inside a service worker | 0.9 s |
-| Three files from Lighthouse's documentation | 1.0 to 1.5 s each |
-| Where the bytes came from | `bitswap.pinata.cloud` and `bitswap.filebase.io` over WebSockets, Filecoin storage providers over HTTPS, and individual peers with browser-reachable addresses |
-| Size of the module | 1.36 MB, 303 KB compressed |
+| First visit, including the verifier, the IPFS client and all files | 4.4 s without the large file, 10.7 s with it |
+| A 68 KB image at an HTTPS address | served with the published hash |
+| A 120 KB image on IPFS | served with the published hash; no recursive gateway contacted |
+| The 26.7 MB Dash SDK WebAssembly, listed at jsDelivr and unpkg | fetched and checked in 1.6 s |
+| Reload | all three from the browser's own verified copies, no request |
+| Stored on Platform for the whole site | 463 bytes, 0.0015 DASH. Storing the three files there would have cost about 8 DASH |
+
+Also measured: the same pinned module fetches IPFS content in Node (the CLI
+uses it for `check`) and in a worker under the builder's Content Security
+Policy, including files held only by Pinata and by Filecoin storage
+providers, each in 1.3 to 3.8 s.
 
 Three things to know:
 
-- **Finding who holds a file still uses one service.** A browser cannot walk
-  IPFS's lookup network itself, so Helia asks `delegated-ipfs.dev`, run by
-  the IPFS project, which answers with a list of peers. The bytes then come
-  from those peers. The address is a setting, and it is the one part of this
-  likely to need changing over the years.
-- **A service worker has no WebRTC.** WebSockets, WebTransport and HTTPS
+- **Finding who holds a file uses one service.** A browser cannot walk IPFS's
+  lookup network itself, so Helia asks `delegated-ipfs.dev`, run by the IPFS
+  project, which answers with a list of providers. The bytes then come from
+  those providers. Building the shell with `IPFS_ROUTERS` set uses other
+  services.
+- **A service worker has no WebRTC.** HTTPS, WebSockets and WebTransport
   work there, and were enough in every test.
-- **Not tested**: large files, Safari and Firefox, and a file freshly pinned
-  on each provider by us (these were files already on the network).
+- **Not tested**: Safari and Firefox, and a file freshly pinned by us on each
+  provider (these were files already on the network).
 
 ## Providers
 
 | Provider | Kind of place | Paying | Notes |
 | --- | --- | --- | --- |
 | **Cloudflare R2**, and any S3-style bucket | HTTPS | 10 GB free, then $0.015 per GB a month; no charge for downloads | The bucket needs a public custom domain (`r2.dev` addresses are rate limited) and a CORS rule. The owner can delete the file; the hash stops it being replaced |
-| **IPFS pinning**: Pinata, Filebase, Lighthouse, a node of your own | IPFS | Pinata 1 GB free, Lighthouse 5 GB free; monthly plans after that | Lasts while the pin is paid for. Pinata and Filebase both answered browsers directly in the test |
-| **Arweave** | HTTPS, through its gateways | Paid once, kept for good; files up to 105 KiB are free through Turbo; the price floats, tens of dollars per GiB | The only one that matches Platform's pay-once model. A browser can only reach Arweave through a gateway, which is fine here because the hash is checked. `arweave.net` allows reading from other sites. Paid by card or other coins, not Dash |
-| **Lighthouse** | IPFS | Subscriptions; its pay-once plan has been retired | Its own gateway is now for paying accounts only, so fetching from peers is what makes it usable here |
+| **IPFS pinning**: Pinata, Filebase, Lighthouse, a node of your own | IPFS | Pinata 1 GB free, Lighthouse 5 GB free; monthly plans after that | Lasts while the pin is paid for |
+| **Arweave** | HTTPS, through its gateways | Paid once, kept for good; small files are free through Turbo; the price floats | The only one that matches Platform's pay-once model. `arweave.net` allows reading from other sites |
+| **npm**, for scripts published there | HTTPS | Free | List both mirrors: jsDelivr and unpkg |
 
-Also looked at, and already covered without more work because they serve
-HTTPS or IPFS: Backblaze, Storj, a plain web server, Storacha, and Blossom
-servers (which address files by SHA-256, the hash a manifest already holds).
-Not proposed: Walrus, Swarm, Sia and BitTorrent, each of which would need
-its own client in the shell.
+Also covered without more work, because they serve HTTPS or IPFS: Backblaze,
+Storj, a plain web server, Storacha and Blossom servers. Not supported:
+Walrus, Swarm, Sia and BitTorrent, each of which would need its own client in
+the shell.
 
 ## Uploading
 
-- **Step one, for everything: say where it is.** The owner uploads with the
-  provider's own tools and gives the builder or the CLI the address or CID.
-  The builder fetches it once, records its size and hash, and from then on
-  it is checked like any other file.
-- **Then built-in upload for two**:
-  - an **S3-style bucket**, one code path that covers R2 and Filebase (which
-    pins to IPFS and returns the CID);
-  - **Pinata**, a single authenticated upload that returns a CID.
-- Arweave upload needs a funded wallet key in the page, so it waits; until
-  then an Arweave file is added by its address.
-- The owner's provider token is typed into the builder and kept in memory
-  only, like a pasted key. The builder asks for a token limited to one
-  bucket or to uploads.
+Uploading is the builder's and the CLI's job, never the shell's.
+
+- **Say where it is** works for every provider. Upload the file with the
+  provider's own tools, then give its address or CID.
+  - CLI: `dash-sites publish <dir> --name <name> --elsewhere places.json`,
+    where the file maps site paths to places. Before publishing it asks every
+    place for the file, and stops if one does not serve it or does not allow
+    reading from other sites. A file that is not in the folder is taken from
+    its first place.
+  - `dash-sites check <name>` asks every place of a published site, so an
+    owner can find a lapsed pin or a deleted object.
+- **Built-in upload in the builder**, for the two chosen as the most useful
+  pair, one of each kind:
+  - an **S3-style bucket** (Cloudflare R2 and anything else that speaks the
+    protocol): one signed PUT, the file named by its hash;
+  - **Pinata**: one authenticated upload that returns a CID.
+  The key or token is typed into the builder and kept in memory only. After
+  an upload the builder asks the place for the file, as a visitor's browser
+  will, before it marks the file as kept outside.
+- Arweave upload needs a funded wallet key in the page, so it is not built;
+  an Arweave file is added by its address.
 
 ## Limits and risks
 
 | | |
 | --- | --- |
-| A file stored elsewhere can disappear | The page itself is on Platform and still loads; the missing file does not. List more than one place per file. A `dash-sites check` command confirms every place still serves matching bytes |
-| Visitors' browsers contact hosts the owner chose | True of any site today: a page can already link to any address, with no check at all. This adds the check |
-| The whole file is hashed | It must be downloaded in full before any of it is served. Fine for images, documents and scripts; not for streaming video. Hashes per piece, with range requests, can follow |
-| A cap per file | Needed so a manifest cannot make a browser download without end. The SDK is 27 MB, so the cap sits above that |
-| Helia is large and changes often | It is separate, pinned and loaded on demand. A host that would rather not carry it can leave it out, and files that also list an HTTPS place still load |
-| The site record can already say `ipfs://<cid>` for a whole site | Leave that unserved. A manifest whose files are all elsewhere does the same job and keeps the proved manifest |
+| A file kept elsewhere can disappear | The page itself is on Platform and still loads; the missing file does not. List more than one place per file, and run `dash-sites check` |
+| Visitors' browsers contact hosts the owner chose | True of any site today: a page can already link to any address, with no check at all. This adds the check, and sends no cookies or referrer |
+| The whole file is hashed | It is downloaded in full before any of it is served, so a file is capped at 64 MB. Fine for images, documents and scripts; not for streaming video. A hash per piece, with range requests, is the addition the format leaves room for |
+| The IPFS client is large and comes from npm | It is loaded only for IPFS places and only if its hash matches. If both mirrors are down, IPFS places fail and HTTPS places still load |
+| The site record can already say `ipfs://<cid>` for a whole site | Still unserved. A manifest whose files are all elsewhere does the same job and keeps the proved manifest |
+| The hosted testnet server | Does not fetch outside files, and answers them with an error. It is being retired |
 
-## Phases
+## Left to do
 
-| | What ships |
-| --- | --- |
-| **B1** | `src` in the manifest (the branch, generalised), HTTPS places in the shell, a CLI option, and "say where it is" in the builder. Covers R2, Arweave and the SDK |
-| **B2** | IPFS places through the Helia module |
-| **B3** | Built-in upload in the builder: S3-style buckets and Pinata |
-
-B1 is the shell change the widget plan already needs
-([VISUAL-BUILDER.md §5.4](VISUAL-BUILDER.md#54-the-sdk-by-hash-from-npm)), so
-doing it in this shape costs nothing extra there.
-
-## Decisions wanted
-
-1. **Two kinds of place (HTTPS and IPFS), with providers handled only when
-   uploading?** Recommended: yes.
-2. **Generalise `feat/external-assets` to `src` before it lands**, so the
-   manifest format is settled once? Recommended: yes.
-3. **Helia as a separate module of the shell, loaded on demand.** It is the
-   largest thing this adds to what a host serves, and it depends on a lookup
-   service. The alternative is IPFS through HTTPS gateways only, which needs
-   no new code and is what you said you would rather avoid.
-4. **Which uploads to build in first.** Recommended: S3-style buckets and
-   Pinata.
+- Real uploads to R2 and Pinata from the builder have been exercised against
+  a local S3 server and a stand-in for Pinata, not yet against live accounts.
+- Safari and Firefox.
+- Hashes per piece and range requests, for media.

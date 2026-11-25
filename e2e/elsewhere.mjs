@@ -2,7 +2,6 @@
 // that the worker fetched them from the places the manifest lists and served only matching bytes.
 //   node packages/shell/build.mjs && node e2e/elsewhere.mjs [name] [screenshot-dir]
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -48,12 +47,14 @@ try {
   check(fromPage.size === 0, `the page itself asked no other host for anything ${[...fromPage].join(' ')}`);
 
   for (const [path, file] of outside) {
+    const began = Date.now();
     const served = await page.evaluate(async (at) => {
       const response = await fetch(at, { cache: 'no-store' });
-      return { status: response.status, type: response.headers.get('content-type'), bytes: [...new Uint8Array(await response.arrayBuffer())] };
+      const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
+      return { status: response.status, type: response.headers.get('content-type'), sha256: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
     }, path);
-    const sha256 = createHash('sha256').update(Buffer.from(served.bytes)).digest('hex');
-    check(served.status === 200 && sha256 === file.sha256 && served.type === file.type, `${path} (${file.size} bytes, from ${file.src.map((uri) => uri.split(':')[0]).join(', ')}) is served with the published hash`);
+    const took = `${((Date.now() - began) / 1000).toFixed(1)} s`;
+    check(served.status === 200 && served.sha256 === file.sha256 && served.type === file.type, `${path} (${file.size} bytes, from ${file.src.map((uri) => uri.split(':')[0]).join(', ')}) is served with the published hash, in ${took}`);
   }
   const images = await page.evaluate(() => [...document.images].map((image) => ({ id: image.id, width: image.naturalWidth })));
   check(images.length > 0 && images.every((image) => image.width > 0), `the page shows its images: ${images.map((image) => `${image.id} ${image.width}px`).join(', ')}`);
