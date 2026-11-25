@@ -8,7 +8,7 @@ Platform; there is no web host.
 | | |
 | --- | --- |
 | Sites, mainnet | https://dash.site/ (`alice.dash.site`): a static site with no backend |
-| Make and publish a site, mainnet | https://dash.site/new (`/publish` redirects here) |
+| Make and publish a site, mainnet | https://dash.site/new |
 | Sites, testnet | https://id.dashhq.org/ (`alice.id.dashhq.org`), showcase at https://p2p.id.dashhq.org/ |
 | Make and publish a site, testnet | https://dash-sites.thepasta.org/ |
 | Extension | [latest release](https://github.com/PastaPastaPasta/dash-sites/releases/latest) |
@@ -157,6 +157,9 @@ byte for byte. `--brotli` stores a file as brotli when that is smaller than gzip
 the result depends on Node's bundled brotli, so a different Node version can give
 different chunks. Either option makes the manifest version 2, which needs a
 current shell, gateway or extension; older ones refuse the site as a whole.
+dash.site reads version 2. On 2026-11-25 the testnet host `id.dashhq.org` and
+extension 0.1.0, the latest release, were older builds that refuse it. An
+external file counts toward a reader's 50 MB site limit like a stored one.
 
 A site can read its own proved record at `/.well-known/dash/site.json` and
 its file list at `/.well-known/dash/manifest.json`, whoever serves it. Sites
@@ -254,7 +257,8 @@ build) and then `npm run serve -w @dash-sites/shell`. Open
   on every push to `main`.
 - **id.dashhq.org**: `deploy/provision.sh <domain> <ipv4>` prepares an Ubuntu
   host (Caddy, Node, and a wildcard certificate by DNS-01 with no DNS
-  credentials on the host). `deploy/deploy.sh <ssh-target>` installs the
+  credentials on the host). Point both A and AAAA records at the host; the
+  DNS-01 responder listens on the IPv4 address given. `deploy/deploy.sh <ssh-target>` installs the
   shell, the fallback process and the Caddy configuration. DNS and moving
   domains are covered in [DESIGN §8](docs/DESIGN.md#8-hosting).
 

@@ -305,7 +305,7 @@ export class SiteHost {
       return this.page(404, 'No site', `${dashName} has no site yet`, `The name is registered, and its owner has not published a site. If it is yours, <a href="${escapeHtml(this.options.builderUrl)}">publish one</a>.`);
     }
     if (resolution.status === 'unsupported' || resolution.content.scheme !== 'dash-manifest') {
-      return this.page(502, 'Unsupported', `${dashName} cannot be shown here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this gateway does not load.`);
+      return this.page(502, 'Unsupported', `${dashName} cannot be shown here`, `Its site record points at <code>${escapeHtml(resolution.site.content.slice(0, 80))}</code>, which this page does not load.`);
     }
 
     let manifest: Manifest;
