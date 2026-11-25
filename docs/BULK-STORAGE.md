@@ -143,7 +143,9 @@ Uploading is the builder's and the CLI's job, never the shell's.
   It lists the files of 8 KB or more, for a built page and for an uploaded
   site alike, with what each costs on Platform. A file's places are
   remembered in the browser by the file's hash, so a changed file goes back
-  on Platform until its new version has a place.
+  on Platform until its new version has a place. Places come only from what
+  the owner confirmed in the panel, or from a site of the owner's own that
+  they reopen while signed in.
 - Arweave upload needs a funded wallet key in the page, so it is not built;
   an Arweave file is added by its address.
 

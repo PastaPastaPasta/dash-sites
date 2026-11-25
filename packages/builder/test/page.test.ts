@@ -7,7 +7,7 @@ import { emptyPageModel, newBlock, PAGE_MODEL_PATH, readPageModel, serializePage
 import { pageStylesheet, renderHomePage, renderSite } from '../src/page/render.js';
 import { costSplit, fileCredits } from '../src/page/cost.js';
 import { LEGACY_DRAFT_KEY, loadPageDraft, modelFromLegacyDraft, PAGE_DRAFT_KEY, PAGE_IMAGES_KEY, savePageDraft } from '../src/page/draft.js';
-import { readPublishedPage, ReopenError } from '../src/page/reopen.js';
+import { readPublishedPage, ReopenError, trustedOutside } from '../src/page/reopen.js';
 import type { KeyValue } from '../src/wallet.js';
 import type { SiteAsset } from '../src/assets.js';
 
@@ -327,6 +327,9 @@ describe('reopening a published page', () => {
     expect(opened.assets).toEqual([picture]);
     expect(opened.outside).toEqual([{ sha256: sha256Hex(picture.bytes), places: [place] }]);
     expect(opened.lost).toEqual([]);
+    expect(trustedOutside(opened, domain, 'owner1')).toEqual(opened.outside);
+    expect(trustedOutside(opened, domain, 'someone-else')).toEqual([]);
+    expect(trustedOutside(opened, domain, undefined)).toEqual([]);
 
     const gone = await readPublishedPage(source(files), domain, { https: async () => new Uint8Array(picture.bytes.length) });
     expect(gone.model).toEqual(tidyPageModel(reference));

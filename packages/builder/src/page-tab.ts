@@ -7,7 +7,7 @@ import { costSplit, fileCredits, sizeText, type CostSplit } from './page/cost.js
 import { loadPageDraft, savePageDraft } from './page/draft.js';
 import { imagePaths, isBlankModel, tidyPageModel, type PageModel } from './page/model.js';
 import { renderSite } from './page/render.js';
-import { readPublishedPage } from './page/reopen.js';
+import { readPublishedPage, trustedOutside } from './page/reopen.js';
 import { THEMES, type Theme } from './template.js';
 import type { KeyValue } from './wallet.js';
 
@@ -15,6 +15,8 @@ export interface PageTabOptions {
   network: Network;
   storage: KeyValue | undefined;
   siteName(): string;
+  /** The identity that is signed in, if any. */
+  identity(): string | undefined;
   /** How files kept outside Platform are fetched when a published page is opened again. */
   places: PlaceFetchers;
   /** Called whenever the page or its images change. */
@@ -41,8 +43,6 @@ function costText(split: CostSplit | undefined): string {
   return `At most about ${formatDash(split.total)}: text about ${formatDash(split.text)}, ${images}.${outside}`;
 }
 
-const pageCost = (): CostSplit | undefined => costSplit(keepOutside(pageFiles(options.siteName())));
-
 function save(): void {
   const saved = savePageDraft(options.storage, model, siteAssets());
   draftNote =
@@ -53,11 +53,15 @@ function save(): void {
         : 'This browser does not keep drafts, so the page lasts only while this tab is open.';
 }
 
-export function setPageModel(next: PageModel): void {
-  model = tidyPageModel(next);
+function changed(): void {
   save();
   render();
   options.onChange();
+}
+
+export function setPageModel(next: PageModel): void {
+  model = tidyPageModel(next);
+  changed();
 }
 
 function renderThemes(): void {
@@ -96,7 +100,7 @@ function render(): void {
       return [item];
     }),
   );
-  $('page-cost').textContent = costText(pageCost());
+  $('page-cost').textContent = costText(costSplit(keepOutside(pageFiles(options.siteName()))));
   $('page-draft').textContent = [missing > 0 ? `${missing === 1 ? 'One image was' : `${missing} images were`} not kept with the draft; add ${missing === 1 ? 'it' : 'them'} again in the editor.` : '', draftNote].filter(Boolean).join(' ');
 }
 
@@ -143,11 +147,14 @@ async function reopen(input: string): Promise<void> {
     const domain = (await connected.getDomain(name.normalized)).value;
     if (!domain) throw new Error(`${name.label}.dash is not registered on ${options.network}.`);
     const opened = await readPublishedPage(connected, domain, options.places);
-    for (const file of opened.outside) rememberOutside(file.sha256, file.places);
+    const trusted = trustedOutside(opened, domain, options.identity());
+    for (const file of trusted) rememberOutside(file.sha256, file.places);
     setSiteAssets(opened.assets);
     setPageModel(opened.model);
+    const outside = opened.outside.length - trusted.length;
+    const unkept = outside === 0 ? '' : ` ${outside === 1 ? 'One image is' : `${outside} images are`} kept outside Platform. Publishing would store ${outside === 1 ? 'it' : 'them'} on Platform: to keep ${outside === 1 ? 'it' : 'them'} outside, sign in as the owner and open the site again.`;
     const lost = opened.lost.length === 0 ? '' : ` ${opened.lost.length === 1 ? 'One image is' : `${opened.lost.length} images are`} kept outside Platform and could not be fetched (${opened.lost.join(', ')}); add ${opened.lost.length === 1 ? 'it' : 'them'} again in the editor.`;
-    status.textContent = `Opened the page published at ${domain.label.toLowerCase()}.dash. Publishing again stores only what changed.${lost}`;
+    status.textContent = `Opened the page published at ${domain.label.toLowerCase()}.dash. Publishing again stores only what changed.${unkept}${lost}`;
   } catch (error) {
     status.textContent = message(error);
   } finally {
@@ -160,11 +167,7 @@ export function mountPageTab(given: PageTabOptions): void {
   const draft = loadPageDraft(options.storage);
   model = draft.model;
   setSiteAssets(draft.assets);
-  onSiteAssetsChange(() => {
-    save();
-    render();
-    options.onChange();
-  });
+  onSiteAssetsChange(changed);
   onOutsideChange(render);
   render();
   $('edit-page').addEventListener('click', () => void openEditor());

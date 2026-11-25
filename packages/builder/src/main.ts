@@ -68,11 +68,10 @@ const autoSignOut = new AutoSignOut({ idleMs: IDLE_SIGN_OUT_MS, signOut: (reason
 
 const label = (): string => chosen?.label.toLowerCase() ?? 'yourname';
 
-let outsidePanel: { show(files: SiteFile[]): void } | undefined;
+let outsidePanel: ReturnType<typeof mountOutsidePanel> | undefined;
 
 /** The site as made, before any of its files are marked as kept outside Platform. */
 const madeFiles = (): SiteFile[] => (mode === 'upload' ? upload : pageFiles(`${label()}.dash`));
-const files = (): SiteFile[] => keepOutside(madeFiles());
 
 function setLocked(id: string, locked: boolean): void {
   $(id).toggleAttribute('inert', locked);
@@ -123,7 +122,7 @@ function refresh(): void {
 
 function renderPreview(): void {
   const frame = $<HTMLIFrameElement>('frame');
-  const html = previewHtml(files());
+  const html = previewHtml(keepOutside(madeFiles()));
   frame.srcdoc = html ?? '<html style="color-scheme:light dark"><body style="font:15px system-ui;color:GrayText;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body></html>';
 }
 
@@ -416,6 +415,7 @@ function signOut(reason = ''): void {
   clearSession(storage('sessionStorage'), NETWORK);
   writer?.forget();
   writer = undefined;
+  outsidePanel?.forget();
   names = [];
   chosen = undefined;
   autoSignOut.signedOut();
@@ -623,7 +623,7 @@ function start(): void {
   $('net-note').textContent = `This builder publishes on ${NETWORK}.`;
   const places = browserFetchers();
   loadOutside(storage('localStorage'));
-  mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, places, onChange: refresh });
+  mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, identity: () => writer?.identityId, places, onChange: refresh });
   outsidePanel = mountOutsidePanel($('outside-panel'), { origin: location.origin, price: (file) => `about ${formatDash(fileCredits(file))}`, size: sizeText, fetchers: places });
   onOutsideChange(refresh);
 

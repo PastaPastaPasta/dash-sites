@@ -183,7 +183,9 @@ bundling its icons, and turning its telemetry off. §5.2 to §5.5 do not change.
   its price shown per image. An owner with many or large images can keep
   them off Platform instead, from a panel in the same step
   ([BULK-STORAGE.md](BULK-STORAGE.md)). Reopening a site fetches such images
-  from their places and keeps them there.
+  from their places. It keeps them there only when the person reopening is
+  signed in as the site's owner: anyone can publish a page that lists places
+  of their choosing, so another site's places are never taken on trust.
 - **Fonts**: system font stacks. Web fonts are deferred (§5.4).
 - **Cost meter**: the existing estimate, always visible while editing, split
   into text and images.

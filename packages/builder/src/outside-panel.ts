@@ -48,7 +48,7 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
  * file is kept: every place is asked for the file, the way a visitor's browser will ask, before
  * the file is marked as kept outside.
  */
-export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOptions): { show(files: SiteFile[]): void } {
+export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOptions): { show(files: SiteFile[]): void; forget(): void } {
   const fetchers = options.fetchers ?? browserFetchers();
   let method: Method = 'address';
   let files: SiteFile[] = [];
@@ -123,8 +123,8 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
 
   const asOutside = (file: SiteFile): OutsideFile => ({ path: file.path, type: file.type ?? 'application/octet-stream', bytes: file.bytes });
 
-  async function confirm(file: SiteFile, place: string): Promise<string | undefined> {
-    const patient = parsePlace(place)?.kind === 'ipfs' && method === 'pinata';
+  async function confirm(file: SiteFile, place: string, how: Method): Promise<string | undefined> {
+    const patient = parsePlace(place)?.kind === 'ipfs' && how === 'pinata';
     const until = Date.now() + (patient ? (options.patienceMs ?? 90_000) : 0);
     for (;;) {
       const [result] = await confirmPlaces(asOutside(file), [place], fetchers);
@@ -145,14 +145,14 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     setOutsidePlaces(file.bytes, [...outsidePlaces(file.bytes), ...places]);
   }
 
-  async function move(file: SiteFile, typed = ''): Promise<void> {
+  async function move(file: SiteFile, address = '', how = method): Promise<void> {
     const hash = fileHash(file.bytes);
     if (busy.has(hash)) return;
     problems.delete(hash);
     unconfirmed.delete(hash);
     try {
-      if (method === 'address') {
-        const { places, unknown } = readPlaces(typed);
+      if (how === 'address') {
+        const { places, unknown } = readPlaces(address);
         if (unknown.length > 0) throw new Error(`${unknown[0]} is not an https:// address or an IPFS CID`);
         if (places.length === 0) throw new Error('Give the address or the IPFS CID of the file');
         busy.set(hash, 'Asking for the file…');
@@ -161,12 +161,12 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
         if (failed) throw new Error(`${placeLabel(failed.place)}: ${failed.problem}`);
         return keep(file, places);
       }
-      busy.set(hash, method === 'bucket' ? 'Uploading…' : 'Pinning…');
+      busy.set(hash, how === 'bucket' ? 'Uploading…' : 'Pinning…');
       render();
-      const place = method === 'bucket' ? await uploadToBucket(bucketSettings(), asOutside(file)) : await uploadToPinata(jwt.value, asOutside(file));
+      const place = how === 'bucket' ? await uploadToBucket(bucketSettings(), asOutside(file)) : await uploadToPinata(jwt.value, asOutside(file));
       busy.set(hash, 'Uploaded. Asking for the file back…');
       render();
-      const problem = await confirm(file, place);
+      const problem = await confirm(file, place, how);
       if (!problem) return keep(file, [place]);
       unconfirmed.set(hash, place);
       throw new Error(`It was uploaded, but ${placeLabel(place)} did not serve it back: ${problem}`);
@@ -184,7 +184,7 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     const hash = fileHash(file.bytes);
     const places = outsidePlaces(file.bytes);
     const working = busy.get(hash);
-    const head = el('div', { class: 'outside-head' }, el('span', {}, file.path), el('span', {}, places.length > 0 ? `${options.size(file.bytes.length)}, outside Platform` : `${options.size(file.bytes.length)}, ${options.price(file)} on Platform`));
+    const head = el('div', { class: 'outside-head' }, el('span', {}, file.path), el('span', {}, `${options.size(file.bytes.length)}, ${places.length > 0 ? 'outside Platform' : `${options.price(file)} on Platform`}`));
     const item = el('li', {}, head);
     if (places.length > 0) item.append(el('div', { class: 'outside-places' }, `Kept at ${places.map(placeLabel).join(' and ')}`));
     const actions = el('div', { class: 'outside-actions' });
@@ -251,7 +251,8 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     all.textContent = `${method === 'bucket' ? 'Upload' : 'Pin'} all ${waiting.length} and keep them outside`;
     all.disabled = busy.size > 0;
     all.onclick = async () => {
-      for (const file of waiting) await move(file);
+      const how = method;
+      for (const file of waiting) if (outsidePlaces(file.bytes).length === 0) await move(file, '', how);
     };
     const focused = document.activeElement instanceof HTMLInputElement && list.contains(document.activeElement) ? document.activeElement : undefined;
     list.replaceChildren(...shown.slice(0, SHOWN).map(row));
@@ -275,6 +276,10 @@ export function mountOutsidePanel(root: HTMLElement, options: OutsidePanelOption
     show(next) {
       files = next;
       render();
+    },
+    forget() {
+      bucket.secretAccessKey.value = '';
+      jwt.value = '';
     },
   };
 }

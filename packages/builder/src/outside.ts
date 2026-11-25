@@ -28,7 +28,10 @@ export function readOutside(saved: unknown): Map<string, string[]> {
   if (saved === null || typeof saved !== 'object' || Array.isArray(saved)) return out;
   for (const [hash, places] of Object.entries(saved)) {
     if (!/^[0-9a-f]{64}$/.test(hash) || !Array.isArray(places)) continue;
-    const known = places.flatMap((place) => (typeof place === 'string' && parsePlace(place) ? [(parsePlace(place) as { uri: string }).uri] : []));
+    const known = places.flatMap((place) => {
+      const parsed = typeof place === 'string' ? parsePlace(place) : undefined;
+      return parsed ? [parsed.uri] : [];
+    });
     if (known.length > 0) out.set(hash, [...new Set(known)]);
   }
   return out;
@@ -52,9 +55,9 @@ export function setOutsidePlaces(bytes: Uint8Array, places: string[], hash = fil
   for (const listener of listeners) listener();
 }
 
-/** Remembers the places a published site already lists, by hash, before its bytes are in hand. */
+/** Adds the places the owner's own published site lists for a file, by hash, to any already known. */
 export function rememberOutside(hash: string, places: string[]): void {
-  setOutsidePlaces(new Uint8Array(0), places, hash);
+  setOutsidePlaces(new Uint8Array(0), [...(kept.get(hash) ?? []), ...places], hash);
 }
 
 /** The same files, with the ones kept outside Platform marked so that they are not stored on it. */

@@ -71,4 +71,11 @@ describe('files kept outside Platform', () => {
     rememberOutside(entry.sha256, entry.src!);
     expect(buildSite(keepOutside(files())).manifest.files['/photo.webp']?.src).toEqual([IPFS]);
   });
+
+  it('add a published site’s places to the ones already known, and never replace them', () => {
+    setOutsidePlaces(photo, [HTTPS]);
+    const { manifest } = buildSite([{ path: '/photo.webp', bytes: photo, src: [IPFS, HTTPS] }]);
+    rememberOutside(manifest.files['/photo.webp']!.sha256, manifest.files['/photo.webp']!.src!);
+    expect(outsidePlaces(photo)).toEqual([HTTPS, IPFS]);
+  });
 });
