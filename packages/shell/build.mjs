@@ -106,6 +106,14 @@ const boot = await build({
   define: { __GATEWAY_DOMAIN__: JSON.stringify(gatewayDomain), __VERIFIER_FILES__: JSON.stringify([verifierUrl, sdkUrl]) },
 });
 const { DENIED_TITLE, PAGE_STYLE, deniedDetail, escapeHtml, messagePage, readerConfig } = await import('@dash-sites/core');
+const abuseContact = process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`;
+const abuseHref = /^(https?|mailto):/i.test(abuseContact) ? abuseContact : /^[^\s@/]+@[^\s@/]+$/.test(abuseContact) ? `mailto:${abuseContact}` : '';
+const reportAbuse = abuseHref ? `<a href="${escapeHtml(abuseHref)}">Report abuse</a>` : `Report abuse: ${escapeHtml(abuseContact)}`;
+const howItWorks = `<a href="${escapeHtml(sourceUrl)}">How it works</a>`;
+// Only a static deployment (GATEWAY_DOMAIN set) has no backend; a hosted one also runs a fallback process.
+const loadingNotice = gatewayDomain
+  ? `${escapeHtml(gatewayDomain)} is a static page with no backend service. Your browser builds this site from what its author published to Dash Platform, a decentralized network. ${escapeHtml(gatewayDomain)} does not host, own, control or endorse it. ${howItWorks} · ${reportAbuse}`
+  : `This page is the same for every name. It holds no site content. ${howItWorks} · ${reportAbuse}`;
 if (hosted) writeFileSync(join(out, 'unavailable.html'), messagePage('451', DENIED_TITLE, deniedDetail('this name'), { builderUrl }));
 const script = boot.outputFiles[0].text.trim();
 
@@ -121,7 +129,7 @@ function landingHtml() {
 <form id="go"><input name="name" placeholder="alice.dash" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="DPNS name"><button>Open</button></form>
 ${live ? '' : `<p>Publishing on ${escapeHtml(network)} has not opened yet. Names already resolve here, and a name's site appears as soon as its owner publishes one.</p>`}
 <p><a href="${escapeHtml(builderUrl)}">Make a site</a>${process.env.PUBLISH_URL ? ` · <a href="${escapeHtml(process.env.PUBLISH_URL)}">Publish your own</a>` : ''}${peer}</p>
-<footer>This static site does not author or review the sites it opens. Report abuse: ${escapeHtml(process.env.ABUSE_CONTACT ?? `${sourceUrl}/issues`)}.</footer>`;
+<footer>${domain} is a static page with no backend service. When you open a name here, your browser builds the site from what its author published to Dash Platform, a decentralized network. ${domain} does not host, own, control or review these sites, and does not condone or endorse them. It cannot change or remove anything on Dash Platform, but it can stop opening a name here. ${reportAbuse}</footer>`;
 }
 const csp = `default-src 'none'; script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'; style-src 'unsafe-inline'; connect-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'`;
 const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
@@ -129,8 +137,8 @@ const html = readFileSync(join(root, 'src', 'index.html'), 'utf8')
   .replace('/*BOOT*/', () => script)
   .replace('__CSP__', () => csp)
   .replace('<!--LANDING-->', () => landingHtml())
-  .replaceAll('__NETWORK__', network)
-  .replaceAll('__SOURCE_URL__', sourceUrl);
+  .replace('<!--NOTICE-->', () => loadingNotice)
+  .replaceAll('__NETWORK__', () => network);
 writeFileSync(join(out, 'index.html'), html);
 await build({
   ...common,
