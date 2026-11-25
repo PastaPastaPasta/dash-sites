@@ -351,12 +351,14 @@ try {
   const remembered = await panel.evaluate(() => localStorage.getItem('dash-sites.outside'));
   check(Object.values(JSON.parse(remembered))[0]?.length === 2, 'the places are remembered in this browser, by the file’s hash');
   await panel.context().close();
-  for (const dark of [false, true]) {
-    const again = await open({ dark, draft: { ...draft, 'dash-sites.outside': remembered }, stubs });
+  for (const [phone, dark] of [[false, false], [false, true], [true, false], [true, true]]) {
+    const again = await open({ phone, dark, draft: { ...draft, 'dash-sites.outside': remembered }, stubs });
     await again.click('#outside summary');
-    check((await again.locator('#page-images li:has-text("outside Platform")').count()) === 1 && (await again.locator('.outside-places').count()) === 1, `a reload${dark ? ' in dark mode' : ''} keeps the file outside`);
-    if (shots) await again.locator('#step-content').screenshot({ path: join(shots, `outside-panel-${dark ? 'dark' : 'light'}.png`) });
-    if (shots) await again.screenshot({ path: join(shots, `builder-${dark ? 'dark' : 'light'}.png`), fullPage: true });
+    const where = `${phone ? 'phone-' : ''}${dark ? 'dark' : 'light'}`;
+    check((await again.locator('#page-images li:has-text("outside Platform")').count()) === 1 && (await again.locator('.outside-places').count()) === 1, `a reload${phone ? ' on a phone' : ''}${dark ? ' in dark mode' : ''} keeps the file outside`);
+    check(await again.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `and the page fits the ${phone ? 'phone' : 'window'} without scrolling sideways`);
+    if (shots) await again.locator('#step-content').screenshot({ path: join(shots, `outside-panel-${where}.png`) });
+    if (shots && !phone) await again.screenshot({ path: join(shots, `builder-${where}.png`), fullPage: true });
     await again.context().close();
   }
   violations.splice(0, violations.length, ...violations.filter((text) => !offline.includes(text)));

@@ -74,6 +74,7 @@ summary:where(:not(.ed *)){cursor:pointer;font-size:14px;color:var(--muted)}
 .files li{display:flex;justify-content:space-between;gap:12px;padding:5px 10px;border-bottom:1px solid var(--line)}
 .files li:last-child{border-bottom:0}
 .files span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files span:last-child{flex:none;white-space:nowrap}
 #outside-panel .chips{margin-top:14px}
 #outside-panel .chips button{font-size:14px;padding:5px 12px}
 .outside-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:0 14px}
