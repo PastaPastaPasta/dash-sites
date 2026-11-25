@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSite, cdnSource, integrityOf, normalizeLabel, publishSite, sha256Hex, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
+import { buildSite, cdnSource, FORMATS, integrityOf, normalizeLabel, publishSite, sha256Hex, utf8, type PlatformReader, type SiteFile } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { FIXTURES, fixtureExternal, fixturePlaces, readFixture, storeFixture, storeManifestVersion } from '../../core/test/fixtures/formats/load.js';
 import { parseRange, RESET_PATH, resetLocation, SiteHost, type HostOptions, type HostRequest, type Reply, type Saved, type Store } from '../src/host.js';
@@ -532,6 +532,28 @@ describe('stored formats', () => {
     const h = new Harness();
     const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
     site.v += 1;
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
+  });
+
+  it('asks for a newer worker when a site\'s content address is of a newer version', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    site.content = site.content!.replace('dash-manifest:v1:', `dash-manifest:v${FORMATS.contentUri + 1}:`);
+    await h.open();
+    const reply = await h.get('/');
+    expect(reply.status).toBe(502);
+    expect(body(reply)).toContain('needs a newer version of this page');
+    expect(h.newerFormats).toBeGreaterThan(0);
+  });
+
+  it('asks for a newer worker when a stored chunk is of a newer format', async () => {
+    const h = new Harness();
+    const site = await storeFixture(h.platform, readFixture('site-v1'), 'alice', 'alice-id');
+    for (const chunk of h.platform.chunks.values()) if (chunk.siteId === site.id) chunk.v = FORMATS.chunk + 1;
     await h.open();
     const reply = await h.get('/');
     expect(reply.status).toBe(502);
