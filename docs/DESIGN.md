@@ -258,21 +258,26 @@ what:
 | --- | --- |
 | Add a document type, with indexes, fees and moderator abilities of its own | Add, change or remove an index of `site` or `chunk` |
 | Add an optional property to `site` or `chunk`, or a required one marked `requiredSince`; a new property may carry a `refersTo` check | Remove a property, or stop requiring one |
-| Raise `maxLength` and `maxItems` (a chunk field up to Platform's 5,120-byte limit), remove a `pattern` | Give an existing property a `refersTo` check, or change or remove the one on `chunk.site` |
-| List properties under `immutable` | Change a `pattern`, or whether `site` and `chunk` documents can be replaced, deleted, transferred or traded |
+| Raise `maxLength` and `maxItems` (a chunk field up to Platform's 5,120-byte limit), remove a `pattern` | Give an existing property a `refersTo` check, or change or remove the one on `site.normalizedLabel` or `chunk.site` |
+| List properties under `immutable`, except `normalizedLabel`: Platform refuses an immutable property that carries a `deletableDocument` reference | Change a `pattern`, or whether `site` and `chunk` documents can be replaced, deleted, transferred or traded |
 | Add tokens, keywords and a description | Give `site` or `chunk` a time to live, a fee, a token cost or a doctype-level count |
 | | Let moderators delete `site` or `chunk` documents, start a banlist or a suspension list, hand moderation to an elected team, keep the contract's history, or make it read-only |
 
 Four things follow from registering the contract as it is, and stay true of
 `site` and `chunk` for good:
 
-- **Platform takes a site record only from the owner of the name**, for as
-  long as DPNS names stay deletable (above). A record outlives the
+- **Platform takes a site record only from the owner of the name.** If a
+  protocol version makes DPNS names permanent, Platform refuses every site
+  write instead, take-downs included (above). A record outlives the
   ownership it was written under; the resolution rule (§4) ignores it then.
   A list of sites built from the `updated` index must prove each name's
   owner the same way.
 - **A site record cannot be removed from Platform, by anyone.** Its writer
-  can empty it; the name and the identity that wrote it stay on record.
+  can empty it while it owns the name. Once the name is sold, transferred or
+  deleted, the previous owner can no longer change the record, so its last
+  `content` stays on Platform for good, unread. The one way out is to move
+  the record onto another name the writer owns and empty it there. Its
+  chunks can still be deleted with `gc`.
 - **Nobody can be stopped from publishing.** The contract declares no
   `moderation`. A gateway can refuse to serve a site (§8), but a publisher
   cannot be barred from the contract. What stays possible is a later document
@@ -285,10 +290,11 @@ Four things follow from registering the contract as it is, and stay true of
 rules and holds these terms, so a change to the schema file is a deliberate
 one.
 
-Measured on testnet at protocol 14: registering the contract cost 0.1812 DASH;
-the first site record for a name 0.0006 DASH, a replace under 0.0001 DASH, a
-full chunk (14,700 bytes) 0.0046 DASH, and a write Platform refuses about
-0.000013 DASH. A one-page site cost 0.0014 DASH to publish and a 440 KB site
+Measured on testnet at protocol 14 on this schema: registering the contract
+cost about 0.1814 DASH, the first site record for a name 0.0006 DASH, a
+replace under 0.0001 DASH, and a write Platform refuses about 0.000014 DASH.
+From the previous schema, whose `chunk` type is the same: a full chunk
+(14,700 bytes) cost 0.0046 DASH. A one-page site cost 0.0014 DASH to publish and a 440 KB site
 0.135 DASH.
 
 ### Content URIs
@@ -436,7 +442,8 @@ awarded, so it resolves as unregistered.
 **A name that changes hands** shows nothing of the previous owner from the
 block of the transfer: the page then names the new owner, and the new
 owner's record is the only one looked up. The previous owner's record and
-chunks stay stored and unread until it deletes the chunks (`gc`).
+chunks stay stored and unread. The previous owner can delete the chunks
+(`gc`) but can no longer change the record (§3).
 
 **Canonical host.** Several spellings normalize to one name. To give a name one
 origin, the canonical host label is the domain document's `label` lowercased
@@ -803,11 +810,11 @@ DASH; its id then goes into `packages/core/src/config.ts`, and
 `NETWORK=mainnet` selects it. Registering is final in the ways §3 lists under
 "What registration fixes".
 
-**Protocol versions.** Site writes depend on one property of DPNS: `domain`
-documents must stay deletable (§3). Reads need three things of DPNS, all of
-which hold on protocol 14 and in the protocol 15 pre-releases: a `domain`
-document found by `(normalizedParentDomainName, normalizedLabel)`, its
-`$ownerId`, and its `$transferredAt`.
+**Protocol versions.** Reads and writes both need the DPNS `domain` type, found
+by its unique `(normalizedParentDomainName, normalizedLabel)` index, and its
+`$ownerId`. Writes also need `domain` documents to stay deletable (§3), and
+reads need `$transferredAt`. All of this holds on protocol 14 and in the
+protocol 15 pre-releases.
 
 [`contract/platform-upgrade-test.patch`](../contract/platform-upgrade-test.patch)
 is a test for dashpay/platform, not part of Platform itself. Applied to tag
@@ -816,10 +823,12 @@ chain, runs the upgrade to protocol 15 and repeats every kind of write on the
 far side: a site record is created, replaced with and without content, a
 chunk is stored and deleted. On both protocols Platform refuses a site record
 for a name another identity owns or nobody registered, a chunk under another
-identity's record, a second record for one name, and a replace that moves a
-record onto a name its writer does not own; on protocol 15 it also refuses
-the delete of a record, a replace by the previous owner after the name is
-transferred, and any write once the name is deleted. It also parses the
+identity's record, a second record for one name, a replace that moves a
+record onto a name its writer does not own, and a replace by the previous
+owner after the name is transferred; it takes a move onto another name the
+writer owns. On protocol 15 it also refuses the delete of a record, a change
+of parent domain, and any write once the name is deleted. Each refusal is
+checked against the consensus error it should raise. It also parses the
 schema with the full validation of both versions.
 All of it passed on the final schema on 2026-11-25. To run it against a
 later Platform:
