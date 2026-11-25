@@ -1,5 +1,6 @@
 import { base58 } from '@scure/base';
 import { concat, DASH_TLD, DPNS_CONTRACT_ID, PRELOAD_CHUNKS, toHex, utf8 } from '@dash-sites/core';
+import { selectBiasedCandidates, visitorCoords, type NodeGeo } from './geo.js';
 
 export const GET_EPOCHS_INFO_PATH = '/org.dash.platform.dapi.v0.Platform/getEpochsInfo';
 export const GET_DOCUMENTS_PATH = '/org.dash.platform.dapi.v0.Platform/getDocuments';
@@ -149,6 +150,7 @@ function fromCached(entry: CachedResponse): Response {
 export interface PrefetchOptions {
   quorumUrl: string;
   fetch: typeof fetch;
+  geo?: NodeGeo;
   contractId?: string;
   normalizedLabel?: string;
   preload?: Promise<boolean> | boolean;
@@ -200,7 +202,7 @@ export class PlatformPrefetch {
   }
 
   private async runNodeRace(fetch: typeof globalThis.fetch): Promise<void> {
-    const { quorumUrl, tries = 14, keep = 3, deadlineMs = 2500 } = this.options;
+    const { quorumUrl, tries = 10, keep = 3, deadlineMs = 2500 } = this.options;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let resolveEpoch!: (entry: CachedResponse | undefined) => void;
     const epochKey = `${GET_EPOCHS_INFO_PATH}:${toHex(GET_EPOCHS_INFO_BODY)}`;
@@ -229,12 +231,8 @@ export class PlatformPrefetch {
         .filter((node) => node.status === 'ENABLED' && node.versionCheck === 'success')
         .map((node) => node.addresses?.platform_https?.[0])
         .filter((host): host is string => typeof host === 'string' && HOST.test(host));
-      for (let i = hosts.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [hosts[i], hosts[j]] = [hosts[j] as string, hosts[i] as string];
-      }
-
-      const candidates = hosts.slice(0, tries).map((host) => `https://${host}`);
+      const visitor = visitorCoords(response.headers.get('x-amz-cf-pop'));
+      const candidates = selectBiasedCandidates(hosts, visitor, this.options.geo, { tries }).map((host) => `https://${host}`);
       this.startDocPrefetch(candidates.slice(0, 4), preload);
 
       timer = setTimeout(() => this.stop.abort(), deadlineMs);

@@ -16,6 +16,7 @@ import { hostedDenylist } from './hosted-denylist.js';
 import { parseSaved, resetLocation, SiteHost, type Reply } from './host.js';
 import { BrowserStore, SHELL_CACHE } from './store.js';
 import type { Inflater } from './inflate.js';
+import { NODE_GEO } from './node-geo.js';
 import { unpinOnFailure } from './nodes.js';
 import { PlatformPrefetch } from './prefetch.js';
 import type { Verifier } from './verifier.js';
@@ -70,6 +71,7 @@ const NODE_GRACE_MS = 400;
 const prefetch = new PlatformPrefetch({
   quorumUrl: QUORUM_URL,
   fetch: nativeFetch,
+  geo: NODE_GEO[__NETWORK__ as Network],
   contractId: config.contractId,
   normalizedLabel: parsedLabel?.normalized,
   preload: firstVisit,
