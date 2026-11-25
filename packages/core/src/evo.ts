@@ -225,13 +225,21 @@ export class EvoReader implements PlatformReader {
     return this.sdk.documents.compositeWithProof(query as never);
   }
 
-  private async nameInTwoReads(normalizedLabel: string): Promise<Proved<NameRecord | undefined>> {
+  /**
+   * The name and its owner's record in two proved reads. A record written after the block that proved
+   * the owner is not taken, and not taken as absent either: the reads are tried again once, and then
+   * this throws, so a reader keeps what it last proved instead of showing a live site as missing.
+   */
+  private async nameInTwoReads(normalizedLabel: string, retried = false): Promise<Proved<NameRecord | undefined>> {
     const domain = await this.getDomain(normalizedLabel);
     if (!domain.value || this.noSiteContract) return { value: domain.value && named(domain.value), meta: domain.meta };
     const where: Where[] = [...dashName(normalizedLabel), ['$ownerId', '==', domain.value.ownerId]];
     const site = await this.one(await this.query(this.config.contractId, 'site', where, { limit: 1 }), toSite);
-    const record = site.value && site.value.updatedAt <= domain.meta.timeMs ? site.value : undefined;
-    return { value: named(domain.value, record), meta: site.meta.height < domain.meta.height ? site.meta : domain.meta };
+    if (site.value && site.value.updatedAt > domain.meta.timeMs) {
+      if (retried) throw new Error(`the name ${normalizedLabel} and its site record were proved at different blocks`);
+      return this.nameInTwoReads(normalizedLabel, true);
+    }
+    return { value: named(domain.value, site.value), meta: site.meta.height < domain.meta.height ? site.meta : domain.meta };
   }
 
   async getChunks(siteId: string, hashes: string[]): Promise<Map<string, Uint8Array>> {

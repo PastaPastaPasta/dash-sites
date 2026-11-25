@@ -1,6 +1,6 @@
 # Dash Sites: websites on DPNS names
 
-Status: implemented on testnet. Date: 2026-11-21. Testnet contract: `5BS87xCmGqFKv6fndGjv6cJWbokqWtGs6ui91oRn7q6u` (registered 2026-11-25).
+Status: implemented on testnet. Date: 2026-11-21. Testnet contract: `CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT` (registered 2026-11-25).
 
 Dash Sites lets the owner of a DPNS name (`alice.dash`) publish a static website
 under that name, and lets anyone open it:
@@ -136,9 +136,9 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
 Two document types ([`contract/dash-sites.v2.json`](../contract/dash-sites.v2.json)). Each carries a format version `v`; how formats and the contract change later is in [VERSIONING.md](VERSIONING.md).
 
 ```
-site      mutable (but not its name), never deleted, not transferable
+site      mutable, never deleted, not transferable; only the name's owner writes it
   normalizedParentDomainName string  "dash"
-  normalizedLabel            string  the DPNS name, e.g. a11ce
+  normalizedLabel            string  the DPNS name, e.g. a11ce; refers to the DPNS domain and its owner
   content                    string  content URI, printable ASCII, ≤ 2048 chars; absent: no site
   v                          integer format version, 1
   unique index (normalizedParentDomainName, normalizedLabel, $ownerId)
@@ -154,44 +154,56 @@ chunk     immutable, deletable, not transferable
   unique index (site, hash)
 ```
 
-**Platform does not check who writes a site record. Readers do, inside one
-proof.** Any identity can create a `site` document for any name, registered
-or not. A reader never asks for "the site of a name". It asks for the name's
-DPNS `domain` document and, in the same query, for the `site` document whose
-`$ownerId` is that document's `$ownerId` (§4). Platform answers both from one
-block under one proof, so what a reader shows is the record of the identity
-that owns the name in that block, or nothing. A record written by anyone else
-is stored, costs its writer the fee, and is never read.
+**Only the owner of a name can write its site record, and readers check the
+owner again.** `normalizedLabel` carries a `refersTo` into DPNS:
 
-Platform can make this check itself: a `refersTo` on `normalizedLabel` that
-finds the DPNS `domain` document by name and requires its `$ownerId` to be
-the writer's makes consensus refuse a record from anyone but the owner. An
-earlier version of this contract did that. It was dropped for two reasons.
+```
+refersTo: { type: deletableDocument, contractId: <DPNS>, documentType: domain,
+            findBy: { normalizedParentDomainName, normalizedLabel },
+            where: { $ownerId: $ownerId } }
+```
 
-1. **It ties every site write to a property of the DPNS contract that
-   Platform has changed twice.** The reference has to declare whether the
-   target type's documents can be deleted (`deletableDocument` or
-   `permanentDocument`). Platform compares the declaration with the DPNS
-   contract on every create and replace, not only at registration, and
-   refuses the write when they differ
-   ([`document_reference_validation/v0/mod.rs:1329`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/action_validation/document/document_reference_validation/v0/mod.rs#L1329),
-   [`document_reference_kind.rs:46`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/rs-drive-abci/src/execution/validation/state_transition/common/document_reference_kind.rs#L46),
-   Platform 5.0.3). A contract update cannot change a `refersTo`
-   ([`rule_set.rs:1164`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/rs-json-schema-compatibility-validator/src/rules/rule_set.rs#L1164)).
-   DPNS declares names deletable (`canBeDeleted: true`) on protocol 14. In the
-   protocol 15 pre-releases
-   they were made permanent in 5.1.0-dev.1
-   ([DPNS v3, line 4](https://github.com/dashpay/platform/blob/5b73d83b50d721d008d638cbcea265f526b19f22/packages/dpns-contract/schema/v3/dpns-contract-documents.json#L4))
-   and deletable again from 5.1.0-dev.2
-   ([line 4](https://github.com/dashpay/platform/blob/46d633940da19dfc70b6f75d0596a00d9b819f8b/packages/dpns-contract/schema/v3/dpns-contract-documents.json#L4)).
-   A contract registered with either kind stops taking site writes for good,
-   the take-down included, on the day a protocol version makes DPNS the other
-   kind.
-2. **It checks the wrong moment.** A write-time check says the writer owned
-   the name when it wrote. The record stays after the name is sold, deleted or
-   tombstoned, and a reader has to read DPNS anyway to keep the previous
-   owner's site from showing. The read-time check has nothing left over: the
-   owner in the proof is the owner now.
+Consensus finds the name's `domain` document and refuses a create or replace
+of a `site` document unless the writer is the name's `$ownerId` in that
+block. Nobody can write a record for a name they do not own, or for a name
+nobody has registered. A replace is checked the same way, so the previous
+owner of a name that changed hands, or was deleted, can no longer change its
+record. `normalizedParentDomainName` is immutable; `normalizedLabel` cannot
+be, because Platform refuses a contract that lists a property carrying a
+`deletableDocument` reference as immutable (5.1.0-rc.1). A replace can move a
+record to another name only if its writer owns that name too, and a reader
+then finds it under that name.
+
+Readers do not rely on that alone. A reader never asks for "the site of a
+name". It asks for the name's DPNS `domain` document and, in the same query,
+for the `site` document whose `$ownerId` is that document's `$ownerId` (§4).
+Platform answers both from one block under one proof, so what a reader shows
+is the record of the identity that owns the name in that block, or nothing.
+The write-time check says the writer owned the name when it wrote; the record
+stays after the name is sold, transferred, deleted or tombstoned, and only
+the read-time check keeps the previous owner's site from showing. Measured
+against the live testnet, the read-time check adds no measurable time to a
+resolve (PR #14), so both stay.
+
+The reference ties every site write to DPNS in one way that matters. A
+`refersTo` declares whether the target type's documents can be deleted
+(`deletableDocument` or `permanentDocument`), and Platform compares the
+declaration with the DPNS contract on every create and replace, not only at
+registration, and refuses the write when they differ
+([`document_reference_validation/v0/mod.rs:1329`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/action_validation/document/document_reference_validation/v0/mod.rs#L1329),
+[`document_reference_kind.rs:46`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/rs-drive-abci/src/execution/validation/state_transition/common/document_reference_kind.rs#L46),
+Platform 5.0.3). A contract update cannot change a `refersTo`
+([`rule_set.rs:1164`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/rs-json-schema-compatibility-validator/src/rules/rule_set.rs#L1164)).
+DPNS declares names deletable (`canBeDeleted: true`) on protocol 14 and in
+5.1.0-rc.1. During the protocol 15 pre-releases they were permanent in
+5.1.0-dev.1
+([DPNS v3, line 4](https://github.com/dashpay/platform/blob/5b73d83b50d721d008d638cbcea265f526b19f22/packages/dpns-contract/schema/v3/dpns-contract-documents.json#L4))
+and deletable again from 5.1.0-dev.2
+([line 4](https://github.com/dashpay/platform/blob/46d633940da19dfc70b6f75d0596a00d9b819f8b/packages/dpns-contract/schema/v3/dpns-contract-documents.json#L4)).
+If a protocol version ever makes DPNS names permanent, this contract stops
+taking site writes for good, the take-down included, and sites move to a new
+contract. This risk was accepted for the owner check at write time;
+`contract.test.ts` checks the DPNS snapshots of both networks for it.
 
 What Platform does enforce on a site record: each identity has one record per
 name (the unique index), so nobody can occupy another identity's slot. Records
@@ -224,7 +236,7 @@ IN <that record's $id>` (§4). Platform answers all three under one proof.
 
 What Platform cannot or does not enforce, and readers check:
 
-- **The writer of a site record owns the name**, as above.
+- **The writer of a site record owns the name now**, as above.
 - **The record was written during the current ownership.** A record whose
   `$updatedAt` is earlier than the domain document's `$transferredAt` (its
   creation time for a name that never changed hands) is ignored. An identity
@@ -246,24 +258,26 @@ what:
 | --- | --- |
 | Add a document type, with indexes, fees and moderator abilities of its own | Add, change or remove an index of `site` or `chunk` |
 | Add an optional property to `site` or `chunk`, or a required one marked `requiredSince`; a new property may carry a `refersTo` check | Remove a property, or stop requiring one |
-| Raise `maxLength` and `maxItems` (a chunk field up to Platform's 5,120-byte limit), remove a `pattern` | Give an existing property a `refersTo` check, or change or remove the one on `chunk.site` |
-| List properties under `immutable` | Change a `pattern`, or whether `site` and `chunk` documents can be replaced, deleted, transferred or traded |
+| Raise `maxLength` and `maxItems` (a chunk field up to Platform's 5,120-byte limit), remove a `pattern` | Give an existing property a `refersTo` check, or change or remove the one on `site.normalizedLabel` or `chunk.site` |
+| List properties under `immutable`, except `normalizedLabel`: Platform 5.1.0-rc.1 refuses an immutable property whose `deletableDocument` reference is found by `findBy` | Change a `pattern`, or whether `site` and `chunk` documents can be replaced, deleted, transferred or traded |
 | Add tokens, keywords and a description | Give `site` or `chunk` a time to live, a fee, a token cost or a doctype-level count |
 | | Let moderators delete `site` or `chunk` documents, start a banlist or a suspension list, hand moderation to an elected team, keep the contract's history, or make it read-only |
 
 Four things follow from registering the contract as it is, and stay true of
 `site` and `chunk` for good:
 
-- **Platform does not check that a publisher owns the name.** No property of
-  `site` carries a `refersTo`, and an existing property cannot be given one,
-  so anyone may write a `site` document for any name; the resolution rule
-  (§4) is what ignores it. A list of sites built from the `updated` index
-  must prove each name's owner the same way. An update could add a new
-  property that carries the check
-  ([`v14.rs:733-736`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/rs-platform-version/src/version/v14.rs#L733-L736));
-  that would bring back the dependence on DPNS described above.
+- **Platform takes a site record only from the owner of the name.** If a
+  protocol version makes DPNS names permanent, Platform refuses every site
+  write instead, take-downs included (above). A record outlives the
+  ownership it was written under; the resolution rule (§4) ignores it then.
+  A list of sites built from the `updated` index must prove each name's
+  owner the same way.
 - **A site record cannot be removed from Platform, by anyone.** Its writer
-  can empty it; the name and the identity that wrote it stay on record.
+  can empty it while it owns the name. Once the name is sold, transferred or
+  deleted, the previous owner can no longer change the record under that
+  name, so its last `content` stays there for good, unread. It can still
+  move the record onto another name it owns and has no record for, and
+  empty it there. Its chunks can still be deleted with `gc`.
 - **Nobody can be stopped from publishing.** The contract declares no
   `moderation`. A gateway can refuse to serve a site (§8), but a publisher
   cannot be barred from the contract. What stays possible is a later document
@@ -276,11 +290,12 @@ Four things follow from registering the contract as it is, and stay true of
 rules and holds these terms, so a change to the schema file is a deliberate
 one.
 
-Measured on testnet at protocol 14: registering the contract cost 0.1812 DASH;
-the first site record for a name 0.0006 DASH, a replace under 0.0001 DASH, a
-full chunk (14,700 bytes) 0.0046 DASH, and a write Platform refuses about
-0.000013 DASH. A one-page site cost 0.0014 DASH to publish and a 440 KB site
-0.135 DASH.
+Measured on testnet at protocol 14 on this schema: registering the contract
+cost about 0.1814 DASH, the first site record for a name 0.0006 DASH, a
+replace under 0.0001 DASH, and a write Platform refuses about 0.000014 DASH.
+Measured on an earlier schema, before chunks carried `v` and `$createdAt`,
+which add a few bytes each: a full chunk (14,700 bytes) cost 0.0046 DASH, a
+one-page site 0.0014 DASH to publish and a 440 KB site 0.135 DASH.
 
 ### Content URIs
 
@@ -482,8 +497,10 @@ Input: a name, e.g. `Alice.dash` (or a gateway host label).
    ([`composite_document.rs:84`](https://github.com/dashpay/platform/blob/5e9aff1c4835299773095494a7a1c53506d5b0f9/packages/wasm-sdk/src/queries/composite_document.rs#L84)).
    A node that cannot answer the composite query is asked for the domain
    document and then for the record by name and owner, two proved reads. The
-   record then counts only if it was last written no later than the block
-   that proved the owner, so the answer is still what one block held.
+   record must have been last written no later than the block that proved
+   the owner, so the answer is still what one block held. A record written
+   later means the reads straddled a write: they are tried once more, and
+   then the read fails rather than show a live site as missing.
 3. **Content**: by scheme. For `dash-manifest`, take the manifest chunks from
    what step 2 brought, or fetch them (`site == <record $id>`, `hash in […]`,
    100 per query), verify, parse; then the chunks of the requested file the
@@ -497,7 +514,8 @@ awarded, so it resolves as unregistered.
 **A name that changes hands** shows nothing of the previous owner from the
 block of the transfer: the page then names the new owner, and the new
 owner's record is the only one looked up. The previous owner's record and
-chunks stay stored and unread until it deletes the chunks (`gc`).
+chunks stay stored and unread. The previous owner can delete the chunks
+(`gc`) but can no longer change the record (§3).
 
 **Canonical host.** Several spellings normalize to one name. To give a name one
 origin, the canonical host label is the domain document's `label` lowercased
@@ -746,8 +764,9 @@ queries for browsers.
 
 ## 6. Security
 
-- **Who controls a site**: the DPNS name's current `$ownerId`, proved. A site
-  document from anyone else is never read.
+- **Who controls a site**: the DPNS name's current `$ownerId`, proved.
+  Platform refuses a site record from anyone but the owner, and a record
+  left from an earlier owner is never read.
 - **Where trust sits.** Content trust rests on verification in the visitor's
   browser, not on the gateway's server. A lying DAPI node cannot change a
   site, and neither can the gateway's fallback process, which browsers do not
@@ -903,21 +922,26 @@ DASH; its id then goes into `packages/core/src/config.ts`, and
 `NETWORK=mainnet` selects it. Registering is final in the ways §3 lists under
 "What registration fixes".
 
-**Protocol versions.** The contract refers to nothing outside itself, so no
-change to the DPNS contract can stop its writes. Reads need three things of
-DPNS, all of which hold on protocol 14 and in the protocol 15 pre-releases:
-a `domain` document found by `(normalizedParentDomainName, normalizedLabel)`,
-its `$ownerId`, and its `$transferredAt`.
+**Protocol versions.** Reads and writes both need the DPNS `domain` type, found
+by its unique `(normalizedParentDomainName, normalizedLabel)` index, and its
+`$ownerId`. Writes also need `domain` documents to stay deletable (§3), and
+reads need `$transferredAt`. All of this holds on protocol 14 and in the
+protocol 15 pre-releases.
 
 [`contract/platform-upgrade-test.patch`](../contract/platform-upgrade-test.patch)
 is a test for dashpay/platform, not part of Platform itself. Applied to tag
-`v5.1.0-rc.1` it registers this contract on a protocol 14 chain, runs the
-upgrade to protocol 15 and repeats every kind of write on the far side: a
-site record is created, replaced with and without content, a chunk is stored
-and deleted. On both protocols Platform refuses a chunk under another
-identity's record, a second record for one name, and a replace that moves a
-record to another name; on protocol 15 it also refuses the delete of a
-record. It also parses the schema with the full validation of both versions.
+`v5.1.0-rc.1` it registers DPNS names and this contract on a protocol 14
+chain, runs the upgrade to protocol 15 and repeats every kind of write on the
+far side: a site record is created, replaced with and without content, a
+chunk is stored and deleted. On both protocols Platform refuses a site record
+for a name another identity owns or nobody registered, a chunk under another
+identity's record, a second record for one name, a replace that moves a
+record onto a name its writer does not own, and a replace by the previous
+owner after the name is transferred. On protocol 14 it takes a move onto
+another name the writer owns. On protocol 15 it also refuses the delete of a record, a change
+of parent domain, and any write once the name is deleted. Each refusal is
+checked against the consensus error it should raise. It also parses the
+schema with the full validation of both versions.
 All of it passed on the final schema on 2026-11-25. To run it against a
 later Platform:
 

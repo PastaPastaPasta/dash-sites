@@ -1,5 +1,5 @@
 diff --git a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
-index 9cdace46b4..0c3df4857b 100644
+index 9cdace46b4..33010e1e56 100644
 --- a/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
 +++ b/packages/rs-drive-abci/src/execution/validation/state_transition/state_transitions/batch/tests/document/dpns_v3.rs
 @@ -31,6 +31,7 @@ mod dpns_v3_tests {
@@ -10,7 +10,7 @@ index 9cdace46b4..0c3df4857b 100644
      use dpp::data_contract::DataContract;
      use dpp::data_contracts::SystemDataContract;
      use dpp::document::{Document, DocumentV0};
-@@ -2298,4 +2299,352 @@ mod dpns_v3_tests {
+@@ -2298,4 +2299,444 @@ mod dpns_v3_tests {
              StateTransitionExecutionResult::SuccessfulExecution { .. }
          );
      }
@@ -31,7 +31,7 @@ index 9cdace46b4..0c3df4857b 100644
 +        .expect("expected the schema file to be JSON");
 +        let contract = serde_json::json!({
 +            "$formatVersion": "1",
-+            "id": "5BS87xCmGqFKv6fndGjv6cJWbokqWtGs6ui91oRn7q6u",
++            "id": "CjzpdgCPJdLgVZdUu8SNacWVnrhDv34LstjPdBeJ4dT",
 +            "ownerId": "AkhihKhRLGjKB1WTdUG7BWrGnTaTTHcMzdSBsKSJ5GNm",
 +            "version": 1,
 +            "documentSchemas": schemas,
@@ -56,6 +56,13 @@ index 9cdace46b4..0c3df4857b 100644
 +            result,
 +            StateTransitionExecutionResult::SuccessfulExecution { .. }
 +        )
++    }
++
++    fn refusal_code(result: &StateTransitionExecutionResult) -> Option<u32> {
++        match result {
++            StateTransitionExecutionResult::PaidConsensusError { error, .. } => Some(error.code()),
++            _ => None,
++        }
 +    }
 +
 +    fn outcome(result: &StateTransitionExecutionResult) -> String {
@@ -252,95 +259,180 @@ index 9cdace46b4..0c3df4857b 100644
 +        let mut fixture = DpnsFixture::new(14);
 +        let sites = fixture.apply_sites();
 +        let (mut alice, mut bob) = (0, 0);
-+        let record = [
-+            ("normalizedParentDomainName", text("dash")),
-+            ("normalizedLabel", text("quantum7")),
-+        ];
++        let name = |label: &str| {
++            [
++                ("normalizedParentDomainName", text("dash")),
++                ("normalizedLabel", text(label)),
++            ]
++        };
++        let record = name("quantum7");
 +        let mut log = Vec::new();
-+        let mut step = |what: &str, result: &StateTransitionExecutionResult, expected: bool| {
++        // `None` expects the write to be accepted, `Some(code)` refused with that consensus error
++        let mut step = |what: &str, result: &StateTransitionExecutionResult, expected: Option<u32>| {
 +            println!("{what}: {}", outcome(result));
-+            log.push((what.to_string(), accepted(result) == expected));
++            log.push((what.to_string(), refusal_code(result) == expected && accepted(result) == expected.is_none()));
 +        };
 +
++        for (who, label, height) in [
++            (Who::Alice, "quantum7", 13),
++            (Who::Alice, "quantum8", 15),
++            (Who::Bob, "quantum9", 17),
++        ] {
++            let (_, result) = fixture.register_at(who, label, height).await;
++            step(&format!("PV14 register {label}.dash"), &result, None);
++        }
++
 +        let (mut site, result) = fixture
-+            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 13)
++            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 20)
 +            .await;
-+        step("PV14 create a site record", &result, true);
++        step("PV14 create a site record", &result, None);
 +        let chunk_of = |site: &Document| [("site", Value::Identifier(site.id().to_buffer()))];
 +        let (_, result) = fixture
-+            .sites_create(sites, Who::Alice, &mut alice, "chunk", &chunk_of(&site), 14)
++            .sites_create(sites, Who::Alice, &mut alice, "chunk", &chunk_of(&site), 21)
 +            .await;
-+        step("PV14 store a chunk under the own record", &result, true);
++        step("PV14 store a chunk under the own record", &result, None);
 +        let (_, result) = fixture
-+            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&site), 15)
++            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&site), 22)
 +            .await;
-+        step("PV14 store a chunk under another identity's record", &result, false);
++        step("PV14 store a chunk under another identity's record", &result, Some(40127));
 +        let (_, result) = fixture
-+            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 16)
++            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 23)
 +            .await;
-+        step("PV14 create a second record for the same name", &result, false);
++        step("PV14 create a second record for the same name", &result, Some(40105));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 24)
++            .await;
++        step("PV14 create a record for a name another identity owns", &result, Some(40127));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &name("quantum6"), 25)
++            .await;
++        step("PV14 create a record for a name nobody registered", &result, Some(40120));
 +        let (bob_site, result) = fixture
-+            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 17)
++            .sites_create(sites, Who::Bob, &mut bob, "site", &name("quantum9"), 26)
 +            .await;
-+        step("PV14 another identity creates its own record for the name", &result, true);
++        step("PV14 another identity creates a record for its own name", &result, None);
 +        let mut moved = site.clone();
-+        moved.set("normalizedLabel", text("e1sewhere8"));
++        moved.set("normalizedLabel", text("quantum9"));
 +        let result = fixture
-+            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 18)
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 27)
 +            .await;
-+        step("PV14 move a record to another name", &result, false);
++        step("PV14 move a record to a name another identity owns", &result, Some(40127));
 +
-+        fixture.activate_protocol_version_15(20);
++        let (_, result) = fixture.register_at(Who::Alice, "quantum5", 30).await;
++        step("PV14 register quantum5.dash", &result, None);
++        let (mut sold, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &name("quantum5"), 32)
++            .await;
++        step("PV14 create a record for quantum5", &result, None);
++        let bob_id = fixture.id(Who::Bob);
++        let quantum5 = fixture.name("quantum5").expect("expected quantum5.dash");
++        let revision = quantum5.revision().unwrap_or(1);
++        let result = fixture
++            .transfer(Who::Alice, &quantum5, revision, bob_id, 33)
++            .await;
++        step("PV14 transfer quantum5.dash to the other identity", &result, None);
++        sold.set("content", text("ipfs://bafysold"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut sold, 34)
++            .await;
++        step("PV14 the previous owner replaces its record after the name changed hands", &result, Some(40127));
++        let (_, result) = fixture.register_at(Who::Alice, "quantum4", 35).await;
++        step("PV14 register quantum4.dash", &result, None);
++        sold.set("normalizedLabel", text("quantum4"));
++        sold.remove("content");
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut sold, 37)
++            .await;
++        step("PV14 move a record onto another name its writer owns", &result, None);
++
++        fixture.activate_protocol_version_15(60);
 +
 +        site.set("content", text("dash-manifest:v1:00"));
 +        let result = fixture
-+            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 21)
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 61)
 +            .await;
-+        step("PV15 replace the record with content", &result, true);
++        step("PV15 replace the record with content", &result, None);
 +        site.remove("content");
 +        let result = fixture
-+            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 22)
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 62)
 +            .await;
-+        step("PV15 replace the record without content", &result, true);
++        step("PV15 replace the record without content", &result, None);
 +        let (chunk, result) = fixture
-+            .sites_create(sites, Who::Alice, &mut alice, "chunk", &chunk_of(&site), 23)
++            .sites_create(sites, Who::Alice, &mut alice, "chunk", &chunk_of(&site), 63)
 +            .await;
-+        step("PV15 store a chunk under the own record", &result, true);
++        step("PV15 store a chunk under the own record", &result, None);
 +        let (_, result) = fixture
-+            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&site), 24)
++            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&site), 64)
 +            .await;
-+        step("PV15 store a chunk under another identity's record", &result, false);
++        step("PV15 store a chunk under another identity's record", &result, Some(40127));
 +        let (_, result) = fixture
-+            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&bob_site), 25)
++            .sites_create(sites, Who::Bob, &mut bob, "chunk", &chunk_of(&bob_site), 65)
 +            .await;
-+        step("PV15 the other identity stores a chunk under its own record", &result, true);
-+        let other = [
-+            ("normalizedParentDomainName", text("dash")),
-+            ("normalizedLabel", text("a11ce")),
-+            ("content", text("ipfs://bafy")),
-+        ];
++        step("PV15 the other identity stores a chunk under its own record", &result, None);
++        let mut other = name("quantum8").to_vec();
++        other.push(("content", text("ipfs://bafy")));
 +        let (_, result) = fixture
-+            .sites_create(sites, Who::Alice, &mut alice, "site", &other, 26)
++            .sites_create(sites, Who::Alice, &mut alice, "site", &other, 66)
 +            .await;
-+        step("PV15 create a record for another name", &result, true);
++        step("PV15 create a record for another own name", &result, None);
 +        let (_, result) = fixture
-+            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 27)
++            .sites_create(sites, Who::Alice, &mut alice, "site", &record, 67)
 +            .await;
-+        step("PV15 create a second record for the same name", &result, false);
++        step("PV15 create a second record for the same name", &result, Some(40105));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 68)
++            .await;
++        step("PV15 create a record for a name another identity owns", &result, Some(40127));
 +        let result = fixture
-+            .sites_delete(sites, Who::Alice, &mut alice, "chunk", &chunk, 28)
++            .sites_delete(sites, Who::Alice, &mut alice, "chunk", &chunk, 69)
 +            .await;
-+        step("PV15 delete a chunk", &result, true);
++        step("PV15 delete a chunk", &result, None);
 +        let result = fixture
-+            .sites_delete(sites, Who::Alice, &mut alice, "site", &site, 29)
++            .sites_delete(sites, Who::Alice, &mut alice, "site", &site, 70)
 +            .await;
-+        step("PV15 delete a site record", &result, false);
++        step("PV15 delete a site record", &result, Some(10404));
 +        let mut moved = site.clone();
-+        moved.set("normalizedLabel", text("e1sewhere7"));
++        moved.set("normalizedLabel", text("quantum6"));
 +        let result = fixture
-+            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 30)
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 71)
 +            .await;
-+        step("PV15 move a record to another name", &result, false);
++        step("PV15 move a record to a name nobody registered", &result, Some(40120));
++        let mut moved = site.clone();
++        moved.set("normalizedParentDomainName", text("d4sh"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 71)
++            .await;
++        step("PV15 move a record to another parent domain", &result, Some(40128));
++
++        let quantum7 = fixture.name("quantum7").expect("expected quantum7.dash");
++        let revision = quantum7.revision().unwrap_or(1);
++        let result = fixture
++            .transfer(Who::Alice, &quantum7, revision, bob_id, 72)
++            .await;
++        step("PV15 transfer quantum7.dash to the other identity", &result, None);
++        site.set("content", text("ipfs://bafysold"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut site, 73)
++            .await;
++        step("PV15 the previous owner replaces its record after the name changed hands", &result, Some(40127));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Bob, &mut bob, "site", &record, 74)
++            .await;
++        step("PV15 the new owner creates its record for the name", &result, None);
++
++        let quantum9 = fixture.name("quantum9").expect("expected quantum9.dash");
++        let result = fixture.delete(Who::Bob, "domain", &quantum9, 75).await;
++        step("PV15 delete quantum9.dash", &result, None);
++        let mut bob_site = bob_site;
++        bob_site.set("content", text("ipfs://bafygone"));
++        let result = fixture
++            .sites_replace(sites, Who::Bob, &mut bob, "site", &mut bob_site, 76)
++            .await;
++        step("PV15 replace a record whose name was deleted", &result, Some(40120));
++        let (_, result) = fixture
++            .sites_create(sites, Who::Alice, &mut alice, "site", &name("quantum9"), 77)
++            .await;
++        step("PV15 create a record for a deleted name", &result, Some(40120));
 +
 +        let wrong: Vec<_> = log.iter().filter(|(_, ok)| !ok).map(|(what, _)| what).collect();
 +        assert!(wrong.is_empty(), "unexpected outcomes: {wrong:?}");

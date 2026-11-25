@@ -3,7 +3,7 @@ import { FORMATS, refuseNewer } from './formats.js';
 import { normalizeLabel } from './names.js';
 import type { DomainRecord, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
 
-/** An in-memory Platform for tests and local previews. Like Platform, it stores a site record from any identity and reads the owner's. */
+/** An in-memory Platform for tests and local previews. Like Platform, it stores a site record only from the identity that owns the name. */
 export class MemoryPlatform {
   readonly domains = new Map<string, DomainRecord>();
   readonly sites = new Map<string, SiteRecord>();
@@ -76,6 +76,7 @@ export class MemoryPlatform {
         this.height += 1;
       },
       putSite: async (domain, content) => {
+        if (this.domains.get(domain.normalizedLabel)?.ownerId !== identityId) throw new Error(`${identityId} does not own ${domain.normalizedLabel}.dash, so Platform refuses its site record`);
         const key = siteKey(identityId, domain.normalizedLabel);
         const existing = this.sites.get(key);
         if (existing) refuseNewer('site', existing.v);

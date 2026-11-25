@@ -63,7 +63,7 @@ describe('the contract to register', () => {
         type: 'object',
         documentsMutable: true,
         canBeDeleted: false,
-        immutable: ['normalizedParentDomainName', 'normalizedLabel'],
+        immutable: ['normalizedParentDomainName'],
         transferable: 0,
         tradeMode: 0,
         additionalProperties: false,
@@ -90,7 +90,7 @@ describe('the contract to register', () => {
   });
 
   it('is the schema its cost was measured on', () => {
-    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('ddb7a75a7ad0a4deb900b247f9e006d9af5d348d9b303a49bfcbc257a74f1fe4');
+    expect(sha256Hex(new TextEncoder().encode(JSON.stringify(schemas())))).toBe('9bce2ef65f17706f1f5b753041e3bac13738d168b9b9cc7c4ad434159f4a46dc');
   });
 
   it('is the contract registered on testnet', () => {
@@ -105,11 +105,27 @@ describe('the contract to register', () => {
     }
   });
 
-  it('refers to nothing outside itself, so no change to DPNS can stop its writes', () => {
+  it('has Platform take a site record only from the owner of its DPNS name, and refers to nothing else outside itself', () => {
     const parsed = (registered().toJSON() as { documentSchemas: Schemas }).documentSchemas;
     const references = Object.values(parsed).flatMap((type) => Object.values(type.properties).flatMap((property) => (property.refersTo ? [property.refersTo] : [])));
-    expect(references).toEqual([{ type: 'permanentDocument', documentType: 'site', where: { $ownerId: '$ownerId' } }]);
-    expect(JSON.stringify(parsed)).not.toContain(DPNS_CONTRACT_ID);
+    expect(references).toEqual([
+      { type: 'permanentDocument', documentType: 'site', where: { $ownerId: '$ownerId' } },
+      {
+        type: 'deletableDocument',
+        contractId: DPNS_CONTRACT_ID,
+        documentType: 'domain',
+        findBy: { normalizedParentDomainName: 'normalizedParentDomainName', normalizedLabel: '.' },
+        where: { $ownerId: '$ownerId' },
+      },
+    ]);
+  });
+
+  it('declares DPNS names deletable, as the DPNS contract on each network does: a mismatch stops every site write', () => {
+    for (const network of ['testnet', 'mainnet'] as const) {
+      const { bytes } = KNOWN_CONTRACTS[network]?.[DPNS_CONTRACT_ID] as { bytes: string };
+      const domain = (knownContract(bytes).toJSON() as { documentSchemas: { domain: { canBeDeleted?: boolean } } }).documentSchemas.domain;
+      expect(domain.canBeDeleted).toBe(true);
+    }
   });
 
   it('has Platform take a chunk only from the identity that wrote its site record', () => {

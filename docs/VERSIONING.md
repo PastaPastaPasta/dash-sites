@@ -50,7 +50,7 @@ Taken and not yet written: none.
 
 A document without `v` counts as version 1. No contract that is read holds
 any: the testnet contract `zVqSAuc1…`, registered before `v` existed, was
-replaced by `5BS87xCm…` from this schema on 2026-11-25.
+replaced by `CjzpdgCP…` from this schema on 2026-11-25.
 
 ## Manifest version 3 is open
 
@@ -148,6 +148,7 @@ protocols 14 and 15:
 | Loosen a limit: raise `maxLength` or `maxItems`, lower `minLength`, drop a `pattern` ([`rule_set.rs`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-json-schema-compatibility-validator/src/rules/rule_set.rs#L423)) | Tighten a limit, change a `pattern`, or change `additionalProperties`. Resize a fixed-size byte array (`minItems` = `maxItems`, like `site` and `hash`), whose stored layout depends on it ([`common/mod.rs:30`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/document_type/methods/validate_update/common/mod.rs#L30)) |
 | Change descriptions and comments, add contract `keywords` | Add, remove or change an index on an existing type ([`v1/mod.rs:107`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/document_type/methods/validate_update/v1/mod.rs#L107)) |
 | | Change whether documents are mutable, deletable or transferable, or change how a stored value is encoded |
+| | Add, change or remove a `refersTo` on an existing property, such as the owner check on `site.normalizedLabel` or the one on `chunk.site` |
 | | Make the contract read-only later, or change anything once it is read-only ([`config/.../validate_update/v0/mod.rs:17`](https://github.com/dashpay/platform/blob/fd2565020656fa444b1e1c247e5ca65ef7541bca/packages/rs-dpp/src/data_contract/config/methods/validate_update/v0/mod.rs#L17)) |
 
 **Inside the same contract** (no migration):
@@ -159,7 +160,10 @@ protocols 14 and 15:
 - **New ways of storing files** go in the manifest (a new manifest `v`) and
   need no contract change at all. #25 and #16 work this way.
 
-**A new contract** is needed only for a change in the right-hand column. The
+**A new contract** is needed only for a change in the right-hand column. One
+outside change also forces one: the owner check on `site.normalizedLabel`
+refers to DPNS `domain` documents as deletable, and Platform refuses every
+site write if a protocol version ever makes DPNS names permanent (DESIGN §3). The
 usual case is a new index for a new kind of query. The transition works like
 this:
 

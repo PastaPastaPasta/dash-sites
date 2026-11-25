@@ -4,8 +4,7 @@
     "documentsMutable": true,
     "canBeDeleted": false,
     "immutable": [
-      "normalizedParentDomainName",
-      "normalizedLabel"
+      "normalizedParentDomainName"
     ],
     "properties": {
       "normalizedParentDomainName": {
@@ -22,7 +21,19 @@
         "minLength": 3,
         "maxLength": 63,
         "position": 1,
-        "description": "normalizedLabel of that DPNS domain, e.g. a11ce. Anyone can write a record for a name; readers take only the record of the identity that owns the domain."
+        "description": "normalizedLabel of the DPNS domain the site is published under, e.g. a11ce. Platform accepts a create or replace only from the identity that owns that domain.",
+        "refersTo": {
+          "type": "deletableDocument",
+          "contractId": "GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec",
+          "documentType": "domain",
+          "findBy": {
+            "normalizedParentDomainName": "normalizedParentDomainName",
+            "normalizedLabel": "."
+          },
+          "where": {
+            "$ownerId": "$ownerId"
+          }
+        }
       },
       "content": {
         "type": "string",
