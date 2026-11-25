@@ -2,8 +2,8 @@ export const escapeHtml = (text: string): string =>
   text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 
 export const PAGE_STYLE = `
-:root{color-scheme:light dark;--bg:Canvas;--fg:CanvasText;--card:Canvas;--muted:#5b6577;--line:#dfe3ea;--accent:#0072c6;--on-accent:#fff}
-@media (prefers-color-scheme:dark){:root{--muted:#a3adbd;--line:#3a4252;--accent:#5ab4f2;--on-accent:#04121f}}
+:root{color-scheme:light dark;--bg:Canvas;--fg:CanvasText;--card:Canvas;--muted:#5b6577;--line:#8a94a6;--accent:#0072c6;--on-accent:#fff}
+@media (prefers-color-scheme:dark){:root{--muted:#a3adbd;--line:#5a6476;--accent:#5ab4f2;--on-accent:#04121f}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 main{max-width:640px;margin:0 auto;padding:12vh 16px 48px}
 h1{font-size:28px;line-height:1.2;margin:0 0 12px;letter-spacing:-.01em}

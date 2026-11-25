@@ -144,9 +144,9 @@ a wildcard certificate by DNS-01 with no DNS credentials on the host), and
 the Caddy configuration. DNS records and the steps for moving to another
 domain such as `dash.dev` are in [docs/DESIGN.md](docs/DESIGN.md#8-hosting).
 
-The hosted gateways (`dash.site`, `id.dashhq.org`) can stop serving a name,
-owner or content (`dash-sites-deny`, see
-[docs/DESIGN.md](docs/DESIGN.md#operator-denylist)). Only a hosted build
+`id.dashhq.org` can stop serving a name, owner or content (`dash-sites-deny`,
+see [docs/DESIGN.md](docs/DESIGN.md#operator-denylist)), and the dash.site
+static page can stop opening a name with a blocking route (DESIGN §8). Only a hosted build
 (`DENYLIST=1`, set by `deploy.sh` when the host's `gateway.env` has
 `DENYLIST_FILE`) includes that check; a self-hosted shell leaves it out.
 

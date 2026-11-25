@@ -144,7 +144,7 @@ function renderPreview(): void {
   } else {
     html = previewHtml(upload);
   }
-  frame.srcdoc = html ?? '<body style="color-scheme:light dark;background:Canvas;color:GrayText;font:15px system-ui;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body>';
+  frame.srcdoc = html ?? '<body style="color-scheme:light dark;background:Canvas;color:GrayText;color:color-mix(in srgb,CanvasText 62%,Canvas);font:15px system-ui;display:grid;place-items:center;height:90vh;margin:0">Your home page will show here.</body>';
 }
 
 async function refreshBalance(): Promise<void> {
