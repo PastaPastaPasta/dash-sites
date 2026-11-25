@@ -376,9 +376,25 @@ queries for browsers.
   every chunk and file against its SHA-256 before answering. Anything that
   does not verify is refused.
 - **What the browser contacts**: the gateway host for the shell; Dash Platform
-  evonodes (`<ip>:1443`, from the address list compiled into the SDK); and
-  the quorum key service `quorums.<network>.networks.dash.org` (see §6).
+  evonodes (`<ip>:443`, from the masternode list of the quorum key service);
+  and the quorum key service `quorums.<network>.networks.dash.org` (see §6).
   Nothing else. `e2e/shell.mjs` asserts this list in Chromium.
+- **Choosing nodes**: while the verifier downloads, the worker reads that
+  masternode list (enabled nodes that passed the service's version check),
+  sends an empty request to 10 random ones, and gives the SDK the first 4 to
+  answer healthily (`packages/shell/src/nodes.ts`). Each document query then
+  finds an open connection and a cached CORS preflight (DAPI allows 20 days;
+  Chrome keeps 2 hours) instead of paying for both on a random, possibly
+  distant node. With fewer than 2 answers within 2.5 s of the list, or if
+  the pick is not done 0.6 s after the verifier is ready, the SDK chooses
+  nodes itself. After the first failed query on the picked nodes, the worker
+  moves to the SDK's own list for the rest of its life, so a short outage
+  that gets the few picked nodes banned does not stall it. Which node
+  answers cannot change what is shown beyond the SDK's tolerance for a node
+  that is a little behind, as before: every answer is proof-checked. The
+  cost is that the 10 probed operators see the visitor's address and the
+  site's origin, and 4 of them see one visit's lookups rather than a random
+  spread.
 - **Caching**: a proved answer is reused for 30 s, then served while a fresh
   one is fetched. Verified chunks are kept in the origin's Cache Storage and
   re-hashed on every read. A worker that has just started serves nothing
@@ -503,8 +519,8 @@ queries for browsers.
   2. **Quorum public keys.** SDK 5.0.3 verifies proofs against quorum public
      keys it downloads from `quorums.<network>.networks.dash.org`, a service
      run by Dash Core Group, over TLS. Whoever controls that service, together
-     with a lying DAPI node, could forge a proof. The evonode addresses are
-     compiled into the SDK, so no seed service is contacted. The SDK's
+     with a lying DAPI node, could forge a proof. The evonode addresses come
+     from the same service's masternode list, so it adds no other party. The SDK's
      `verified` mode, which proves quorum keys from the Core chain, removes
      this once it is in a release; until then it is the one centralized
      service in the path, and it is not ours.
