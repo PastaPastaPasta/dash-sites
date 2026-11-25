@@ -81,7 +81,8 @@ Writers never rewrite what they cannot read:
   uploading in another tab keeps the chunks its record does not reference
   yet. A publish that reuses older chunks checks again, just before it writes
   the record, that they are still stored, and stores again any a `gc` deleted
-  meanwhile.
+  meanwhile. A `gc` still deleting at that moment can leave the record
+  missing a chunk; publishing again stores it.
 
 ## Changing the contract
 

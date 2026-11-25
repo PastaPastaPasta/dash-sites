@@ -73,15 +73,19 @@ export async function publishSite(
   const all = [...bundle.chunks.keys()];
   const present = await storedHashes(writer, record.id, all);
   const missing = all.filter((hash) => !present.has(hash));
-  let done = 0;
-  for (const hash of missing) {
-    await writer.createChunk(record.id, hash, bundle.chunks.get(hash) as Uint8Array);
-    done += 1;
-    onProgress({ step: 'upload', done, total: missing.length, hash });
-  }
+  let uploaded = 0;
+  const upload = async (hashes: string[], total: number) => {
+    for (const hash of hashes) {
+      await writer.createChunk(record.id, hash, bundle.chunks.get(hash) as Uint8Array);
+      uploaded += 1;
+      onProgress({ step: 'upload', done: uploaded, total, hash });
+    }
+  };
+  await upload(missing, missing.length);
   // A chunk reused from an earlier release may have been deleted by a gc in another tab during the upload.
   const still = await storedHashes(writer, record.id, [...present]);
-  for (const hash of present) if (!still.has(hash)) await writer.createChunk(record.id, hash, bundle.chunks.get(hash) as Uint8Array);
+  const lost = [...present].filter((hash) => !still.has(hash));
+  await upload(lost, missing.length + lost.length);
   let replaced: SiteRecord | undefined;
   let replacedError: string | undefined;
   if (options.prune) {
@@ -109,7 +113,7 @@ export async function publishSite(
     }
   }
   onProgress({ step: 'done' });
-  return { site, uploaded: missing.length, reused: present.size, creditsSpent: before - (await writer.balance()), ...(pruned ? { pruned } : {}) };
+  return { site, uploaded, reused: present.size - lost.length, creditsSpent: before - (await writer.balance()), ...(pruned ? { pruned } : {}) };
 }
 
 /** Points a name at content stored elsewhere, e.g. `ipfs://<cid>`. */

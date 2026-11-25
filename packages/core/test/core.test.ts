@@ -721,7 +721,9 @@ describe('resolve and publish', () => {
         return alice.createChunk(siteId, hash, data);
       },
     };
-    await publishSite(racing, 'alice', v3);
+    const result = await publishSite(racing, 'alice', v3);
+    expect(result.uploaded + result.reused).toBe(v3.chunks.size);
+    expect(result.reused).toBe(0);
     for (const hash of v3.chunks.keys()) expect(await holds(alice, hash)).toBe(true);
   });
 
