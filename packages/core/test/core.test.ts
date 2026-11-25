@@ -1,3 +1,4 @@
+import { brotliCompressSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildSite,
@@ -379,6 +380,28 @@ describe('resolve and publish', () => {
     for (const h of shared.chunks.keys()) expect((await bob.getChunks('bob-id', [h])).has(h)).toBe(true);
     expect((await collectGarbage(bob, { now, recheckMs: 0 })).deleted).toBe(shared.chunks.size);
     for (const h of shared.chunks.keys()) expect((await alice.getChunks('alice-id', [h])).has(h)).toBe(true);
+  });
+
+  it('keeps every chunk of a version 2 site (brotli and npm files)', async () => {
+    const platform = setup();
+    let now = Date.now() + 1_000_000;
+    platform.now = () => now;
+    platform.registerName('alice2', 'alice-id');
+    const alice = platform.as('alice-id');
+    const wasm = new Uint8Array(40000).map((_, i) => (i * 7) % 251);
+    const v2 = buildSite([...SITE, { path: '/page.html', bytes: text('<p>v2</p>'.repeat(200)) }, { path: '/sdk.wasm', bytes: wasm }], {
+      brotli: (data) => new Uint8Array(brotliCompressSync(data)),
+      external: { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' } },
+    });
+    expect(v2.manifest.v).toBe(2);
+    await publishSite(alice, 'alice2', v2);
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('old') }]));
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('new') }]));
+    now += DEFAULT_PRUNE_GRACE_MS + 1000;
+    const plan = await planPrune(alice, { now });
+    for (const hash of v2.chunks.keys()) expect(plan.remove.some((chunk) => chunk.hash === hash)).toBe(false);
+    expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBeGreaterThan(0);
+    for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
   });
 
   const aged = () => {
