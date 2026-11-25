@@ -35,8 +35,7 @@ import { readSiteDirectory } from './files.js';
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
-  dash-sites publish <dir> --name <name> [--spa] [--prune] [--dry-run]
-  dash-sites publish <dir> --name <name> [--spa] [--brotli] [--external <file>] [--dry-run]
+  dash-sites publish <dir> --name <name> [--spa] [--prune] [--brotli] [--external <file>] [--dry-run]
                                                                publish a folder as <name>.dash
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
   dash-sites unpublish --name <name>                           remove the site record

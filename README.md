@@ -108,10 +108,10 @@ alias dash-sites="node $PWD/packages/cli/bundle/dash-sites.mjs"
 dash-sites preview ./my-site                      # http://preview.localhost:8080/
 dash-sites publish ./my-site --name alice --identity-file identity.json
 dash-sites resolve alice
-dash-sites publish ./my-site --name alice --identity-file identity.json --prune
-dash-sites gc --identity-file identity.json --dry-run   # what would be deleted, and the refund
 dash-sites publish ./my-site --name alice --identity-file identity.json \
   --brotli --external external.json             # version 2: see below
+dash-sites publish ./my-site --name alice --identity-file identity.json --prune
+dash-sites gc --identity-file identity.json --dry-run   # what would be deleted, and the refund
 dash-sites gc --identity-file identity.json       # reclaim storage of old versions
 ```
 

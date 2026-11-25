@@ -394,14 +394,37 @@ describe('resolve and publish', () => {
       external: { '/sdk.wasm': { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' } },
     });
     expect(v2.manifest.v).toBe(2);
+    expect(Object.values(v2.manifest.files).some((file) => file.enc === 'br')).toBe(true);
     await publishSite(alice, 'alice2', v2);
-    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('old') }]));
-    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('new') }]));
+    const old = buildSite([{ path: '/index.html', bytes: text('old') }]);
+    const current = buildSite([{ path: '/index.html', bytes: text('new') }]);
+    await publishSite(alice, 'alice', old);
+    await publishSite(alice, 'alice', current);
     now += DEFAULT_PRUNE_GRACE_MS + 1000;
     const plan = await planPrune(alice, { now });
     for (const hash of v2.chunks.keys()) expect(plan.remove.some((chunk) => chunk.hash === hash)).toBe(false);
-    expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBeGreaterThan(0);
+    const gone = [...old.chunks.keys()].filter((hash) => !v2.chunks.has(hash) && !current.chunks.has(hash));
+    expect(plan.remove.map((chunk) => chunk.hash).sort()).toEqual(gone.sort());
+    expect((await collectGarbage(alice, { now, recheckMs: 0 })).deleted).toBe(gone.length);
     for (const hash of v2.chunks.keys()) expect((await alice.getChunks('alice-id', [hash])).has(hash)).toBe(true);
+  });
+
+  it('deletes nothing while a site manifest fails validation', async () => {
+    const platform = setup();
+    let now = Date.now() + 1_000_000;
+    platform.now = () => now;
+    platform.registerName('alice2', 'alice-id');
+    const alice = platform.as('alice-id');
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('old') }]));
+    await publishSite(alice, 'alice', buildSite([{ path: '/index.html', bytes: text('new') }]));
+    const future = { ...buildSite(SITE).manifest, v: 3 };
+    const piece = gzip(utf8.encode(JSON.stringify(future)));
+    const hash = sha256Hex(piece);
+    await alice.createChunk(hash, piece);
+    await alice.putSite((await alice.getDomain('a11ce2')).value!, formatContentUri({ scheme: 'dash-manifest', chunks: [hash] }));
+    now += DEFAULT_PRUNE_GRACE_MS + 1000;
+    await expect(planPrune(alice, { now })).rejects.toThrow(/cannot be read/);
+    await expect(collectGarbage(alice, { now, recheckMs: 0 })).rejects.toThrow(/cannot be read/);
   });
 
   const aged = () => {
