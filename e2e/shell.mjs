@@ -131,7 +131,10 @@ try {
   const loaded = await page
     .waitForFunction(() => document.title !== 'Loading from Dash Platform' && document.readyState === 'complete', null, { timeout: 120000 })
     .then(() => true, () => false);
-  check(loaded, `the site loads in a private window: ${loaded ? await page.title() : await page.textContent('#step')}`);
+  check(loaded, `the site loads in a private window: ${loaded ? await page.title() : await page.textContent('#error')}`);
+  const home = await browser.newPage();
+  await home.goto(`${scheme}://${gateway}/`, { waitUntil: 'load' });
+  if (await home.locator('#landing').isVisible()) check(!(await home.locator('#shell').isVisible()), `${gateway} itself shows its landing page and no loader`);
 } finally {
   await browser.close();
 }
