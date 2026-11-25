@@ -137,7 +137,10 @@ publish and a `gc`.
 also use `--identity <id>` with `DASH_SITES_KEY=<WIF>`. Storage costs about
 0.3 DASH per megabyte, paid once. Deleting a chunk refunds its storage fee less
 what Platform has already paid out to masternodes: 0.125% per mainnet epoch (9.125 days)
-in the first year, so about 99.9% after a day and 94.9% after a year.
+in the first year, so about 99.9% after a day and 94.9% after a year. The delete itself
+pays a processing fee that is not refunded: the chunk tree stores documents in its nodes,
+so a delete rewrites the nodes above it, about 58M credits a chunk in a tree of a thousand
+chunks. What comes back net is about three quarters of what the chunks cost.
 Get testnet funds at https://faucet.thepasta.org. Run `dash-sites` with no
 arguments for every command.
 

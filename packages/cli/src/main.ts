@@ -123,8 +123,9 @@ function describePlan(plan: PrunePlan): Record<string, unknown> {
     chunks: plan.remove.length,
     bytes: plan.bytes,
     kept: plan.kept,
-    refundSameEpoch: formatDash(refundCredits(plan.bytes, 0)),
-    refundAfterOneYear: formatDash(refundCredits(plan.bytes, 40)),
+    storageRefundSameEpoch: formatDash(refundCredits(plan.bytes, 0)),
+    storageRefundAfterOneYear: formatDash(refundCredits(plan.bytes, 40)),
+    note: 'storage refund before the processing fee each delete pays, which is never refunded (about 15-20% of the refund in a chunk tree of a thousand documents)',
     remove: plan.remove.map((chunk) => `${chunk.hash} ${chunk.bytes}`),
   };
 }
