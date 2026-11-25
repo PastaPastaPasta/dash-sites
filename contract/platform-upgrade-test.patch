@@ -10,7 +10,7 @@ index 9cdace46b4..0c3df4857b 100644
      use dpp::data_contract::DataContract;
      use dpp::data_contracts::SystemDataContract;
      use dpp::document::{Document, DocumentV0};
-@@ -2298,4 +2299,340 @@ mod dpns_v3_tests {
+@@ -2298,4 +2299,346 @@ mod dpns_v3_tests {
              StateTransitionExecutionResult::SuccessfulExecution { .. }
          );
      }
@@ -329,6 +329,12 @@ index 9cdace46b4..0c3df4857b 100644
 +            .sites_delete(sites, Who::Alice, &mut alice, "site", &site, 29)
 +            .await;
 +        step("PV15 delete a site record", &result, false);
++        let mut moved = site.clone();
++        moved.set("normalizedLabel", text("elsewhere7"));
++        let result = fixture
++            .sites_replace(sites, Who::Alice, &mut alice, "site", &mut moved, 30)
++            .await;
++        step("PV15 move a record to another name", &result, false);
 +
 +        let wrong: Vec<_> = log.iter().filter(|(_, ok)| !ok).map(|(what, _)| what).collect();
 +        assert!(wrong.is_empty(), "unexpected outcomes: {wrong:?}");
