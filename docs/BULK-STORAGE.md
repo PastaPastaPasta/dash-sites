@@ -2,7 +2,7 @@
 
 Status: built in this PR for the static stack (`dash.site`, the builder, the
 CLI). Date: 2026-11-25. The format is specified in
-[DESIGN.md](DESIGN.md#files-kept-outside-platform-manifest-version-2); this
+[DESIGN.md](DESIGN.md#manifest-version-2-files-kept-at-places); this
 page records why it has that shape, what was measured, and what is left.
 
 Storing a file on Dash Platform costs about 0.3 DASH per MB. That suits pages
@@ -18,7 +18,7 @@ get exactly what the owner published.
 | Which kinds of place? | Two: an `https://` address and an `ipfs://` CID. Providers are a matter for uploading only, so the shell never learns a provider's name |
 | IPFS through a gateway? | No. Helia fetches blocks from the providers that hold them, with recursive gateways turned off |
 | Where does the IPFS client come from? | From npm, by hash, the same way a site takes the Dash SDK. It is not a file of whoever hosts the shell |
-| The earlier `feat/external-assets` branch? | Folded in. Its npm-only entry became two HTTPS places, so the format is settled once |
+| The earlier `feat/external-assets` branch? | It merged first, as `ext`: a file of an npm package, fetched from two fixed mirrors. That stays the way to take a file from npm. `src` here is for every other file, so each kind of file has one way |
 | Later changes? | The format is built to take them without breaking older shells (below) |
 
 ## The manifest entry
@@ -114,7 +114,7 @@ Three things to know:
 | **Cloudflare R2**, and any S3-style bucket | HTTPS | 10 GB free, then $0.015 per GB a month; no charge for downloads | The bucket needs a public custom domain (`r2.dev` addresses are rate limited) and a CORS rule. The owner can delete the file; the hash stops it being replaced |
 | **IPFS pinning**: Pinata, Filebase, Lighthouse, a node of your own | IPFS | Pinata 1 GB free, Lighthouse 5 GB free; monthly plans after that | Lasts while the pin is paid for |
 | **Arweave** | HTTPS, through its gateways | Paid once, kept for good; small files are free through Turbo; the price floats | The only one that matches Platform's pay-once model. `arweave.net` allows reading from other sites |
-| **npm**, for scripts published there | HTTPS | Free | List both mirrors: jsDelivr and unpkg |
+| **npm**, for scripts published there | `ext`, not a place | Free | `publish --external`: the reader knows both mirrors, so no place is listed |
 
 Also covered without more work, because they serve HTTPS or IPFS: Backblaze,
 Storj, a plain web server, Storacha and Blossom servers. Not supported:

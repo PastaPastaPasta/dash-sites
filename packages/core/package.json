@@ -30,6 +30,7 @@
     "@noble/hashes": "^2.4.0",
     "@noble/secp256k1": "^3.2.0",
     "@scure/base": "^1.2.1",
+    "brotli": "2.1.0",
     "fflate": "^0.8.2"
   },
   "sideEffects": false

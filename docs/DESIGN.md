@@ -94,6 +94,14 @@ The DPNS `domain` document (contract `GWRSAVFM…31Ec`):
   vote, and the domain document exists only once the contest is won.
 - A label is 3 to 63 characters of `[a-zA-Z0-9-]`, not starting or ending with
   `-`: always a valid DNS label.
+- Every name is `<label>.dash`; DPNS has no `blog.alice.dash`.
+  - `parentDomainName` must be one label with no dot, and only the contract
+    owner can create a top-level domain. Genesis creates `dash`, the only one
+    today.
+  - Platform rejects a second-level name that allows subdomains (the
+    `create_domain_data_trigger` in `rs-drive-abci`).
+  - Dash Sites accepts only `<label>` or `<label>.dash` (`parseName` in
+    `packages/core/src/names.ts`).
 
 ## 3. Storage and addressing
 
@@ -140,10 +148,8 @@ chunk     immutable, deletable, not transferable
 ```
 
 A site is keyed by the domain document's id, not by the label. A label key
-could not be changed later (indexes are fixed once documents exist), is capped
-at 63 characters, and could not tell `blog.alice.dash` from `blog.dash`. The
-document id works for a name at any depth, so subdomain names can be added
-without a new contract.
+could not be changed later (indexes are fixed once documents exist) and is
+capped at 63 characters.
 
 The key is not globally unique on purpose. A global unique index would let
 anyone squat Alice's slot in this contract before she publishes. With
@@ -232,11 +238,58 @@ Limits a reader enforces: manifest ≤ 30 chunks (441 KB compressed) and ≤ 4 M
 decoded, ≤ 5,000 files, site ≤ 50 MB decoded, path ≤ 512 bytes. Decompression
 stops at the declared size. The gateway sets lower limits (25 MB per site).
 
-### Files kept outside Platform (manifest version 2)
+### Manifest version 2: external npm assets and brotli
 
-Platform storage costs about 0.3 DASH per MB, which suits pages and not
-photos, media or large scripts. A file's entry may therefore say where the
-file is instead of holding it:
+Storing a byte on Platform costs about 0.27 DASH per MB, once. A site that ships
+an unmodified file of a published npm package (a 26 MB SDK wasm, say) can name
+it instead of storing it:
+
+```json
+"/_next/static/wasm/wasm_sdk_bg.e9693c35d34d68e7.wasm": {
+  "type": "application/wasm", "size": 26513399, "sha256": "<hex>", "parts": [],
+  "ext": { "npm": "@dashevo/wasm-sdk", "version": "5.0.0-rc.8",
+           "path": "dist/raw/wasm_sdk_bg.wasm",
+           "integrity": "sha384-w5Q3Aw54F8HwCjSPF/bX+BQwWEP0e6bea4S63gs3+d/R7kbQQI9OpZPvHj4wCbVG" } }
+```
+
+and a file may be stored as brotli (`"enc": "br"`), which is a third smaller
+than gzip for JavaScript and HTML.
+
+**Trust model.** The SHA-384 (and the SHA-256 beside it) sit in the manifest,
+which is fixed by the site record, which a Platform proof fixes: that hash is
+the root of trust, exactly as for stored chunks. The npm CDNs are transport
+only. A reader fetches `https://cdn.jsdelivr.net/npm/<pkg>@<version>/<path>`,
+then `https://unpkg.com/<pkg>@<version>/<path>`, refuses redirects, reads at
+most `size` bytes, and serves the file only if both hashes match; otherwise it
+tries the next CDN, and with none left it serves an error page instead of the
+file, so nothing from it runs. A CDN can withhold the file (the site then
+cannot load that file) but cannot change it. Versions are exact (no ranges or
+tags), so what a name resolves to never changes without a new site record. The
+shell keeps a verified copy in Cache Storage and checks it again on every read,
+since site code can write there. The CDNs are the only hosts contacted for an
+external asset; the worker's own requests to Platform nodes go to their IP
+addresses, so a header CSP on the worker could not be narrower than `https:`,
+and the allowlist is enforced in code instead.
+
+**Privacy.** Opening a site with an external asset tells jsDelivr and unpkg
+the visitor's IP address and which package file they fetched, and the request
+carries the site's origin (`Origin` header), as for any cross-origin fetch. A
+CDN that does not answer within 15 seconds, or stalls for 30 seconds while
+sending, is skipped for the next.
+
+**Compatibility.** A manifest that uses neither feature stays version 1 and
+byte-identical to before. One that uses either is version 2. Readers that only
+know version 1 (older shells, gateways and extensions) reject version 2 whole,
+showing their "cannot be shown" page, and the older `gc` stops with an error
+instead of deleting chunks it cannot account for. `dash-sites publish
+--external <map>` checks each named file against the local copy and against the
+CDNs before publishing, and `--brotli` is opt-in.
+
+### Manifest version 2: files kept at places
+
+A file that is not on npm (a photo, a video, a script of the site's own) can
+also stay off Platform. Its entry says where the file is instead of holding
+it:
 
 ```json
 "/img/hero.webp": { "type": "image/webp", "size": 184211, "sha256": "<hex>",
@@ -246,8 +299,9 @@ file is instead of holding it:
 
 - `src` lists places as URIs, tried in order. Two kinds are fetched today: an
   `https://` address and an `ipfs://` CID (with an optional path). The entry
-  has no parts and no `enc`. A manifest with any such file has `"v": 2`; one
-  without stays version 1, byte for byte as before.
+  has no parts and no `enc`. A manifest with any such file has `"v": 2`. A
+  file of an npm package uses `ext` above instead, so there is one way to
+  keep each kind of file.
 - The manifest is still proved, so `size` and `sha256` are the owner's. The
   shell serves the file only when a place returns exactly those bytes. A place
   is relied on to answer, never trusted for content, and the site's address
@@ -278,16 +332,18 @@ know. It refuses only the files it cannot read, each with a 502 of its own:
 
 - a file whose `enc` it does not know;
 - a file whose `src` is in a form it does not know: not a list of 1 to 8
-  different URIs, given together with parts or an `enc`, or for a file that is
-  empty or larger than 64 MiB;
+  different URIs, given together with parts, an `enc` or an `ext`, or for a
+  file that is empty or larger than 64 MiB;
 - a file whose parts do not add up to its size, which is how a file stored
   under a key added later looks to it.
 
 So a later shell can add a kind of place, a hash per piece for streaming,
 another encoding, or another way to store a file, and an older shell keeps
 serving everything it still understands. A change that older readers must not
-ignore raises `v`. Version 1 stays strict. A writer only emits what its own
-version reads, and refuses to write an entry it would refuse to read.
+ignore raises `v`. Version 1 stays strict, and so does `ext`: an entry that
+names an npm file in a form this version does not accept makes the whole
+manifest invalid, as before. A writer only emits what its own version reads,
+and refuses to write an entry it would refuse to read.
 
 ## 4. Resolution
 
@@ -849,7 +905,7 @@ the host, a build setting of the builder, and a user setting of the extension.
 
 ## 9. Out of scope for v1
 
-Subdomain names (`blog.alice.dash`), custom DNS domains pointing at a name
+Custom DNS domains pointing at a name
 (DNSLink in reverse), serving `ipfs://` content from the gateway, Arweave,
 private sites, a site directory, a site's own service worker, form posts,
 serving sites from inside the extension, starting contested-name votes from

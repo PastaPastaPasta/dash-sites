@@ -55,6 +55,7 @@ export class MemoryPlatform {
         return out;
       },
       listSites: async () => [...this.sites.values()].filter((site) => site.ownerId === identityId),
+      listSitesProved: async () => proved([...this.sites.values()].filter((site) => site.ownerId === identityId)),
       listChunks: async (): Promise<StoredChunk[]> =>
         [...this.chunks.values()].filter((chunk) => chunk.ownerId === identityId).map(({ id, hash }) => ({ id, hash })),
       createChunk: async (hash, data) => {

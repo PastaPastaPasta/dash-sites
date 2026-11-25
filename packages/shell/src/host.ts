@@ -1,6 +1,10 @@
 import {
   ContentError,
   ElsewhereError,
+  ExternalAssetError,
+  cdnSource,
+  integrityOfAsync,
+  type ExternalSource,
   HOST_API,
   ManifestError,
   DENIED_TITLE,
@@ -88,6 +92,8 @@ export interface HostOptions {
   /** Hosted gateways only: whether the operator has stopped serving this name, owner or content. */
   denied?: (resolution: Resolution) => Promise<boolean>;
   log?: (entry: Record<string, unknown>) => void;
+  /** Where external npm assets are fetched from; defaults to the npm CDNs. Bytes are checked either way. */
+  external?: ExternalSource;
 }
 
 type Ok = Extract<Resolution, { status: 'ok' }>;
@@ -244,6 +250,18 @@ export class SiteHost {
     }
     return download;
   };
+  /** External npm assets, kept in the origin's storage once verified and checked again whenever they are read back. */
+  private external(): ExternalSource {
+    const fetchExternal = this.options.external ?? cdnSource();
+    return async (asset, size) => {
+      const key = `ext/${asset.integrity}`;
+      const kept = await this.options.store.getChunk(key).catch(() => undefined);
+      if (kept && kept.length === size && (await integrityOfAsync(kept)) === asset.integrity) return kept;
+      const bytes = await fetchExternal(asset, size);
+      void this.options.store.putChunk(key, bytes).catch(() => undefined);
+      return bytes;
+    };
+  }
 
   private manifestFor(resolution: Ok): Promise<Manifest> {
     const ref = resolution.content;
@@ -330,8 +348,27 @@ export class SiteHost {
     if (decision.kind === 'not-found') return this.page(404, '404', 'Page not found', `<code>${dashName}</code> has no page at this address.`);
     let file: Awaited<ReturnType<typeof readFile>>;
     try {
-      file = await readFile(manifest, decision.path, this.chunks(resolution.ownerId), this.elsewhere);
+      file = await readFile(manifest, decision.path, this.chunks(resolution.ownerId), { external: this.external(), elsewhere: this.elsewhere });
     } catch (error) {
+      if (error instanceof ExternalAssetError) {
+        this.options.log?.({ event: 'external-refused', asset: `${error.asset.npm}@${error.asset.version}/${error.asset.path}`, attempts: error.attempts });
+        const name = escapeHtml(`${error.asset.npm}@${error.asset.version}`);
+        const [title, detail] = error.mismatch
+          ? [
+              'Part of this site could not be checked',
+              `This site uses a file from the npm package <code>${name}</code>. Your browser fetched it from public npm mirrors, and no copy matched the fingerprint its owner published on Dash Platform, so it was not used. Nothing from it ran. Reload in a little while; if it keeps happening, tell the site's owner.`,
+            ]
+          : error.missing
+            ? [
+                'Part of this site is no longer available',
+                `This site uses a file from the npm package <code>${name}</code>, and the public npm mirrors (cdn.jsdelivr.net, unpkg.com) no longer have it. Nothing from it ran. Tell the site's owner: the site needs to be published again.`,
+              ]
+            : [
+                'Part of this site could not be downloaded',
+                `This site uses a file from the npm package <code>${name}</code>, which your browser could not download from the public npm mirrors (cdn.jsdelivr.net, unpkg.com). Nothing from it ran. Check your connection, or whether something blocks those addresses, and reload.`,
+              ];
+        return this.page(502, 'Not loaded', title, detail);
+      }
       if (!(error instanceof ContentError)) throw error;
       if (error instanceof ElsewhereError) {
         this.options.log?.({ event: 'elsewhere-failed', path: error.path, attempts: error.attempts });

@@ -50,7 +50,7 @@ const serving = (answers: Record<string, Uint8Array | number | Error>, seen: Arr
   }) as typeof fetch;
 const using = (answers: Record<string, Uint8Array | number | Error>, seen?: Array<[string, RequestInit]>): PlaceFetchers => ({ https: httpsFetcher({ fetch: serving(answers, seen) }) });
 const reading = (manifest: Manifest, fetchers: PlaceFetchers) =>
-  readFile(manifest, '/b.bin', noChunks, (path, file) => readElsewhere(path, file, fetchers));
+  readFile(manifest, '/b.bin', noChunks, { elsewhere: (path, file) => readElsewhere(path, file, fetchers) });
 const canonical = (value: unknown): Uint8Array => {
   const sort = (v: unknown): unknown =>
     Array.isArray(v) ? v.map(sort) : v !== null && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort((v as Record<string, unknown>)[k])])) : v;
@@ -147,10 +147,37 @@ describe('forward compatibility', () => {
   });
 
   it('refuses only the file that is stored in a way added later', async () => {
-    const manifest = decodeManifest(canonical({ ...later, files: { ...later.files, '/b.bin': { ...later.files['/b.bin'], src: undefined, ext: { npm: 'pkg', version: '1.0.0', path: 'b.bin' } } } }));
+    const manifest = decodeManifest(canonical({ ...later, files: { ...later.files, '/b.bin': { ...later.files['/b.bin'], src: undefined, car: { root: 'bafy', blocks: 3 } } } }));
     expect(manifest.files['/b.bin']?.unread).toMatch(/a form this version cannot read/);
     await expect(reading(manifest, using({ [HTTPS]: big }))).rejects.toThrow(/a form this version cannot read/);
     expect((await readFile(manifest, '/a.js', chunksOf(bundle))).bytes).toEqual(FILES[1]?.bytes);
+  });
+
+  it('reads a file of an npm package and a file kept at places from one manifest', async () => {
+    const wasm = new Uint8Array(30000).map((_, i) => (i * 13) % 241);
+    const npm = { npm: '@dashevo/wasm-sdk', version: '5.0.0-rc.8', path: 'dist/raw/wasm_sdk_bg.wasm' };
+    const both = buildSite([...elsewhere([HTTPS]), { path: '/sdk.wasm', bytes: wasm }], { external: { '/sdk.wasm': npm } });
+    expect(both.manifest.v).toBe(2);
+    const manifest = decodeManifest(encodeManifest(both.manifest));
+    expect(manifest).toEqual(both.manifest);
+    expect(manifest.files['/sdk.wasm']).toMatchObject({ parts: [], ext: npm });
+    expect(manifest.files['/b.bin']).toMatchObject({ parts: [], src: [HTTPS] });
+    const outside = { external: async () => wasm, elsewhere: (path: string, file: ManifestFile) => readElsewhere(path, file, using({ [HTTPS]: big })) };
+    expect((await readFile(manifest, '/sdk.wasm', noChunks, outside)).bytes).toEqual(wasm);
+    expect((await readFile(manifest, '/b.bin', noChunks, outside)).bytes).toEqual(big);
+    expect((await readFile(manifest, '/a.js', chunksOf(both), outside)).bytes).toEqual(FILES[1]?.bytes);
+  });
+
+  it('takes a file from npm or from places, never both', async () => {
+    const npm = { npm: 'pkg', version: '1.0.0', path: 'b.bin' };
+    expect(() => buildSite(elsewhere([HTTPS]), { external: { '/b.bin': npm } })).toThrow(/choose one/);
+    const named = buildSite(FILES, { external: { '/b.bin': npm } });
+    const { manifest } = named;
+    const read = validateManifest({ ...manifest, files: { ...manifest.files, '/b.bin': { ...manifest.files['/b.bin'], src: [HTTPS] } } });
+    expect(read.files['/b.bin']?.unread).toMatch(/more than one way/);
+    await expect(readFile(read, '/b.bin', noChunks, { external: async () => big })).rejects.toThrow(ContentError);
+    expect((await readFile(read, '/a.js', chunksOf(named))).bytes).toEqual(FILES[1]?.bytes);
+    expect(() => validateManifest({ ...manifest, files: { ...manifest.files, '/b.bin': { ...manifest.files['/b.bin'], ext: { ...npm, version: 'latest' } } } })).toThrow(/bad ext/);
   });
 
   it('refuses a file only when it knows none of its places', async () => {
@@ -214,7 +241,7 @@ describe('places', () => {
 
   it('checks what it is handed even when the fetching is done by someone else', async () => {
     const { manifest } = buildSite(elsewhere([HTTPS]));
-    await expect(readFile(manifest, '/b.bin', noChunks, async () => text('other'))).rejects.toThrow(/does not match its hash/);
+    await expect(readFile(manifest, '/b.bin', noChunks, { elsewhere: async () => text('other') })).rejects.toThrow(/does not match its hash/);
     await expect(readFile(manifest, '/b.bin', noChunks)).rejects.toThrow(ElsewhereError);
   });
 

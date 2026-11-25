@@ -1,14 +1,22 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
+import { brotliCompressSync, constants as zlib } from 'node:zlib';
+import { decompress as brotliDecompress } from 'brotli/decompress';
 import {
   buildSite,
-  collectGarbage,
+  DEFAULT_PRUNE_GRACE_MS,
+  checkExternalAssets,
+  type BuildOptions,
   estimateCredits,
   formatDash,
   loadManifest,
   networkConfig,
   parseName,
+  planPrune,
+  prune,
+  refundCredits,
+  type PrunePlan,
   publishPointer,
   publishSite,
   readElsewhere,
@@ -20,6 +28,7 @@ import {
   type Network,
   type NetworkConfig,
   type PlatformReader,
+  type SiteBundle,
 } from '@dash-sites/core';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { EvoReader, EvoWriter, registerContract, type Credentials } from '@dash-sites/core/evo';
@@ -29,12 +38,12 @@ import { checkPlaces, cliPlaces, parsePlaceMap, storeElsewhere, type CliPlaces }
 
 const USAGE = `dash-sites: websites on Dash Platform names
 
-  dash-sites publish <dir> --name <name> [--spa] [--dry-run]   publish a folder as <name>.dash
-      [--elsewhere <file>]                                     keep some files outside Platform (see below)
+  dash-sites publish <dir> --name <name> [--spa] [--prune] [--brotli] [--external <file>] [--elsewhere <file>] [--dry-run]
+                                                               publish a folder as <name>.dash
   dash-sites check <name>                                      ask every outside place of a site for its file
   dash-sites point --name <name> --content ipfs://<cid>        point a name at content stored elsewhere
   dash-sites unpublish --name <name>                           remove the site record
-  dash-sites gc                                                delete stored chunks no site uses
+  dash-sites gc [--dry-run]                                    delete stored chunks no site uses
   dash-sites register <label>                                  register <label>.dash for this identity
   dash-sites names                                             list the names this identity owns
   dash-sites resolve <name>                                    show what a name resolves to (JSON)
@@ -48,6 +57,11 @@ Options
   --contract <id>               dash-sites contract id, if not the built-in one
   --identity-file <file>        identity JSON with identityId and identityKeys (as dash-bridge writes)
   --identity <id>               identity id; the key comes from DASH_SITES_KEY (WIF)
+  --prune                       after publishing, delete chunks of releases before the one replaced
+  --grace <hours>               gc and --prune delete nothing until every site record is this old (default 25)
+  --brotli                      store a file as brotli when that is smaller than gzip (needs a current shell)
+  --external <file>             JSON {"/site/path": {"npm": "pkg", "version": "1.2.3", "path": "dist/file"}}:
+                                files not stored, fetched by readers from npm CDNs and checked by SHA-384
 
 Environment
   DASH_SITES_KEY                WIF of an AUTHENTICATION key (HIGH or CRITICAL) of the identity
@@ -86,6 +100,10 @@ const { values, positionals } = parseArgs({
     output: { type: 'string', short: 'o' },
     elsewhere: { type: 'string' },
     spa: { type: 'boolean', default: false },
+    prune: { type: 'boolean', default: false },
+    grace: { type: 'string', default: String(DEFAULT_PRUNE_GRACE_MS / 3_600_000) },
+    brotli: { type: 'boolean', default: false },
+    external: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -117,6 +135,56 @@ function requireName(): string {
 let places: CliPlaces | undefined;
 /** The origin a site is served on decides nothing here; it only makes storage hosts answer as they would a browser. */
 const outside = (label = 'site'): CliPlaces => (places ??= cliPlaces(`https://${label.toLowerCase()}.dash.site`));
+function graceMs(): number {
+  const text = String(values.grace ?? '').trim();
+  const hours = Number(text);
+  if (text === '' || !Number.isFinite(hours) || hours < 0) fail('--grace must be a number of hours');
+  return hours * 3_600_000;
+}
+
+/** What a prune plan deletes and roughly returns: a delete in the epoch of the store, and one a mainnet year later. */
+function describePlan(plan: PrunePlan): Record<string, unknown> {
+  return {
+    ...(plan.deferredUntil !== undefined ? { deferredUntil: new Date(plan.deferredUntil).toISOString() } : {}),
+    chunks: plan.remove.length,
+    bytes: plan.bytes,
+    kept: plan.kept,
+    storageRefundSameEpoch: formatDash(refundCredits(plan.bytes, 0)),
+    storageRefundAfterOneYear: formatDash(refundCredits(plan.bytes, 40)),
+    note: 'storage refund before the processing fee each delete pays, which is never refunded (about 15-20% of the refund in a chunk tree of a thousand documents)',
+    remove: plan.remove.map((chunk) => `${chunk.hash} ${chunk.bytes}`),
+  };
+}
+
+/**
+ * Brotli at the highest quality, with a window no larger than the file needs (readers allocate the
+ * window to decode). A file that does not decode back exactly with the readers' own decoder is
+ * returned unchanged, so it is stored as gzip instead.
+ */
+function brotli(data: Uint8Array): Uint8Array {
+  const window = Math.min(24, Math.max(10, Math.ceil(Math.log2(Math.max(data.length, 1)))));
+  const compressed = new Uint8Array(brotliCompressSync(data, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_LGWIN]: window, [zlib.BROTLI_PARAM_SIZE_HINT]: data.length } }));
+  try {
+    const decoded = brotliDecompress(compressed, data.length);
+    if (decoded.length === data.length && decoded.every((byte, i) => byte === data[i])) return compressed;
+  } catch {
+    // stored as gzip below
+  }
+  return data;
+}
+
+function buildOptions(): BuildOptions {
+  const external = values.external ? (JSON.parse(readFileSync(values.external, 'utf8')) as BuildOptions['external']) : undefined;
+  return { spa: values.spa, ...(values.brotli ? { brotli } : {}), ...(external ? { external } : {}) };
+}
+
+/** Refuses the site unless every npm CDN serves each external file with its integrity. */
+async function checkExternal(bundle: SiteBundle): Promise<void> {
+  const results = await checkExternalAssets(bundle.manifest.files);
+  for (const r of results) console.error(`${r.result.padEnd(11)} ${r.path} <- ${r.url}${r.detail ? ` (${r.detail})` : ''}`);
+  if (results.some((r) => r.result === 'mismatch')) fail('an external file is not byte-identical to the npm package file on every CDN; store it instead');
+  if (results.some((r) => r.result === 'unreachable')) fail('an npm CDN could not be reached; try again');
+}
 
 const print = (value: unknown): void => console.log(JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
 
@@ -152,7 +220,8 @@ const commands: Record<string, () => Promise<void>> = {
       const map = parsePlaceMap(JSON.parse(readFileSync(values.elsewhere, 'utf8')));
       files = await storeElsewhere(files, map, outside(parseName(name)?.label).fetchers, (line) => console.error(line));
     }
-    const bundle = buildSite(files, { spa: values.spa });
+    const bundle = buildSite(files, buildOptions());
+    await checkExternal(bundle);
     const { elsewhere } = bundle.stats;
     console.error(`${bundle.stats.files - elsewhere.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
     if (elsewhere.files > 0) console.error(`${elsewhere.files} files, ${elsewhere.bytes} bytes kept outside Platform`);
@@ -160,10 +229,34 @@ const commands: Record<string, () => Promise<void>> = {
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
     const writer = await EvoWriter.connectAs(network(), credentials());
-    const result = await publishSite(writer, name, bundle, (progress) => {
-      if (progress.step === 'upload') console.error(`uploaded chunk ${progress.done}/${progress.total}`);
+    if (values.prune) console.error('after the record is written, --prune checks the site records again from a newer block before deleting (a few minutes)');
+    const result = await publishSite(
+      writer,
+      name,
+      bundle,
+      (progress) => {
+        if (progress.step === 'upload') console.error(`uploaded chunk ${progress.done}/${progress.total}`);
+      },
+      values.prune ? { prune: { graceMs: graceMs() } } : {},
+    );
+    print({
+      name: `${parseName(name)?.label}.dash`,
+      content: result.site.content,
+      revision: result.site.revision,
+      uploaded: result.uploaded,
+      reused: result.reused,
+      spent: formatDash(result.creditsSpent),
+      ...(result.pruned
+        ? {
+            pruned: {
+              deleted: result.pruned.deleted,
+              failed: result.pruned.failed,
+              skipped: result.pruned.skipped,
+              ...(result.pruned.deleted > 0 ? describePlan(result.pruned) : result.pruned.deferredUntil !== undefined ? { deferredUntil: new Date(result.pruned.deferredUntil).toISOString() } : {}),
+            },
+          }
+        : {}),
     });
-    print({ name: `${parseName(name)?.label}.dash`, content: result.site.content, revision: result.site.revision, uploaded: result.uploaded, reused: result.reused, spent: formatDash(result.creditsSpent) });
   },
 
   async point() {
@@ -182,9 +275,12 @@ const commands: Record<string, () => Promise<void>> = {
 
   async gc() {
     const writer = await EvoWriter.connectAs(network(), credentials());
+    const plan = await planPrune(writer, { graceMs: graceMs() });
+    if (values['dry-run']) return print({ dryRun: true, ...describePlan(plan) });
     const before = await writer.balance();
-    const deleted = await collectGarbage(writer, (hash) => console.error(`deleted chunk ${hash}`));
-    print({ deleted, refunded: formatDash((await writer.balance()) - before) });
+    console.error('checking the site records again from a newer block before deleting (a few minutes)');
+    const result = await prune(writer, plan, (hash) => console.error(`deleted chunk ${hash}`));
+    print({ deleted: result.deleted, failed: result.failed, skipped: result.skipped, refunded: formatDash((await writer.balance()) - before) });
   },
 
   async register() {
@@ -214,7 +310,7 @@ const commands: Record<string, () => Promise<void>> = {
     const decision = decide(manifest, positionals[2] ?? '/');
     if (decision.kind !== 'file') fail(`no file at ${positionals[2] ?? '/'}`);
     const { fetchers } = outside(resolution.canonicalLabel);
-    const { bytes } = await readFile(manifest, decision.path, source, (path, file) => readElsewhere(path, file, fetchers));
+    const { bytes } = await readFile(manifest, decision.path, source, { elsewhere: (path, file) => readElsewhere(path, file, fetchers) });
     if (values.output) writeFileSync(values.output, bytes);
     else await new Promise<void>((resolve, reject) => process.stdout.write(bytes, (error) => (error ? reject(error) : resolve())));
   },
@@ -245,7 +341,7 @@ const commands: Record<string, () => Promise<void>> = {
     const platform = new MemoryPlatform();
     platform.registerName(label, 'preview-identity');
     const writer = platform.as('preview-identity');
-    await publishSite(writer, label, buildSite(await readSiteDirectory(dir), { spa: values.spa }));
+    await publishSite(writer, label, buildSite(await readSiteDirectory(dir), buildOptions()));
     await serve(writer, `http://${label.toLowerCase()}.${values.domain}:${values.port}/`);
   },
 

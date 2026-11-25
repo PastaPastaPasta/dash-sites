@@ -60,7 +60,7 @@ export async function readPublishedPage(reader: PlatformReader, input: string, p
     const entry = manifest.files[path];
     if (!entry) continue;
     try {
-      const { bytes } = await readFile(manifest, path, chunks, (at, file) => readElsewhere(at, file, places));
+      const { bytes } = await readFile(manifest, path, chunks, { elsewhere: (at, file) => readElsewhere(at, file, places) });
       assets.push({ path, type: contentTypeFor(path), bytes });
       const known = (entry.src ?? []).flatMap((place) => parsePlace(place)?.uri ?? []);
       unknownPlaces += (entry.src ?? []).length - known.length;

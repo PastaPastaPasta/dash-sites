@@ -1,8 +1,9 @@
 import { concat, sha256Hex } from './bytes.js';
 import { formatContentUri } from './content.js';
+import { integrityOf, isExternalAsset, type ExternalAsset } from './external.js';
 import { gzip } from './gzip.js';
 import { CHUNK_SIZE, DEFAULT_LIMITS, MAX_ELSEWHERE_FILE_BYTES, MAX_MANIFEST_BYTES, MAX_MANIFEST_CHUNKS, MAX_PLACES, type Limits } from './limits.js';
-import { encodeManifest, isValidContentType, isValidPath, type Manifest, type ManifestFile, type Part } from './manifest.js';
+import { encodeManifest, isValidContentType, isValidPath, usesVersion2, type Manifest, type ManifestFile, type Part } from './manifest.js';
 import { contentTypeFor, isCompressible } from './mime.js';
 import { parsePlace } from './places.js';
 
@@ -87,11 +88,24 @@ function split(data: Uint8Array): Uint8Array[] {
   return out;
 }
 
+export interface BuildOptions {
+  spa?: boolean;
+  limits?: Limits;
+  /**
+   * Files not to store, by site path: each is a file of a published npm package, which readers
+   * fetch from an npm CDN and check against the file's SHA-384. The integrity is checked here
+   * against the local file, so a site only names a package file it actually contains.
+   */
+  external?: Record<string, Omit<ExternalAsset, 'integrity'> & { integrity?: string }>;
+  /** A brotli compressor; when given, a compressible file is stored as brotli if that is smaller than gzip. */
+  brotli?: (data: Uint8Array) => Uint8Array;
+}
+
 /**
  * Turns a set of files into the chunks and manifest to publish. The result depends only on the
  * files, so publishing the same site twice stores nothing new.
  */
-export function buildSite(files: SiteFile[], options: { spa?: boolean; limits?: Limits } = {}): SiteBundle {
+export function buildSite(files: SiteFile[], options: BuildOptions = {}): SiteBundle {
   const limits = options.limits ?? DEFAULT_LIMITS;
   if (files.length === 0) throw new PackError('a site needs at least one file');
   if (files.length > limits.maxFiles) throw new PackError(`too many files (${files.length}, limit ${limits.maxFiles})`);
@@ -108,6 +122,7 @@ export function buildSite(files: SiteFile[], options: { spa?: boolean; limits?: 
     const type = file.type ?? contentTypeFor(file.path);
     if (!isValidContentType(type)) throw new PackError(`invalid content type for ${file.path}: ${type}`);
     if (file.src) {
+      if (options.external?.[file.path]) throw new PackError(`${file.path} is given both places and an npm package: choose one`);
       if (file.src.length === 0 || file.src.length > MAX_PLACES) throw new PackError(`${file.path} needs between 1 and ${MAX_PLACES} places`);
       const places = file.src.map((uri) => parsePlace(uri)?.uri ?? fail(`${file.path}: not an https:// address or an ipfs:// CID: ${uri}`));
       if (new Set(places).size !== places.length) throw new PackError(`${file.path} lists a place twice`);
@@ -121,13 +136,27 @@ export function buildSite(files: SiteFile[], options: { spa?: boolean; limits?: 
     bytes += file.bytes.length;
     if (bytes > limits.maxSiteBytes) throw new PackError(`site is larger than ${limits.maxSiteBytes} bytes`);
 
+    const named = options.external?.[file.path];
+    if (named) {
+      const ext = { npm: named.npm, version: named.version, path: named.path, integrity: integrityOf(file.bytes) };
+      if (!isExternalAsset(ext)) throw new PackError(`bad external asset for ${file.path}: give an npm package, an exact version and a path`);
+      if (named.integrity !== undefined && named.integrity !== ext.integrity) throw new PackError(`${file.path} does not match the integrity given for ${named.npm}@${named.version}/${named.path}`);
+      entries[file.path] = { type, size: file.bytes.length, sha256: sha256Hex(file.bytes), parts: [], ext };
+      continue;
+    }
+
     let stored = file.bytes;
-    let enc: 'gzip' | undefined;
+    let enc: 'gzip' | 'br' | undefined;
     if (file.bytes.length > 0 && isCompressible(type)) {
       const compressed = gzip(file.bytes);
       if (compressed.length < file.bytes.length) {
         stored = compressed;
         enc = 'gzip';
+      }
+      const br = options.brotli?.(file.bytes);
+      if (br && br.length < stored.length) {
+        stored = br;
+        enc = 'br';
       }
     }
     storedBytes += stored.length;
@@ -140,7 +169,10 @@ export function buildSite(files: SiteFile[], options: { spa?: boolean; limits?: 
   }
   writer.flush();
 
-  const manifest: Manifest = { v: elsewhere.files > 0 ? 2 : 1, chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
+  for (const path of Object.keys(options.external ?? {})) {
+    if (!entries[path]?.ext) throw new PackError(`external asset ${path} is not a file of the site`);
+  }
+  const manifest: Manifest = { v: usesVersion2(entries) ? 2 : 1, chunks: writer.table, files: entries, ...(options.spa ? { spa: true } : {}) };
   const encoded = encodeManifest(manifest);
   if (encoded.length > MAX_MANIFEST_BYTES) throw new PackError('manifest is too large');
   const manifestPieces = split(gzip(encoded));

@@ -7,7 +7,6 @@ import { costSplit, fileCredits, sizeText, type CostSplit } from './page/cost.js
 import { loadPageDraft, savePageDraft } from './page/draft.js';
 import { imagePaths, isBlankModel, tidyPageModel, type PageModel } from './page/model.js';
 import { renderSite } from './page/render.js';
-import { readPublishedPage, trustedOutside } from './page/reopen.js';
 import { THEMES, type Theme } from './template.js';
 import type { KeyValue } from './wallet.js';
 
@@ -146,6 +145,7 @@ async function reopen(input: string): Promise<void> {
       reader = undefined;
       throw error;
     });
+    const { readPublishedPage, trustedOutside } = await import('./page/reopen.js');
     const opened = await readPublishedPage(connected, `${name.label}.dash`, options.places);
     const trusted = trustedOutside(opened, options.identity());
     for (const file of trusted) rememberOutside(file.sha256, file.places);
