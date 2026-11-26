@@ -8,12 +8,13 @@ export interface LinkProblem {
   page: string;
   /** The link as the page writes it. */
   link: string;
+  /** No file in the site answers the link. */
+  missing: boolean;
   /**
-   * `missing`: no file in the site answers it. `download`: an `<a download>` link, which browsers
-   * such as Chrome fetch without asking the verifier that serves the site, so they save dash.site's
-   * loading page instead of the file.
+   * An `<a download>` link, which browsers such as Chrome fetch without asking the verifier that
+   * serves the site, so they save dash.site's loading page instead of the file.
    */
-  kind: 'missing' | 'download';
+  download: boolean;
 }
 
 interface Tag {
@@ -101,13 +102,12 @@ function parse(link: string, base: URL): URL | undefined {
  */
 export function checkLinks(files: readonly SiteFile[], options: { spa?: boolean } = {}): LinkProblem[] {
   const present = { files: Object.fromEntries(files.map((file) => [file.path, true])) };
-  const problems: LinkProblem[] = [];
-  const seen = new Set<string>();
-  const report = (problem: LinkProblem): void => {
-    const key = `${problem.kind}\0${problem.page}\0${problem.link}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    problems.push(problem);
+  const problems = new Map<string, LinkProblem>();
+  const report = (page: string, link: string, flag: 'missing' | 'download'): void => {
+    const key = `${page}\0${link}`;
+    const problem = problems.get(key) ?? { page, link, missing: false, download: false };
+    problem[flag] = true;
+    problems.set(key, problem);
   };
   for (const file of files) {
     if (!(file.type ?? contentTypeFor(file.path)).startsWith('text/html')) continue;
@@ -129,20 +129,23 @@ export function checkLinks(files: readonly SiteFile[], options: { spa?: boolean 
         const answer = decide(present, url.pathname);
         const missing = answer.kind === 'not-found' || (answer.kind === 'file' && answer.status === 404);
         // In a single-page app index.html answers every path, so only links that name a file are checked.
-        if (missing && (!options.spa || /\.[^/]+$/.test(url.pathname))) report({ page: file.path, link, kind: 'missing' });
+        if (missing && (!options.spa || /\.[^/]+$/.test(url.pathname))) report(file.path, link, 'missing');
         // A download link to `#` or `?…` is a placeholder that a script points at a blob: URL.
         const placeholder = link.startsWith('#') || link.startsWith('?');
         if ((tag.name === 'a' || tag.name === 'area') && tag.attributes.has('download') && tag.attributes.get('href')?.trim() === link && !placeholder) {
-          report({ page: file.path, link, kind: 'download' });
+          report(file.path, link, 'download');
         }
       }
     }
   }
-  return problems;
+  return [...problems.values()];
 }
 
 /** One line telling the site's author what is wrong with a link and what to do. */
 export function describeLinkProblem(problem: LinkProblem): string {
-  if (problem.kind === 'missing') return `${problem.page} links to ${problem.link}, which is not in the site. Add the file, or visitors get a "not found" page instead.`;
-  return `${problem.page} has a download link to ${problem.link}. Browsers such as Chrome save download links without asking the verifier that serves the site, so visitors get dash.site's loading page instead of the file. Remove the download attribute: the link then opens the file, and visitors can save it from there.`;
+  const { page, link } = problem;
+  const why = "Browsers such as Chrome save download links without asking the verifier that serves the site, so visitors get dash.site's loading page instead of the file.";
+  if (problem.missing && problem.download) return `${page} has a download link to ${link}, which is not in the site. Add the file and remove the download attribute. ${why}`;
+  if (problem.missing) return `${page} links to ${link}, which is not in the site. Add the file, or visitors get a "not found" page instead.`;
+  return `${page} has a download link to ${link}. ${why} Remove the download attribute: the link then opens the file, and visitors can save it from there.`;
 }
