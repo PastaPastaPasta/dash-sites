@@ -23,7 +23,7 @@ interface Tag {
 
 const ORIGIN = 'https://site.invalid';
 const RAW_TEXT = new Set(['script', 'style', 'textarea', 'title']);
-const TAG = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^<>"']|"[^"]*"|'[^']*')*)>/g;
+const TAG = /<([a-zA-Z][a-zA-Z0-9-]*)(?![a-zA-Z0-9-])((?:[^<>"']|"[^"]*"|'[^']*')*)>/g;
 const ATTRIBUTE = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
 const ENTITY = /&(?:#x([0-9a-f]+)|#(\d+)|(amp|quot|apos|lt|gt));/gi;
 const NAMED: Record<string, string> = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' };
@@ -120,8 +120,8 @@ export function checkLinks(files: readonly SiteFile[], options: { spa?: boolean 
     const page = new URL(file.path, ORIGIN);
     const found = tags(html);
     // A browser uses the first <base href> for the whole page, links before it included.
-    const baseHref = found.find((tag) => tag.name === 'base' && tag.attributes.get('href')?.trim())?.attributes.get('href')?.trim();
-    const base = (baseHref && parse(baseHref, page)) || page;
+    const baseHref = found.find((tag) => tag.name === 'base' && tag.attributes.has('href'))?.attributes.get('href')?.trim();
+    const base = (baseHref !== undefined && parse(baseHref, page)) || page;
     for (const tag of found) {
       for (const link of references(tag)) {
         const url = parse(link, base);
@@ -130,9 +130,9 @@ export function checkLinks(files: readonly SiteFile[], options: { spa?: boolean 
         const missing = answer.kind === 'not-found' || (answer.kind === 'file' && answer.status === 404);
         // In a single-page app index.html answers every path, so only links that name a file are checked.
         if (missing && (!options.spa || /\.[^/]+$/.test(url.pathname))) report({ page: file.path, link, kind: 'missing' });
-        // A download link back to the page itself is a placeholder that a script points at a blob: URL.
-        const toPage = url.pathname === page.pathname;
-        if ((tag.name === 'a' || tag.name === 'area') && tag.attributes.has('download') && tag.attributes.get('href')?.trim() === link && !toPage) {
+        // A download link to `#` or `?…` is a placeholder that a script points at a blob: URL.
+        const placeholder = link.startsWith('#') || link.startsWith('?');
+        if ((tag.name === 'a' || tag.name === 'area') && tag.attributes.has('download') && tag.attributes.get('href')?.trim() === link && !placeholder) {
           report({ page: file.path, link, kind: 'download' });
         }
       }

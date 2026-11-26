@@ -20,9 +20,14 @@ describe('checkLinks', () => {
     expect(checkLinks(files)).toEqual([{ page: '/index.html', link: 'b.png', kind: 'missing' }]);
   });
 
-  it('leaves download links that a script points at a blob alone', () => {
-    const files = site({ '/index.html': '<a id="save" href="#" download>Save</a><a href="?x=1" download>Save</a>' });
-    expect(checkLinks(files)).toEqual([]);
+  it('leaves download links that a script points at a blob alone, but not a named download of the page', () => {
+    const files = site({ '/index.html': '<a id="save" href="#" download>Save</a><a href="?x=1" download>Save</a><a href="/index.html" download="page.html">Page</a>' });
+    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: '/index.html', kind: 'download' }]);
+  });
+
+  it('uses the first <base> with an href, even an empty one', () => {
+    const files = site({ '/index.html': '<base href=""><base href="https://cdn.example/"><img src="gone.png">' });
+    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: 'gone.png', kind: 'missing' }]);
   });
 
   it('skips raw text correctly after letters that lowercase to more than one character', () => {
@@ -40,7 +45,7 @@ describe('checkLinks', () => {
   });
 
   it('stays fast on text full of unclosed angle brackets', () => {
-    const files = site({ '/index.html': "if a<b it's fine. ".repeat(20000) + '<a href="gone.html">' });
+    const files = site({ '/index.html': "if a<b it's fine. ".repeat(20000) + '<' + 'a'.repeat(65536) + '!<a href="gone.html">' });
     const started = Date.now();
     expect(checkLinks(files).map((p) => p.link)).toEqual(['gone.html']);
     expect(Date.now() - started).toBeLessThan(1000);
