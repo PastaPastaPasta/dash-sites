@@ -8,6 +8,7 @@ export * from './formats.js';
 export * from './gzip.js';
 export * from './ipfs.js';
 export * from './limits.js';
+export * from './links.js';
 export * from './manifest.js';
 export * from './mime.js';
 export * from './names.js';

@@ -1,6 +1,8 @@
 import {
   buildSite,
+  checkLinks,
   collectGarbage,
+  describeLinkProblem,
   DEPLOYMENTS,
   estimateCredits,
   formatDash,
@@ -108,6 +110,13 @@ function refresh(): void {
       $('content-error').textContent = message(error);
     }
   }
+  $('link-warnings').replaceChildren(
+    ...checkLinks(current).map((problem) => {
+      const item = document.createElement('li');
+      item.textContent = describeLinkProblem(problem);
+      return item;
+    }),
+  );
   const cost = $('cost');
   if (!bundle) {
     cost.textContent = mode === 'write' ? 'Build a page in step 3 first.' : 'Add your site in step 3 first.';
