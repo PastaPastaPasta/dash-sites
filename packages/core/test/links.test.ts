@@ -6,10 +6,9 @@ const site = (pages: Record<string, string>): SiteFile[] => Object.entries(pages
 describe('checkLinks', () => {
   it('reports a download link to a file the upload does not have', () => {
     const files = site({ '/index.html': '<a class="button" href="cv.pdf" download="someone-cv.pdf">CV</a>', '/site.css': '' });
-    expect(checkLinks(files)).toEqual([
-      { page: '/index.html', link: 'cv.pdf', kind: 'missing' },
-      { page: '/index.html', link: 'cv.pdf', kind: 'download' },
-    ]);
+    const problems = checkLinks(files);
+    expect(problems).toEqual([{ page: '/index.html', link: 'cv.pdf', missing: true, download: true }]);
+    expect(describeLinkProblem(problems[0]!)).toContain('Add the file and remove the download attribute');
   });
 
   it('reads srcset the way browsers do', () => {
@@ -17,17 +16,17 @@ describe('checkLinks', () => {
       '/index.html': '<img src="a.png" srcset="data:image/gif;base64,R0lGOD,lh 1x, a.png?v=1,2 2x,b.png">',
       '/a.png': '',
     });
-    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: 'b.png', kind: 'missing' }]);
+    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: 'b.png', missing: true, download: false }]);
   });
 
   it('leaves download links that a script points at a blob alone, but not a named download of the page', () => {
     const files = site({ '/index.html': '<a id="save" href="#" download>Save</a><a href="?x=1" download>Save</a><a href="/index.html" download="page.html">Page</a>' });
-    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: '/index.html', kind: 'download' }]);
+    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: '/index.html', missing: false, download: true }]);
   });
 
   it('uses the first <base> with an href, even an empty one', () => {
     const files = site({ '/index.html': '<base href=""><base href="https://cdn.example/"><img src="gone.png">' });
-    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: 'gone.png', kind: 'missing' }]);
+    expect(checkLinks(files)).toEqual([{ page: '/index.html', link: 'gone.png', missing: true, download: false }]);
   });
 
   it('skips raw text correctly after letters that lowercase to more than one character', () => {
@@ -36,7 +35,7 @@ describe('checkLinks', () => {
       '/hidden.html': `${before}<script>x</script><script>var s = "<img src='gone.png'>";</script>`,
       '/shown.html': `<p>${'İstanbul '.repeat(30)}</p><script>x</script><a href="gone.html">`,
     });
-    expect(checkLinks(files)).toEqual([{ page: '/shown.html', link: 'gone.html', kind: 'missing' }]);
+    expect(checkLinks(files)).toEqual([{ page: '/shown.html', link: 'gone.html', missing: true, download: false }]);
   });
 
   it('uses only the first <base>, for links before it too', () => {
@@ -75,7 +74,7 @@ describe('checkLinks', () => {
       '/docs/index.html': '<base href="/assets/"><img src="logo.png">',
       '/blog/post.html': '',
     });
-    expect(checkLinks(files)).toEqual([{ page: '/docs/index.html', link: 'logo.png', kind: 'missing' }]);
+    expect(checkLinks(files)).toEqual([{ page: '/docs/index.html', link: 'logo.png', missing: true, download: false }]);
   });
 
   it('ignores markup inside comments, scripts and styles, and non-HTML files', () => {
@@ -95,7 +94,7 @@ describe('checkLinks', () => {
   it('reports a download link even when the file exists, once per page and link', () => {
     const files = site({ '/index.html': '<a href="cv.pdf" download>CV</a><a href="cv.pdf" download>CV again</a>', '/cv.pdf': '' });
     const problems = checkLinks(files);
-    expect(problems).toEqual([{ page: '/index.html', link: 'cv.pdf', kind: 'download' }]);
+    expect(problems).toEqual([{ page: '/index.html', link: 'cv.pdf', missing: false, download: true }]);
     expect(describeLinkProblem(problems[0]!)).toContain('Remove the download attribute');
   });
 });
