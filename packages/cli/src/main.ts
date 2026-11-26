@@ -6,7 +6,9 @@ import { brotliCompressSync, constants as zlib } from 'node:zlib';
 import { decompress as brotliDecompress } from 'brotli/decompress';
 import {
   buildSite,
+  checkLinks,
   DEFAULT_PRUNE_GRACE_MS,
+  describeLinkProblem,
   checkExternalAssets,
   type BuildOptions,
   estimateCredits,
@@ -440,6 +442,7 @@ const commands: Record<string, () => Promise<void>> = {
     console.error(`${bundle.stats.files - elsewhere.files} files, ${bundle.stats.bytes} bytes (${bundle.stats.storedBytes} stored) in ${bundle.stats.chunks} chunks`);
     if (elsewhere.files > 0) console.error(`${elsewhere.files} files, ${elsewhere.bytes} bytes kept outside Platform`);
     if (!bundle.manifest.files['/index.html']) console.error('warning: the site has no /index.html');
+    for (const problem of checkLinks(files, { spa: values.spa })) console.error(`warning: ${describeLinkProblem(problem)}`);
     console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
     await withWriter(async (writer) => {

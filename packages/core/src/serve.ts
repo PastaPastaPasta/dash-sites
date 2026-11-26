@@ -37,7 +37,7 @@ function encodePath(path: string): string {
  * Decides what a request path serves. `search` is the query string including `?`, kept on redirects.
  * Order: exact file, directory index, `.html` shorthand, redirect to a directory, then the SPA or 404 page.
  */
-export function decide(manifest: Manifest, pathname: string, search = ''): ServeDecision {
+export function decide(manifest: Pick<Manifest, 'spa'> & { files: object }, pathname: string, search = ''): ServeDecision {
   const has = (path: string): boolean => Object.prototype.hasOwnProperty.call(manifest.files, path);
   const fallback = (): ServeDecision => {
     if (manifest.spa && has('/index.html')) return { kind: 'file', path: '/index.html', status: 200 };
