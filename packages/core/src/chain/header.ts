@@ -1,7 +1,7 @@
 import x11 from '@dashevo/x11-hash-js';
 import { toHex } from '../bytes.js';
 import type { Checkpoint } from './sync.js';
-import { ChainError, Reader, equalBytes, toDisplay } from './wire.js';
+import { ChainError, LinkError, Reader, equalBytes, toDisplay } from './wire.js';
 
 export type ChainNetwork = 'mainnet' | 'testnet';
 
@@ -118,7 +118,7 @@ export function extend(state: ChainState, raws: readonly Uint8Array[], nowSecond
   for (const raw of raws) {
     const header = parseHeader(raw);
     const previous = window[window.length - 1] as BlockHeader;
-    if (!equalBytes(header.prevHash, previous.hash)) throw new ChainError(`header ${height + 1} does not follow ${toDisplay(previous.hash)}`);
+    if (!equalBytes(header.prevHash, previous.hash)) throw new LinkError(`header ${height + 1} does not follow ${toDisplay(previous.hash)}`);
     const expected = nextBits(window, header.time, state.network);
     if (header.bits !== expected) throw new ChainError(`header ${height + 1} has difficulty ${header.bits.toString(16)}, DGW requires ${expected.toString(16)}`);
     if (littleEndian(header.hash) > targetFromBits(header.bits)) throw new ChainError(`header ${height + 1} does not meet its proof of work`);

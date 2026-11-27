@@ -154,13 +154,15 @@ describe('syncing from several nodes', () => {
 
   interface FakeNode {
     tip?: number;
+    /** The tip it reports, when a block arrived after it answered. */
+    reported?: number;
     headers?: (from: number, count: number) => Uint8Array[];
     diff?: () => MnListDiff;
   }
   function dapi(nodes: Record<string, FakeNode>): Dapi {
     const node = (address: string): FakeNode => nodes[address] ?? {};
     return {
-      bestBlockHeight: async (address) => node(address).tip ?? tip,
+      bestBlockHeight: async (address) => node(address).reported ?? node(address).tip ?? tip,
       blockHeaders: async (address, from, count) => {
         const custom = node(address).headers;
         if (custom) return custom(from, count);
@@ -189,6 +191,25 @@ describe('syncing from several nodes', () => {
       return changed;
     };
     await expect(sync({ a: {}, b: { diff: tampered } })).rejects.toThrow(/1 of the 2 masternode lists/);
+  });
+
+  it('takes a list whose block arrived after the nodes reported their tips', async () => {
+    const snapshot = await sync({ a: { reported: tip - 1 }, b: { reported: tip - 1 } });
+    expect(snapshot.listHeight).toBe(tip);
+    expect(snapshot.chain.height).toBe(tip - STORED_DEPTH);
+  });
+
+  it('does not restart from the checkpoint when nodes are only unreachable', async () => {
+    const good = await sync({ a: {}, b: {} });
+    const down = (): never => {
+      throw new Error('unreachable');
+    };
+    const dead = { headers: down, diff: down };
+    const messages: string[] = [];
+    const nodes = { a: dead, b: dead };
+    const attempt = syncChain({ network: 'testnet', checkpoint, seeds: Object.keys(nodes), dapi: dapi(nodes), previous: { ...good, nodes: [] }, onProgress: (m) => messages.push(m) });
+    await expect(attempt).rejects.toThrow(/0 of the 2/);
+    expect(messages.some((m) => /checkpoint/.test(m))).toBe(false);
   });
 
   it('does not let a node with an inflated tip get honest nodes dropped', async () => {

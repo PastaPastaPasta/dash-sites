@@ -115,21 +115,27 @@ export function redirectRules(base: string, settings: Settings, sandbox: boolean
   return rules;
 }
 
-const SEARCH_PARAMS = ['q', 'query', 'p', 'text'];
+const SEARCH_PARAMS = ['q', 'query', 'p', 'text', 'wd'];
+/** Other search engines whose results the fallback acts on. Only these: on other sites `?q=x.dash` is not a search the browser made. */
+const FALLBACK_SEARCH_HOSTS = /(^|\.)(yandex\.[a-z]{2,3}(\.[a-z]{2})?|baidu\.com|search\.naver\.com|search\.seznam\.cz|mojeek\.com|presearch\.com|you\.com|search\.aol\.com|ask\.com|metager\.org|swisscows\.com|search\.yahoo\.co\.jp|google\.[a-z]{2,3}(\.[a-z]{2})?)$/;
 
 /**
  * The target for a search URL whose query is exactly a `.dash` address, for engines the rules do
  * not list (for those, the rules have already redirected, and a second navigation would cancel theirs). By then the engine has the request; the rules are what keeps a search private.
  */
-export function targetForSearch(searchUrl: string): Target | undefined {
+/**
+ * @param ruleActs Whether a redirect rule can act on this URL (the extension holds its host); then the
+ * rule has redirected already, and a second navigation would cancel it.
+ */
+export function targetForSearch(searchUrl: string, ruleActs: (url: URL) => boolean = () => true): Target | undefined {
   let url: URL;
   try {
     url = new URL(searchUrl);
   } catch {
     return undefined;
   }
-  if (url.protocol !== 'https:' || url.hostname.endsWith('.dash')) return undefined;
-  if (SEARCH_ENGINES.some((engine) => new RegExp(`^${engine.prefix}`, 'i').test(searchUrl))) return undefined;
+  if (url.protocol !== 'https:' || !FALLBACK_SEARCH_HOSTS.test(url.hostname)) return undefined;
+  if (SEARCH_ENGINES.some((engine) => new RegExp(`^${engine.prefix}`, 'i').test(searchUrl)) && ruleActs(url)) return undefined;
   for (const param of SEARCH_PARAMS) {
     const query = url.searchParams.get(param)?.trim();
     if (query && /^[a-z0-9-]+\.dash(\/\S*)?$/i.test(query)) return parseTarget(query);

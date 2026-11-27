@@ -46,12 +46,17 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
   Each header must link to the previous one, carry exactly the DarkGravityWave
   difficulty (with testnet's minimum-difficulty rules), meet it with its X11
   hash, be later than the median of the last 11, and be less than two hours
-  ahead. Six nodes are asked for their tip. Each is asked only for headers up
-  to the tip it reported, and is dropped only for data that breaks these rules,
-  not for being slow or behind, so a node that claims a higher tip cannot get
-  honest ones dropped. The chain is stored 12 blocks below the verified tip. If
-  the next sync cannot extend it (the stored blocks were on a branch the network
-  left), it starts again from the checkpoint.
+  ahead.
+  - Six nodes are asked for their tip; two of them always come from the bundled
+    seeds.
+  - Each node is asked only for headers up to the height it claims: its tip, or
+    the block of a list it sent.
+  - A node that times out or answers short goes to the back of the queue. It is
+    dropped only for data that breaks these rules. So a node that claims a
+    higher tip can neither get honest ones dropped nor stall the sync.
+  - The chain is stored 12 blocks below the verified tip. If nodes' headers do
+    not follow the stored chain (it was on a branch the network left), the sync
+    starts again from the checkpoint. A network failure does not trigger this.
 - **Masternode list and quorums.** `Core/subscribeToMasternodeList` returns
   Core's `protx diff` from genesis to the tip, as CBOR. The list is accepted
   only if:
@@ -66,17 +71,20 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
   and `platformHTTPPort` of version 2 entries. Version 1 entries hash neither
   the type nor the port, so they are not used. A list whose masternode root
   does not match still gives its quorums, but no nodes.
-- **Two lists must agree.** Lists from two different nodes, each proven
-  against a block of the verified chain, are required. A quorum key (and a
-  node) is used only if both lists hold it. A node that mines one block of its
-  own, with a forged quorum in its coinbase, therefore cannot get that quorum
-  used by itself. Quorums proven by earlier syncs are kept as "previous"
+- **Lists must agree.** Lists are asked from up to four nodes picked at random,
+  not by the tip they claim. Each list must be proven against a block of the
+  verified chain. At least two must check out. A quorum key (and a node) is used
+  only if a majority of the proven lists, and at least two, hold it. A node that
+  mines one block of its own, with a forged quorum in its coinbase, therefore
+  cannot get that quorum used by itself. Quorums proven by earlier syncs are kept as "previous"
   quorums, so responses signed by a quorum that just rotated out still verify.
 - **Into the SDK.** evo-sdk 5.1.0 in trusted mode is pointed at
   `https://quorums.dash-sites.invalid`. A `fetch` hook (`withLocalQuorums`)
   answers `/quorums` and `/previous` from the proven list, so that request
   never leaves the page. When the SDK meets a quorum it has no key for, it asks
-  again, and the hook syncs the chain if the list is more than 30 s old.
+  again, and the hook syncs the chain if the list is more than 30 s old. If
+  that sync fails, the stored keys are used, and the viewer opens a site with
+  them too.
 
 ### 3–5. Reading the site
 
@@ -91,8 +99,8 @@ and the badge says how many were skipped.
 `SEEDS` (next to the checkpoint) lists up to 48 evonode HTTPS endpoints as IP
 addresses, taken from a masternode list proven at the checkpoint. After the
 first sync, the extension uses every valid evonode in the latest proven list
-instead, keeping only nodes both lists hold. Both IPv4 and IPv6 are handled: `https://[v6]:port` comes from the
-extended addresses of version 3 entries, and from `service` before that. On
+instead, keeping only nodes most lists hold. Both IPv4 and IPv6 are handled:
+`https://[v6]:port` comes from the extended addresses of version 3 entries, and from `service` before that. On
 mainnet today every evonode advertises IPv4 only. Nodes are untrusted: a node
 that sends invalid headers or a list that does not hash is dropped. A node
 that sends an old tip only delays the sync: others are asked for the higher
@@ -163,9 +171,9 @@ does. Search catching can be turned off in the settings.
 - **Trust model is SPV plus the coinbase commitment, with two nodes.** The
   extension checks proof of work, difficulty and every Merkle root. It does not
   check ChainLock signatures or the quorum commitments' BLS signatures. To
-  commit a fake quorum key, an attacker must control both nodes whose lists the
-  extension uses, and mine a block at full mainnet difficulty for each list's
-  coinbase (or one block they both answer with). Fixing this fully takes
+  commit a fake quorum key, an attacker must control a majority, and at least
+  two, of the randomly picked nodes whose lists the extension uses, and mine a
+  block at full mainnet difficulty with the forged quorum in its coinbase. Fixing this fully takes
   ChainLock checks against quorums proven earlier, or Core's DIP 175 quorum
   proofs (`getquorumproofchain`) served by DAPI. The bundled verifier already
   checks those proofs (`WasmVerifiedContext`); DAPI does not serve them yet.

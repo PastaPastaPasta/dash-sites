@@ -65,9 +65,14 @@ describe('redirect rules', () => {
   });
 
   it('fall back only for engines the rules do not list', () => {
-    expect(targetForSearch('https://search.example.org/?q=alice.dash')).toEqual({ label: 'alice', path: '/', search: '' });
+    expect(targetForSearch('https://yandex.ru/search/?text=alice.dash')).toEqual({ label: 'alice', path: '/', search: '' });
+    expect(targetForSearch('https://www.baidu.com/s?wd=alice.dash')).toEqual({ label: 'alice', path: '/', search: '' });
+    // Google ccTLDs the host permissions do not cover reach the fallback; the ones they cover are redirected by the rules.
+    expect(targetForSearch('https://www.google.com.mx/search?q=alice.dash', () => false)).toEqual({ label: 'alice', path: '/', search: '' });
     expect(targetForSearch('https://www.google.com/search?q=alice.dash')).toBeUndefined();
-    expect(targetForSearch('https://search.example.org/?q=alice+dash')).toBeUndefined();
+    expect(targetForSearch('https://yandex.ru/search/?text=alice+dash')).toBeUndefined();
+    expect(targetForSearch('https://github.com/search?q=alice.dash')).toBeUndefined();
+    expect(targetForSearch('https://shop.example/?q=alice.dash')).toBeUndefined();
   });
 });
 

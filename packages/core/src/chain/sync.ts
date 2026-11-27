@@ -1,8 +1,8 @@
 import { fromHex } from '../bytes.js';
 import { bestBlockHeight, blockHeaders, masternodeListDiff, type DapiOptions } from './dapi.js';
-import { DGW_WINDOW, extend, parseHeader, serializeState, stateFromHeaders, type BlockHeader, type ChainNetwork, type ChainState } from './header.js';
+import { DGW_WINDOW, extend, serializeState, stateFromHeaders, type BlockHeader, type ChainNetwork, type ChainState } from './header.js';
 import { PLATFORM_LLMQ, parseCoinbase, verifyDiff, type NodeAddress, type VerifiedQuorum } from './mnlist.js';
-import { ChainError, toDisplay } from './wire.js';
+import { ChainError, LinkError, toDisplay } from './wire.js';
 
 export interface Checkpoint {
   network: ChainNetwork;
@@ -59,9 +59,13 @@ const KEEP_QUORUMS = 64;
 const KEEP_HEADERS = 2048;
 /** How far below the verified tip the stored chain stays, so a reorg of the last blocks does not strand it. */
 export const STORED_DEPTH = 12;
-/** Masternode lists from this many different nodes must agree on a quorum key or a node before it is used. */
+/** A quorum key or node is used only if at least this many proven lists, and a majority of them, hold it. */
 export const CORROBORATING_LISTS = 2;
+/** Nodes asked for their tip in a round; two of them always come from the bundled seeds. */
 const ASK = 6;
+const SEEDS_PER_ROUND = 2;
+const LISTS_ASKED = 4;
+const ROUNDS = 2;
 
 export const SNAPSHOT_VERSION = 1;
 
@@ -108,37 +112,74 @@ class Recent {
 interface ProvenList {
   node: NodeAddress;
   height: number;
+  blockHash: string;
   quorums: VerifiedQuorum[];
   nodes?: NodeAddress[];
+}
+
+interface Tip {
+  node: NodeAddress;
+  height: number;
 }
 
 const quorumId = (q: VerifiedQuorum): string => `${q.llmqType}:${q.quorumHash}:${q.publicKey}`;
 
 /**
+ * The order nodes are asked in: each round of `ASK` takes `SEEDS_PER_ROUND` from the bundled seeds
+ * and the rest from the stored list, so a stale or captured stored list cannot lock a browser out.
+ */
+function nodeOrder(options: SyncOptions, previous: ChainSnapshot | undefined): NodeAddress[] {
+  const stored = previous && previous.nodes.length >= 8 ? shuffle(previous.nodes, options.random) : [];
+  const seeds = shuffle(options.seeds, options.random);
+  const out: NodeAddress[] = [];
+  while (stored.length > 0 || seeds.length > 0) {
+    out.push(...seeds.splice(0, stored.length > 0 ? SEEDS_PER_ROUND : ASK), ...stored.splice(0, ASK - SEEDS_PER_ROUND));
+  }
+  return [...new Set(out)];
+}
+
+/** Keeps what a majority of the lists, and at least `CORROBORATING_LISTS` of them, hold. */
+function agreed<T>(lists: T[][], id: (item: T) => string): T[] {
+  const need = Math.max(CORROBORATING_LISTS, Math.floor(lists.length / 2) + 1);
+  const counts = new Map<string, number>();
+  for (const list of lists) for (const key of new Set(list.map(id))) counts.set(key, (counts.get(key) ?? 0) + 1);
+  const seen = new Set<string>();
+  return lists.flat().filter((item) => {
+    const key = id(item);
+    if ((counts.get(key) ?? 0) < need || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
  * One attempt from `start`. Nodes are untrusted:
- * - a node is only asked for headers up to the tip it reported, and is dropped only for data that
- *   breaks the rules (a header that does not link or lacks its work, a list that does not hash),
- *   never for being slow or short, so one node cannot get honest ones dropped;
- * - a quorum key or node is used only if masternode lists from two different nodes, each proven
- *   against a block of the verified chain, both hold it, so one node that mines a block of its own
- *   cannot slip a key in;
+ * - a node is asked for headers only up to the height it claims (its reported tip, or the block of a
+ *   list it sent), is moved to the back after a timeout or a short answer, and is dropped only for
+ *   data that breaks the rules, so one node can neither get honest ones dropped nor stall the sync;
+ * - lists come from up to `LISTS_ASKED` nodes picked at random, not by the tip they claim, and a
+ *   quorum key or node is used only if a majority of the proven lists hold it;
  * - the chain is stored `STORED_DEPTH` blocks below the tip.
+ * Throws a `LinkError` if the nodes' headers do not follow `start`: the stored chain is stranded.
  */
 async function syncFrom(options: SyncOptions, start: ChainState, previous: ChainSnapshot | undefined): Promise<ChainSnapshot> {
   const dapi = options.dapi ?? { bestBlockHeight, blockHeaders, masternodeListDiff };
   const progress = options.onProgress ?? (() => undefined);
-  const pool = shuffle(previous && previous.nodes.length >= 8 ? previous.nodes : options.seeds, options.random);
+  const pool = nodeOrder(options, previous);
   if (pool.length < CORROBORATING_LISTS) throw new ChainError('not enough nodes to ask');
   let state = start;
   const recent = new Recent(state);
+  const tips: Tip[] = [];
   const invalid = new Set<string>();
-
-  const asked = pool.slice(0, options.ask ?? ASK);
-  progress(`Asking ${asked.length} nodes for the chain tip`);
-  const tips = (await Promise.allSettled(asked.map(async (node) => ({ node, height: await dapi.bestBlockHeight(node, options) }))))
-    .flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
-    .sort((a, b) => b.height - a.height);
-  if (tips.length === 0) throw new ChainError('no node answered with its chain tip');
+  const listed = new Set<string>();
+  const lists: ProvenList[] = [];
+  const errors: string[] = [];
+  let unlinked = 0;
+  const usable = (): Tip[] => tips.filter((tip) => !invalid.has(tip.node));
+  const demote = (tip: Tip): void => {
+    tips.splice(tips.indexOf(tip), 1);
+    tips.push(tip);
+  };
 
   /** Extends the verified chain toward `target` as far as nodes that claim those heights serve valid headers. */
   const extendTo = async (target: number): Promise<void> => {
@@ -146,15 +187,19 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
       const from = state.height + 1;
       const to = Math.min(state.height + RANGE, target);
       let extended = false;
-      for (const { node } of tips.filter((tip) => tip.height >= to && !invalid.has(tip.node))) {
+      for (const tip of usable().filter((candidate) => candidate.height >= to)) {
         let raws: Uint8Array[];
         try {
           progress(`Verifying block headers ${from}–${to}`);
-          raws = await dapi.blockHeaders(node, from, to - from + 1, options);
+          raws = await dapi.blockHeaders(tip.node, from, to - from + 1, options);
         } catch {
+          demote(tip);
           continue;
         }
-        if (raws.length !== to - from + 1) continue;
+        if (raws.length !== to - from + 1) {
+          demote(tip);
+          continue;
+        }
         try {
           const result = extend(state, raws);
           state = result.state;
@@ -162,58 +207,88 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
           extended = true;
           break;
         } catch (error) {
-          invalid.add(node);
-          progress(`${node} sent invalid headers: ${(error as Error).message}`);
+          invalid.add(tip.node);
+          if (error instanceof LinkError && from === start.height + 1) unlinked++;
+          progress(`${tip.node} sent invalid headers: ${(error as Error).message}`);
         }
       }
       if (!extended) return;
     }
   };
 
-  await extendTo(tips[0]?.height ?? state.height);
+  for (let round = 0; round < ROUNDS && lists.length < CORROBORATING_LISTS; round++) {
+    const asked = pool.slice(round * ASK, (round + 1) * ASK);
+    if (asked.length === 0) break;
+    progress(`Asking ${asked.length} nodes for the chain tip`);
+    const answers = await Promise.allSettled(asked.map(async (node) => ({ node, height: await dapi.bestBlockHeight(node, options) })));
+    for (const answer of answers) if (answer.status === 'fulfilled') tips.push(answer.value);
+    if (tips.length === 0) continue;
+    await extendTo(Math.max(...usable().map((tip) => tip.height), state.height));
 
-  progress('Proving the masternode list and quorum keys');
-  const lists: ProvenList[] = [];
-  const errors: string[] = [];
-  for (const { node } of tips) {
-    if (lists.length >= CORROBORATING_LISTS) break;
-    if (invalid.has(node)) continue;
-    try {
-      const diff = await dapi.masternodeListDiff(node, options);
-      const height = parseCoinbase(fromHex(diff.cbTx)).height;
+    progress('Proving the masternode lists and quorum keys');
+    const picked = shuffle(usable().filter((tip) => !listed.has(tip.node)), options.random).slice(0, LISTS_ASKED - lists.length);
+    const diffs = await Promise.all(
+      picked.map(async (tip) => {
+        listed.add(tip.node);
+        try {
+          return { tip, diff: await dapi.masternodeListDiff(tip.node, options) };
+        } catch (error) {
+          demote(tip);
+          errors.push(`${tip.node}: ${(error as Error).message}`);
+          return undefined;
+        }
+      }),
+    );
+    for (const fetched of diffs) {
+      if (!fetched) continue;
+      const { tip, diff } = fetched;
+      let height: number;
+      try {
+        height = parseCoinbase(fromHex(diff.cbTx)).height;
+      } catch (error) {
+        invalid.add(tip.node);
+        errors.push(`${tip.node}: ${(error as Error).message}`);
+        continue;
+      }
+      // The node holds the list's block, which may be newer than the tip it reported a moment ago.
+      tip.height = Math.max(tip.height, height);
       if (height > state.height) await extendTo(height);
       const header = recent.get(height);
-      if (!header || toDisplay(header.hash) !== diff.blockHash.toLowerCase()) throw new ChainError(`its list's block ${diff.blockHash} is not at height ${height} of the verified chain`);
-      const list = verifyDiff(diff, header.merkleRoot);
-      const quorums = list.quorums.filter((q) => q.llmqType === PLATFORM_LLMQ[options.network]);
-      lists.push({ node, height, quorums, ...(list.nodes ? { nodes: list.nodes } : {}) });
-    } catch (error) {
-      if (error instanceof ChainError && /does not match|not in the block|states another/.test(error.message)) invalid.add(node);
-      errors.push(`${node}: ${(error as Error).message}`);
+      if (!header || toDisplay(header.hash) !== diff.blockHash.toLowerCase()) {
+        errors.push(`${tip.node}: its list's block ${diff.blockHash} is not at height ${height} of the verified chain`);
+        continue;
+      }
+      try {
+        const list = verifyDiff(diff, header.merkleRoot);
+        const quorums = list.quorums.filter((q) => q.llmqType === PLATFORM_LLMQ[options.network]);
+        lists.push({ node: tip.node, height, blockHash: list.blockHash, quorums, ...(list.nodes ? { nodes: list.nodes } : {}) });
+      } catch (error) {
+        invalid.add(tip.node);
+        errors.push(`${tip.node}: ${(error as Error).message}`);
+      }
     }
   }
-  if (lists.length < CORROBORATING_LISTS) throw new ChainError(`${lists.length} of the ${CORROBORATING_LISTS} masternode lists needed checked out${errors.length ? `: ${errors.join('; ')}` : ''}`);
+  if (lists.length < CORROBORATING_LISTS) {
+    const message = `${lists.length} of the ${CORROBORATING_LISTS} masternode lists needed checked out${errors.length ? `: ${errors.join('; ')}` : ''}`;
+    throw state.height === start.height && unlinked >= CORROBORATING_LISTS ? new LinkError(message) : new ChainError(message);
+  }
 
-  const counts = new Map<string, number>();
-  for (const list of lists) for (const id of new Set(list.quorums.map(quorumId))) counts.set(id, (counts.get(id) ?? 0) + 1);
-  const listHeight = Math.min(...lists.map((list) => list.height));
-  const agreed = (lists[0] as ProvenList).quorums.filter((q) => counts.get(quorumId(q)) === lists.length);
-  if (agreed.length === 0) throw new ChainError('the masternode lists share no Platform quorum');
-  const current = new Set(agreed.map((q) => q.quorumHash));
+  const quorums = agreed(lists.map((list) => list.quorums), quorumId);
+  if (quorums.length === 0) throw new ChainError('the masternode lists share no Platform quorum');
+  const oldest = lists.reduce((low, list) => (list.height < low.height ? list : low));
+  const current = new Set(quorums.map((q) => q.quorumHash));
   const kept = (previous?.quorums ?? []).filter((q) => !current.has(q.quorumHash));
-  const nodeLists = lists.map((list) => list.nodes);
-  const sharedNodes = nodeLists.every((nodes) => nodes && nodes.length > 0)
-    ? (nodeLists[0] as NodeAddress[]).filter((node) => nodeLists.every((nodes) => (nodes as NodeAddress[]).includes(node)))
-    : [];
+  const nodeLists = lists.flatMap((list) => (list.nodes && list.nodes.length > 0 ? [list.nodes] : []));
+  const nodes = nodeLists.length >= CORROBORATING_LISTS ? agreed(nodeLists, (node) => node) : [];
   const stored = state.height - STORED_DEPTH > start.height ? recent.stateAt(options.network, state.height - STORED_DEPTH) : undefined;
   return {
     version: SNAPSHOT_VERSION,
     network: options.network,
     chain: serializeState(stored ?? start),
-    listHeight,
-    listBlockHash: toDisplay((recent.get(listHeight) as BlockHeader).hash),
-    quorums: [...agreed.map((q) => ({ ...q, provenAt: listHeight })), ...kept].slice(0, KEEP_QUORUMS),
-    nodes: sharedNodes.length >= 8 ? sharedNodes : (previous?.nodes ?? [...options.seeds]),
+    listHeight: oldest.height,
+    listBlockHash: oldest.blockHash,
+    quorums: [...quorums.map((q) => ({ ...q, provenAt: oldest.height })), ...kept].slice(0, KEEP_QUORUMS),
+    nodes: nodes.length >= 8 ? nodes : (previous?.nodes ?? [...options.seeds]),
     syncedAt: Date.now(),
   };
 }
@@ -221,7 +296,7 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
 /**
  * Brings the verified chain to the tip nodes report, and proves the Platform quorums and the
  * masternode list at blocks of that chain. Starts from the previous snapshot's chain, and from the
- * bundled checkpoint if that fails (the stored chain may be on a branch the network left).
+ * bundled checkpoint only if nodes' headers do not follow it (it was on a branch the network left).
  */
 export async function syncChain(options: SyncOptions): Promise<ChainSnapshot> {
   const previous = options.previous?.network === options.network ? options.previous : undefined;
@@ -230,13 +305,8 @@ export async function syncChain(options: SyncOptions): Promise<ChainSnapshot> {
   try {
     return await syncFrom(options, stateOf(options.network, previous.chain), previous);
   } catch (error) {
-    options.onProgress?.(`Starting again from the checkpoint: ${(error as Error).message}`);
+    if (!(error instanceof LinkError)) throw error;
+    options.onProgress?.(`Starting again from the checkpoint: ${error.message}`);
     return fromCheckpoint();
   }
 }
-
-/** The tip of a snapshot's chain, for display. */
-export const snapshotTip = (snapshot: ChainSnapshot): { height: number; hash: string; time: number } => {
-  const header = parseHeader(fromHex(snapshot.chain.headers[snapshot.chain.headers.length - 1] as string));
-  return { height: snapshot.chain.height, hash: toDisplay(header.hash), time: header.time };
-};

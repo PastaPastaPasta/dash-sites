@@ -181,9 +181,25 @@ export class Rewriter {
       swap('xlink:href');
     }
     if ((tag === 'a' || tag === 'area') && this.links) this.link(element, base);
+    if ((tag === 'iframe' || tag === 'frame') && !this.scripts) this.frame(element, base);
     if (tag === 'style') element.textContent = this.css(element.textContent ?? '', base);
     const style = element.getAttribute('style');
     if (style && /url\(/.test(style)) element.setAttribute('style', this.css(style, base));
+  }
+
+  /**
+   * Without scripts there is no sandbox page for a nested `.dash` frame to land in, and no rule
+   * sends it anywhere, so its address would be looked up in DNS: it is not loaded.
+   */
+  private frame(element: Element, base: string): void {
+    const src = element.getAttribute('src');
+    if (src === null) return;
+    try {
+      if (!new URL(src, base).hostname.endsWith('.dash')) return;
+    } catch {
+      // An unparsable address is dropped too.
+    }
+    element.removeAttribute('src');
   }
 
   private link(element: Element, base: string): void {

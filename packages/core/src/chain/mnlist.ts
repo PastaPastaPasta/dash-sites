@@ -7,7 +7,8 @@ import { ChainError, Reader, Writer, compareBytes, equalBytes, fromDisplay, merk
 export const PLATFORM_LLMQ: Record<ChainNetwork, number> = { mainnet: 4, testnet: 6 };
 
 /** Member count of each LLMQ type, which a commitment's bitsets are serialized with. */
-const LLMQ_SIZE: Record<number, number> = { 1: 50, 2: 400, 3: 400, 4: 100, 5: 60, 6: 25, 100: 3, 101: 12, 102: 12, 103: 4, 104: 3, 105: 3, 106: 3, 107: 3 };
+/** Mainnet and testnet types only: a list with any other type cannot be hashed, so it is refused. */
+const LLMQ_SIZE: Record<number, number> = { 1: 50, 2: 400, 3: 400, 4: 100, 5: 60, 6: 25 };
 
 /** One entry of `protx diff`'s masternode list, as DAPI forwards it. */
 export interface MnListEntry {

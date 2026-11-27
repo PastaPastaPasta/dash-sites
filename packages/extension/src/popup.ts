@@ -1,4 +1,4 @@
-import { snapshotTip, type ChainSnapshot } from '@dash-sites/core/chain';
+import type { ChainSnapshot } from '@dash-sites/core/chain';
 import { chainKey, loadSettings, parseTarget, viewerUrl } from './shared.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -32,10 +32,9 @@ async function main(): Promise<void> {
   const snapshot = (await chrome.storage.local.get(key))[key] as ChainSnapshot | undefined;
   const chain = $('chain');
   if (snapshot) {
-    const tip = snapshotTip(snapshot);
     chain.innerHTML = '';
     const strong = document.createElement('b');
-    strong.textContent = `block ${tip.height.toLocaleString()}`;
+    strong.textContent = `block ${snapshot.listHeight.toLocaleString()}`;
     chain.append('Dash chain verified to ', strong, `, ${ago(snapshot.syncedAt)}. ${snapshot.quorums.length} Platform quorum keys proven; ${snapshot.nodes.length} nodes known.`);
   } else {
     chain.textContent = 'The first site you open verifies the Dash chain from the checkpoint in this release.';

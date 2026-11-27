@@ -7,6 +7,14 @@ export class ChainError extends Error {
   }
 }
 
+/** Headers that do not link to the chain they should extend: the sender is on another branch, or the stored chain is. */
+export class LinkError extends ChainError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LinkError';
+  }
+}
+
 export const sha256d = (data: Uint8Array): Uint8Array => sha256(sha256(data));
 
 /** A hash as Core prints it (byte-reversed hex) to its internal byte order, and back. */

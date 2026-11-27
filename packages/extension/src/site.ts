@@ -85,7 +85,7 @@ class Viewer {
       const [snapshot, module] = await Promise.all([this.keeper.get(), WebAssembly.compileStreaming(fetch(chrome.runtime.getURL('verifier.wasm')))]);
       globalThis.dashSitesSdk = module;
       const { EvoReader } = await import('@dash-sites/core/evo');
-      return EvoReader.connect(readerConfig(this.settings.network), { addresses: pickNodes(snapshot.nodes, NODES), quorums: () => this.keeper.forQuorums() });
+      return EvoReader.connect(readerConfig(this.settings.network), { addresses: pickNodes(snapshot.nodes, NODES), quorums: () => this.keeper.get() });
     })();
     this.reader.catch(() => {
       this.reader = undefined;
@@ -157,7 +157,6 @@ class Viewer {
     if ('meta' in resolution) rows.push(['Proved at', `Platform block ${resolution.meta.height}`, new Date(resolution.meta.timeMs).toLocaleString()]);
     if (snapshot) {
       rows.push(['Quorum keys', `Core block ${snapshot.listHeight}`, snapshot.listBlockHash]);
-      rows.push(['Chain checked to', `block ${snapshot.chain.height}`]);
       rows.push(['Nodes', `${snapshot.nodes.length} from the masternode list`]);
     }
     rows.push(['Network', this.settings.network]);
@@ -262,9 +261,10 @@ class Viewer {
         const page = this.shown;
         if (!page) return;
         if (message.url && message.url !== page.url) {
-          // The site moved its own frame (location.href = …): show that address instead.
+          // The site moved its own frame (location.href = …): show that address instead. The frame's
+          // own navigation already made a history entry, so this one replaces the current entry.
           const next = parseTarget(message.url);
-          if (next) this.go(next);
+          if (next) this.go(next, true);
           return;
         }
         this.frame.contentWindow?.postMessage(page, '*');

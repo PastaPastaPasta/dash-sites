@@ -27,12 +27,13 @@ chrome.omnibox.onInputEntered.addListener((text, disposition) => {
   else void chrome.tabs.create({ url, active: disposition === 'newForegroundTab' });
 });
 
-// Engines the redirect rules do not list: the search has been sent by now, so this only saves a step.
+// Engines the redirect rules cannot act on: the search has been sent by now, so this only saves a step.
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0 || details.url.startsWith(chrome.runtime.getURL('/'))) return;
-  const target = targetForSearch(details.url);
-  if (!target) return;
-  void loadSettings().then((settings) => {
-    if (settings.catchSearches) void chrome.tabs.update(details.tabId, { url: viewerUrl(target) });
-  });
+  if (!targetForSearch(details.url, () => false)) return;
+  void (async () => {
+    const held = await chrome.permissions.contains({ origins: [`${new URL(details.url).origin}/*`] }).catch(() => false);
+    const target = targetForSearch(details.url, () => held);
+    if (target && (await loadSettings()).catchSearches) await chrome.tabs.update(details.tabId, { url: viewerUrl(target) });
+  })();
 });
