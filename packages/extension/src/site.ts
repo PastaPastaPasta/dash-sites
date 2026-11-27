@@ -70,8 +70,8 @@ class Viewer {
   private site?: LoadedSite;
   private target?: Target;
   private frame?: HTMLIFrameElement;
-  /** The page the sandbox gets once it says it is ready. */
-  private pending?: PageMessage;
+  /** The page the sandbox gets each time it says it is ready, including after the site reloads its frame. */
+  private shown?: PageMessage;
   private generation = 0;
 
   constructor(private readonly settings: Settings) {
@@ -85,7 +85,7 @@ class Viewer {
       const [snapshot, module] = await Promise.all([this.keeper.get(), WebAssembly.compileStreaming(fetch(chrome.runtime.getURL('verifier.wasm')))]);
       globalThis.dashSitesSdk = module;
       const { EvoReader } = await import('@dash-sites/core/evo');
-      return EvoReader.connect(readerConfig(this.settings.network), { addresses: pickNodes(snapshot.nodes, NODES), quorums: () => this.keeper.get() });
+      return EvoReader.connect(readerConfig(this.settings.network), { addresses: pickNodes(snapshot.nodes, NODES), quorums: () => this.keeper.forQuorums() });
     })();
     this.reader.catch(() => {
       this.reader = undefined;
@@ -238,8 +238,8 @@ class Viewer {
     const page: PageMessage = { type: 'page', origin: siteOrigin(site.label), url: url.href, html, files: [...site.files.values()] };
     if (__SANDBOX__) {
       frame.setAttribute('sandbox', FRAME_SANDBOX);
-      frame.src = chrome.runtime.getURL(`sandbox.html#${encodeURIComponent(url.href)}`);
-      this.pending = page;
+      frame.src = chrome.runtime.getURL(`sandbox.html#${url.href}`);
+      this.shown = page;
     } else {
       frame.setAttribute('sandbox', STATIC_SANDBOX);
       const linkTo = (link: URL): string | undefined => {
@@ -259,15 +259,14 @@ class Viewer {
     if (!message || !this.target) return;
     switch (message.type) {
       case 'ready': {
-        const page = this.pending;
+        const page = this.shown;
         if (!page) return;
         if (message.url && message.url !== page.url) {
-          // The site moved its own frame: show that address instead.
+          // The site moved its own frame (location.href = …): show that address instead.
           const next = parseTarget(message.url);
           if (next) this.go(next);
           return;
         }
-        this.pending = undefined;
         this.frame.contentWindow?.postMessage(page, '*');
         return;
       }
@@ -330,7 +329,8 @@ async function main(): Promise<void> {
   $('settings').addEventListener('click', () => void chrome.runtime.openOptionsPage());
   if (!__SANDBOX__) $('mode').hidden = false;
   const open = (): void => {
-    const target = parseTarget(decodeURIComponent(location.hash.slice(1)));
+    // The hash is already percent-encoded (the redirect rules copy the request's path as it is), so it is parsed, not decoded.
+    const target = parseTarget(location.hash.slice(1));
     if (target) void viewer.show(target);
     else {
       badge('none', 'No site open');

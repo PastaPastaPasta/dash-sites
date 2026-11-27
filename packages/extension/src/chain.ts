@@ -33,6 +33,21 @@ export class ChainKeeper {
     return this.sync();
   }
 
+  /**
+   * For the SDK, which asks when it meets a quorum it has no key for: a sync if the snapshot is a few
+   * seconds old, and the stored keys if that sync fails, since they still verify most answers.
+   */
+  async forQuorums(): Promise<ChainSnapshot> {
+    const current = this.snapshot ?? (await stored(this.network));
+    if (current && Date.now() - current.syncedAt < FRESH_MS) return current;
+    try {
+      return await this.sync();
+    } catch (error) {
+      if (current) return current;
+      throw error;
+    }
+  }
+
   sync(): Promise<ChainSnapshot> {
     this.running ??= (async () => {
       try {

@@ -109,6 +109,23 @@ try {
     } else console.log('skip no internal link to follow');
   }
 
+  // A site that moves its own frame lands in the sandbox again, which asks the viewer for that address.
+  await page.goto(`${viewer}#${name}.dash/`);
+  await settled(page);
+  await page.waitForSelector('#frame');
+  let moved;
+  for (let i = 0; i < 50 && !moved; i++, await page.waitForTimeout(100)) moved = page.frames().find((f) => f.url().startsWith(`chrome-extension://${id}/sandbox.html`));
+  await moved?.waitForFunction(() => document.body && document.body.innerText.trim().length > 0, null, { timeout: 30000 }).catch(() => undefined);
+  await moved?.evaluate(() => void (location.href = new URL('/no-such-page', document.baseURI).href)).catch(() => undefined);
+  await page.waitForFunction(() => location.hash.endsWith('/no-such-page'), null, { timeout: 30000 }).catch(() => undefined);
+  check(page.url().endsWith('/no-such-page'), `a site that sets location.href moves the viewer: ${page.url()}`);
+  let base = '';
+  for (let i = 0; i < 100 && !base.endsWith('/no-such-page'); i++, await page.waitForTimeout(100)) {
+    const again = page.frames().find((f) => f.url().startsWith(`chrome-extension://${id}/sandbox.html`));
+    base = (await again?.evaluate(() => (document.body?.innerText ? document.baseURI : '')).catch(() => '')) ?? '';
+  }
+  check(base.endsWith('/no-such-page'), `and the sandbox shows that address: ${base}`);
+
   const search = await context.newPage();
   const engine = [];
   search.on('response', async (response) => {

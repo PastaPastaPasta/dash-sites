@@ -732,9 +732,10 @@ gateway's shell. The details are in
   bundled with each release: X11 proof of work and DarkGravityWave. It then
   checks the masternode list and quorums DAPI streams against that chain's
   coinbase roots, and answers the SDK's quorum key requests from that proof.
-  No quorum service is asked. Every Platform read is then proof-verified as
-  before. The known gap is that ChainLock and commitment signatures are not
-  checked: the model is SPV plus the coinbase commitment. The README covers
+  No quorum service is asked. A key is used only if lists from two different
+  nodes both hold it. Every Platform read is then proof-verified as before. The
+  known gap is that ChainLock and commitment signatures are not checked: the
+  model is SPV plus the coinbase commitment, from two nodes. The README covers
   this and the way to close it (DIP 175 proofs over DAPI).
 - **Nodes.** A bundled IP seed list, then the evonodes of the latest proven
   masternode list.

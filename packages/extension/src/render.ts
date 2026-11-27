@@ -189,14 +189,16 @@ export class Rewriter {
   private link(element: Element, base: string): void {
     const href = element.getAttribute('href');
     if (href === null) return;
-    if (/^(javascript|data|blob):/i.test(href.trim())) {
-      element.removeAttribute('href');
-      return;
-    }
     let url: URL;
     try {
       url = new URL(href, base);
     } catch {
+      element.removeAttribute('href');
+      return;
+    }
+    // Checked after parsing, which strips the tabs and newlines that can hide a `javascript:` scheme.
+    if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'mailto:') {
+      element.removeAttribute('href');
       return;
     }
     if (href.trim().startsWith('#') || isSameDocumentFragment(url, this.page.origin, new URL(this.page.url))) {

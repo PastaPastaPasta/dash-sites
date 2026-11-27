@@ -7,7 +7,7 @@ import { fields } from '../src/chain/dapi.js';
 import { bitsFromTarget, extend, parseHeader, stateFromHeaders, targetFromBits, type ChainNetwork } from '../src/chain/header.js';
 import { asDiff, ipv6, PLATFORM_LLMQ, verifyDiff, type MnListDiff } from '../src/chain/mnlist.js';
 import { answerQuorumRequest, LOCAL_QUORUM_URL, withLocalQuorums } from '../src/chain/quorums.js';
-import type { ChainSnapshot } from '../src/chain/sync.js';
+import { STORED_DEPTH, syncChain, type ChainSnapshot, type Checkpoint, type Dapi } from '../src/chain/sync.js';
 import { toDisplay } from '../src/chain/wire.js';
 
 const fixture = (name: string): Buffer => readFileSync(new URL(`./fixtures/chain/${name}`, import.meta.url));
@@ -83,17 +83,19 @@ describe('masternode list', () => {
     expect(() => verifyDiff(diff(), parseHeader(raws[raws.length - 2] as Uint8Array).merkleRoot)).toThrow(/not in the block/);
   });
 
-  it('refuses a changed masternode address', () => {
+  it('drops the nodes of a list with a changed masternode address', () => {
     const changed = diff();
     const extended = changed.mnList.find((m) => m.nType === 1 && m.nVersion >= 3 && m.addresses?.platform_https?.length);
     if (!extended?.addresses?.platform_https) throw new Error('no version 3 evonode');
     extended.addresses.platform_https[0] = '1.2.3.4:443';
-    expect(() => verifyDiff(changed, block.merkleRoot)).toThrow(/masternode list does not match/);
+    const forged = verifyDiff(changed, block.merkleRoot);
+    expect(forged.nodes).toBeUndefined();
+    expect(forged.quorums.length).toBeGreaterThan(0);
     const legacy = diff();
     const old = legacy.mnList.find((m) => m.nType === 1 && m.nVersion === 2);
     if (!old) throw new Error('no version 2 evonode');
     old.platformHTTPPort = 8443;
-    expect(() => verifyDiff(legacy, block.merkleRoot)).toThrow(/masternode list does not match/);
+    expect(verifyDiff(legacy, block.merkleRoot).nodes).toBeUndefined();
   });
 
   it('parses IPv6 addresses', () => {
@@ -141,5 +143,75 @@ describe('local quorum service', () => {
     await hooked(`${LOCAL_QUORUM_URL}/quorums`);
     await hooked('https://1.2.3.4:443/x');
     expect(sent).toEqual(['https://1.2.3.4:443/x']);
+  });
+});
+
+describe('syncing from several nodes', () => {
+  const { height: tip, raws } = headers('testnet');
+  const first = tip - raws.length + 1;
+  const toHex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+  const checkpoint: Checkpoint = { network: 'testnet', height: first + 23, headers: raws.slice(0, 24).map(toHex) };
+
+  interface FakeNode {
+    tip?: number;
+    headers?: (from: number, count: number) => Uint8Array[];
+    diff?: () => MnListDiff;
+  }
+  function dapi(nodes: Record<string, FakeNode>): Dapi {
+    const node = (address: string): FakeNode => nodes[address] ?? {};
+    return {
+      bestBlockHeight: async (address) => node(address).tip ?? tip,
+      blockHeaders: async (address, from, count) => {
+        const custom = node(address).headers;
+        if (custom) return custom(from, count);
+        if (from + count - 1 > (node(address).tip ?? tip)) throw new Error('count exceeds chain tip');
+        return raws.slice(from - first, from - first + count);
+      },
+      masternodeListDiff: async (address) => (node(address).diff ?? diff)(),
+    };
+  }
+  const sync = (nodes: Record<string, FakeNode>, previous?: ChainSnapshot) =>
+    syncChain({ network: 'testnet', checkpoint, seeds: Object.keys(nodes), dapi: dapi(nodes), ...(previous ? { previous } : {}), random: () => 0.5 });
+
+  it('proves the quorum keys with two honest nodes and stores the chain below the tip', async () => {
+    const snapshot = await sync({ a: {}, b: {} });
+    expect(snapshot.listHeight).toBe(tip);
+    expect(snapshot.chain.height).toBe(tip - STORED_DEPTH);
+    expect(snapshot.quorums.length).toBeGreaterThanOrEqual(20);
+    expect(snapshot.nodes.length).toBeGreaterThan(10);
+  });
+
+  it('needs a second node whose list checks out', async () => {
+    await expect(sync({ a: {} })).rejects.toThrow(/not enough nodes/);
+    const tampered = (): MnListDiff => {
+      const changed = diff();
+      changed.newQuorums.pop();
+      return changed;
+    };
+    await expect(sync({ a: {}, b: { diff: tampered } })).rejects.toThrow(/1 of the 2 masternode lists/);
+  });
+
+  it('does not let a node with an inflated tip get honest nodes dropped', async () => {
+    const snapshot = await sync({ liar: { tip: tip + 1_000_000, headers: () => [] }, a: {}, b: {} });
+    expect(snapshot.listHeight).toBe(tip);
+  });
+
+  it('drops a node that sends invalid headers and uses the others', async () => {
+    const bad = (from: number, count: number): Uint8Array[] =>
+      raws.slice(from - first, from - first + count).map((raw, i) => {
+        const copy = Uint8Array.from(raw);
+        if (i === count - 1) copy[79] ^= 1;
+        return copy;
+      });
+    const snapshot = await sync({ bad: { headers: bad }, a: {}, b: {} });
+    expect(snapshot.listHeight).toBe(tip);
+  });
+
+  it('starts again from the checkpoint when the stored chain is on a branch the nodes left', async () => {
+    const good = await sync({ a: {}, b: {} });
+    // A stored chain whose headers are real but labelled 30 blocks higher: nothing the nodes send follows it.
+    const stranded: ChainSnapshot = { ...good, chain: { network: 'testnet', height: tip - 70, headers: raws.slice(100, 124).map(toHex) } };
+    const snapshot = await sync({ a: {}, b: {} }, stranded);
+    expect(snapshot.listHeight).toBe(tip);
   });
 });

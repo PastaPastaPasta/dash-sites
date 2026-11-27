@@ -46,8 +46,12 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
   Each header must link to the previous one, carry exactly the DarkGravityWave
   difficulty (with testnet's minimum-difficulty rules), meet it with its X11
   hash, be later than the median of the last 11, and be less than two hours
-  ahead. Several nodes are asked for their tip, and the highest that verifies
-  wins.
+  ahead. Six nodes are asked for their tip. Each is asked only for headers up
+  to the tip it reported, and is dropped only for data that breaks these rules,
+  not for being slow or behind, so a node that claims a higher tip cannot get
+  honest ones dropped. The chain is stored 12 blocks below the verified tip. If
+  the next sync cannot extend it (the stored blocks were on a branch the network
+  left), it starts again from the checkpoint.
 - **Masternode list and quorums.** `Core/subscribeToMasternodeList` returns
   Core's `protx diff` from genesis to the tip, as CBOR. The list is accepted
   only if:
@@ -56,12 +60,18 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
   - the block is on the verified header chain;
   - the quorum commitments hash to the coinbase's `merkleRootQuorums`;
   - the masternode entries hash to `merkleRootMNList`.
-  Every field the extension uses is covered by one of those roots. This
-  includes the Platform (LLMQ 100_67 / 25_67) quorum public keys and the
-  evonode addresses. A diff's `addresses` for version 1–2 entries is derived,
-  not hashed, so the node address comes from `service` and `platformHTTPPort`
-  instead. Quorums proven by earlier syncs are kept as "previous" quorums, so
-  responses signed by a quorum that just rotated out still verify.
+  The quorum keys are covered by the quorum root, and the member count is taken
+  from the hashed bitset. Evonode addresses are covered by the masternode list
+  root: from the extended addresses of version 3 entries, and from `service`
+  and `platformHTTPPort` of version 2 entries. Version 1 entries hash neither
+  the type nor the port, so they are not used. A list whose masternode root
+  does not match still gives its quorums, but no nodes.
+- **Two lists must agree.** Lists from two different nodes, each proven
+  against a block of the verified chain, are required. A quorum key (and a
+  node) is used only if both lists hold it. A node that mines one block of its
+  own, with a forged quorum in its coinbase, therefore cannot get that quorum
+  used by itself. Quorums proven by earlier syncs are kept as "previous"
+  quorums, so responses signed by a quorum that just rotated out still verify.
 - **Into the SDK.** evo-sdk 5.1.0 in trusted mode is pointed at
   `https://quorums.dash-sites.invalid`. A `fetch` hook (`withLocalQuorums`)
   answers `/quorums` and `/previous` from the proven list, so that request
@@ -81,11 +91,12 @@ and the badge says how many were skipped.
 `SEEDS` (next to the checkpoint) lists up to 48 evonode HTTPS endpoints as IP
 addresses, taken from a masternode list proven at the checkpoint. After the
 first sync, the extension uses every valid evonode in the latest proven list
-instead. Both IPv4 and IPv6 are handled: `https://[v6]:port` comes from the
+instead, keeping only nodes both lists hold. Both IPv4 and IPv6 are handled: `https://[v6]:port` comes from the
 extended addresses of version 3 entries, and from `service` before that. On
 mainnet today every evonode advertises IPv4 only. Nodes are untrusted: a node
 that sends invalid headers or a list that does not hash is dropped. A node
-that sends an old tip is outvoted by others with more work.
+that sends an old tip only delays the sync: others are asked for the higher
+headers.
 
 ## Typing `alice.dash`, per browser
 
@@ -149,16 +160,21 @@ does. Search catching can be turned off in the settings.
 
 ## Known limits
 
-- **Trust model is SPV plus the coinbase commitment.** The extension checks
-  proof of work, difficulty and every Merkle root. It does not check ChainLock
-  signatures or the quorum commitments' BLS signatures. An attacker who serves
-  every node this browser asks, and also mines blocks at full mainnet
-  difficulty, could commit a fake quorum key. Asking several nodes, and using
-  the list from the proven masternode set, raise that bar. Fixing it fully
-  takes ChainLock checks against quorums proven earlier, or Core's DIP 175
-  quorum proofs (`getquorumproofchain`) served by DAPI. The bundled verifier
-  already checks those proofs (`WasmVerifiedContext`); DAPI does not serve
-  them yet.
+- **Trust model is SPV plus the coinbase commitment, with two nodes.** The
+  extension checks proof of work, difficulty and every Merkle root. It does not
+  check ChainLock signatures or the quorum commitments' BLS signatures. To
+  commit a fake quorum key, an attacker must control both nodes whose lists the
+  extension uses, and mine a block at full mainnet difficulty for each list's
+  coinbase (or one block they both answer with). Fixing this fully takes
+  ChainLock checks against quorums proven earlier, or Core's DIP 175 quorum
+  proofs (`getquorumproofchain`) served by DAPI. The bundled verifier already
+  checks those proofs (`WasmVerifiedContext`); DAPI does not serve them yet.
+- **Testnet** lets anyone mine a minimum-difficulty block when ten minutes
+  pass without one, so its proof of work protects almost nothing. Use testnet
+  for testing only.
+- **Fingerprinting.** `site.html` and `sandbox.html` are web-accessible (the
+  redirect rules need that), so a web page can detect that the extension is
+  installed.
 - **First run.** Headers stream at about 250 per second from one node. Mainnet
   makes about 550 blocks a day, so a checkpoint a month old costs about a
   minute on first run. Releases should refresh the checkpoint, and later

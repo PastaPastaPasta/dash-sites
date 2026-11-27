@@ -90,12 +90,13 @@ export function asDiff(value: unknown): MnListDiff {
 }
 
 const llmqSize = (type: number): number => {
-  const size = LLMQ_SIZE[type];
+  const size = Number.isInteger(type) ? LLMQ_SIZE[type] : undefined;
   if (size === undefined) throw new ChainError(`unknown LLMQ type ${type}`);
   return size;
 };
 
 export function serializeCommitment(q: QuorumCommitment): Uint8Array {
+  if (![1, 2, 3, 4].includes(q.version)) throw new ChainError(`unknown quorum commitment version ${String(q.version)}`);
   const size = llmqSize(q.llmqType);
   const bitset = (value: string, what: string): Uint8Array => sizedHex(value, Math.ceil(size / 8), what, `${what} of a type ${q.llmqType} quorum has the wrong length`);
   const w = new Writer().u16(q.version).u8(q.llmqType).bytes(fromDisplay(q.quorumHash));
@@ -285,7 +286,8 @@ function httpsAddresses(entry: MnListEntry): string[] {
 function nodeAddresses(entries: readonly MnListEntry[]): NodeAddress[] {
   const out: NodeAddress[] = [];
   for (const entry of entries) {
-    if (entry.nType !== 1 || !entry.isValid) continue;
+    // Version 1 entries hash neither the type nor the Platform port.
+    if (entry.nVersion < 2 || entry.nType !== 1 || !entry.isValid) continue;
     for (const address of httpsAddresses(entry)) {
       try {
         const parsed = parseAddress(address);
@@ -300,6 +302,16 @@ function nodeAddresses(entries: readonly MnListEntry[]): NodeAddress[] {
 }
 
 /** Sorts `entries` by proRegTxHash and returns their merkle root, or undefined if one has a form this version cannot serialize. */
+const bitCount = (bytes: Uint8Array): number => bytes.reduce((count, byte) => {
+  let bits = byte;
+  let n = count;
+  while (bits) {
+    n += bits & 1;
+    bits >>= 1;
+  }
+  return n;
+}, 0);
+
 function mnListRoot(entries: MnListEntry[]): Uint8Array | undefined {
   try {
     entries.sort((a, b) => compareBytes(fromDisplay(a.proRegTxHash), fromDisplay(b.proRegTxHash)));
@@ -313,8 +325,9 @@ function mnListRoot(entries: MnListEntry[]): Uint8Array | undefined {
 /**
  * Verifies a full masternode list diff against a block's merkle root: the coinbase must be the
  * block's first transaction, and the quorum list must hash to the root the coinbase commits to.
- * The masternode list is checked against its root too; if it holds an entry this version cannot
- * serialize, `nodes` is left out instead of failing, as nodes are untrusted in any case.
+ * The masternode list is checked against its root too; if it does not match, or holds an entry this
+ * version cannot serialize, `nodes` is left out instead of failing: nodes are untrusted in any case,
+ * and a new entry format should not stop quorum keys from being proven.
  */
 export function verifyDiff(diff: MnListDiff, headerMerkleRoot: Uint8Array): VerifiedMnList {
   const coinbase = parseCoinbase(fromHex(hex(diff.cbTx, 'cbTx')));
@@ -322,10 +335,10 @@ export function verifyDiff(diff: MnListDiff, headerMerkleRoot: Uint8Array): Veri
   if (toDisplay(coinbase.merkleRootQuorums) !== diff.merkleRootQuorums.toLowerCase()) throw new ChainError('the diff states another quorum root than its coinbase');
   const commitments = diff.newQuorums.map((q) => sha256d(serializeCommitment(q))).sort(compareBytes);
   if (!equalBytes(merkleRoot(commitments), coinbase.merkleRootQuorums)) throw new ChainError('the quorum list does not match the root in the coinbase');
-  const quorums = diff.newQuorums.map((q) => ({ llmqType: q.llmqType, quorumHash: q.quorumHash.toLowerCase(), publicKey: q.quorumPublicKey.toLowerCase(), validMembers: q.validMembersCount }));
+  // The member count comes from the hashed bitset, not the diff's own count.
+  const quorums = diff.newQuorums.map((q) => ({ llmqType: q.llmqType, quorumHash: q.quorumHash.toLowerCase(), publicKey: q.quorumPublicKey.toLowerCase(), validMembers: bitCount(fromHex(q.validMembers)) }));
   const entries = [...diff.mnList];
   const listRoot = mnListRoot(entries);
-  if (listRoot && !equalBytes(listRoot, coinbase.merkleRootMNList)) throw new ChainError('the masternode list does not match the root in the coinbase');
-  const nodes = listRoot ? nodeAddresses(entries) : undefined;
+  const nodes = listRoot && equalBytes(listRoot, coinbase.merkleRootMNList) ? nodeAddresses(entries) : undefined;
   return { blockHash: diff.blockHash.toLowerCase(), height: coinbase.height, quorums, ...(nodes ? { nodes } : {}) };
 }

@@ -33,7 +33,12 @@ export async function answerQuorumRequest(url: URL, source: SnapshotSource): Pro
 /** Wraps a fetch so that requests to {@link LOCAL_QUORUM_URL} are answered here and never sent. */
 export function withLocalQuorums(inner: typeof fetch, source: SnapshotSource): typeof fetch {
   return (input, init) => {
-    const url = new URL(input instanceof Request ? input.url : String(input), 'https://local.invalid/');
+    let url: URL;
+    try {
+      url = new URL(input instanceof Request ? input.url : String(input), 'https://local.invalid/');
+    } catch {
+      return inner(input, init);
+    }
     if (url.origin === LOCAL_QUORUM_URL) return answerQuorumRequest(url, source);
     return inner(input, init);
   };

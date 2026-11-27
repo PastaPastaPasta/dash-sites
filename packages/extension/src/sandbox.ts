@@ -176,4 +176,4 @@ window.addEventListener('message', (event) => {
   post({ type: 'title', title: document.title });
 });
 
-post({ type: 'ready', url: decodeURIComponent(location.hash.slice(1)) });
+post({ type: 'ready', url: location.hash.slice(1) });

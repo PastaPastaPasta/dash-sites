@@ -34,7 +34,9 @@ try {
   const page = await context.newPage();
   await page.goto(`http://${name}.dash/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await page.waitForFunction(() => ['ok', 'partial', 'none', 'error'].includes(document.getElementById('badge')?.dataset.kind ?? ''), null, { timeout: 240000 });
-  await page.waitForSelector('#frame');
+  const kind = await page.evaluate(() => document.getElementById('badge').dataset.kind);
+  if (kind === 'error') console.log(`     ${await page.textContent('#status-title')}: ${await page.textContent('#status-detail')}`);
+  await page.waitForSelector('#frame', { state: 'attached' });
   const frame = page.frames().find((f) => f !== page.mainFrame());
   await frame.waitForFunction(() => document.body && document.body.innerText.trim().length > 0, null, { timeout: 30000 });
   const info = await frame.evaluate(() => ({ scripts: document.scripts.length, text: document.body.innerText.slice(0, 80), images: [...document.images].map((i) => i.src.slice(0, 5)) }));
