@@ -194,6 +194,15 @@ register a service worker of its own. A browser fetches a worker script
 from the host, which answers every path except its own few files with the
 static page, so the registration fails.
 
+## Agent skill
+
+A portable agent skill covering end-to-end publishing from scratch — DashPay
+wallet sign-in, funding or topping up an identity via a Dash address or QR code
+(`skills/dash-sites/scripts/fund-identity.mjs`), DPNS registration, fee
+minimization (`--brotli`, `--external`, `--elsewhere`), updates, and storage
+refunds (`--prune`, `gc`) — lives in
+[skills/dash-sites/SKILL.md](skills/dash-sites/SKILL.md).
+
 ## Install the extension
 
 1. Download `dash-sites-extension-chrome-<version>.zip` from the releases
@@ -220,6 +229,7 @@ listings yet. The steps are in [packages/extension](packages/extension/README.md
 | `contract/` | The `dash-sites` data contract |
 | `deploy/` | dash.site Workers (`deploy/cloudflare`) and the testnet droplet |
 | `e2e/` | Browser tests against live names |
+| `skills/dash-sites` | Portable agent skill (`SKILL.md`, references, and `fund-identity.mjs`) |
 
 ```sh
 npm ci
