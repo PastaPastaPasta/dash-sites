@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Dash Sites",
-  "version": "0.1.0",
-  "description": "Open websites published on Dash Platform names: type alice.dash. Your browser fetches the site from Dash Platform and verifies it.",
+  "version": "0.2.0",
+  "description": "Open websites published on Dash Platform names: type alice.dash. Your browser reads and verifies them from the Dash network itself, with no gateway or DNS.",
   "icons": {
     "16": "icons/16.png",
     "32": "icons/32.png",
@@ -25,17 +25,55 @@
     "type": "module"
   },
   "permissions": [
-    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
     "storage",
-    "webNavigation",
-    "activeTab",
-    "scripting"
+    "webNavigation"
   ],
   "host_permissions": [
-    "*://*.dash/*"
+    "*://*.dash/*",
+    "https://*.google.com/*",
+    "https://*.google.co.uk/*",
+    "https://*.google.de/*",
+    "https://*.google.fr/*",
+    "https://*.google.ca/*",
+    "https://*.google.com.au/*",
+    "https://*.google.co.in/*",
+    "https://*.google.es/*",
+    "https://*.google.it/*",
+    "https://*.google.nl/*",
+    "https://*.google.com.br/*",
+    "https://*.google.co.jp/*",
+    "https://*.google.ch/*",
+    "https://*.google.at/*",
+    "https://*.google.pl/*",
+    "https://*.bing.com/*",
+    "https://*.duckduckgo.com/*",
+    "https://search.brave.com/*",
+    "https://*.search.yahoo.com/*",
+    "https://*.ecosia.org/*",
+    "https://*.startpage.com/*",
+    "https://*.kagi.com/*",
+    "https://*.qwant.com/*"
   ],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "site.html",
+        "sandbox.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "sandbox": {
+    "pages": [
+      "sandbox.html"
+    ]
   },
-  "minimum_chrome_version": "116"
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'",
+    "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads; default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob: data:; img-src blob: data: https:; media-src blob: data: https:; font-src blob: data:; connect-src blob: data: https:; frame-src blob: data:; worker-src blob:; form-action 'none'; base-uri https: http:"
+  },
+  "minimum_chrome_version": "124"
 }

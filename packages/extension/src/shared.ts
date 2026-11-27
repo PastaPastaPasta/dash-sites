@@ -1,30 +1,137 @@
-import { matchHost, parseName, type Network, type Resolution } from '@dash-sites/core';
-
-export const RULE_ID = 1;
-export const DEFAULT_GATEWAY = 'https://id.dashhq.org';
+import { parseName, type Network } from '@dash-sites/core';
 
 export interface Settings {
-  /** Origin of the gateway's bare domain, e.g. `https://id.dashhq.org` or `http://localhost:8080`. */
-  gateway: string;
-  /** Turn a search for `alice.dash` into a visit to the site. */
-  catchSearches: boolean;
   network: Network;
+  /** Turn a search for exactly `alice.dash` into a visit to the site. */
+  catchSearches: boolean;
+  /** Offer a gateway when Dash Platform cannot be read directly. Off unless the user turns it on. */
+  gatewayFallback: boolean;
+  /** Origin of the gateway's bare domain, e.g. `https://dash.site`. Only used with `gatewayFallback`. */
+  gateway: string;
 }
 
-export const DEFAULT_SETTINGS: Settings = { gateway: DEFAULT_GATEWAY, catchSearches: true, network: 'testnet' };
+export const DEFAULT_SETTINGS: Settings = { network: 'mainnet', catchSearches: true, gatewayFallback: false, gateway: '' };
 
-export interface Gateway {
-  origin: string;
-  protocol: 'https:' | 'http:';
-  /** Host with port, as it appears in URLs. */
-  host: string;
-  hostname: string;
+/** A site address the viewer shows: the name, and the path and query under it. */
+export interface Target {
+  label: string;
+  /** Starts with `/`; percent-encoded as in a URL. */
+  path: string;
+  search: string;
 }
 
-const LOOPBACK = /^(localhost|[a-z0-9-]+\.localhost)$/;
+export const siteOrigin = (label: string): string => `https://${label}.dash`;
+export const targetUrl = (target: Target): string => `${siteOrigin(target.label)}${target.path}${target.search}`;
+
+/**
+ * `alice`, `alice.dash`, `alice.dash/blog?x`, `http://alice.dash/blog` or a search engine's
+ * `alice.dash%2Fblog`, to a target. Anything else is not a `.dash` address.
+ */
+export function parseTarget(input: string): Target | undefined {
+  let text = input.trim().replace(/^https?:\/\//i, '');
+  if (/^[a-z0-9-]+(\.dash)?\.?%2f/i.test(text)) text = text.replace(/%2f/i, '/');
+  const cut = text.search(/[/?#]/);
+  const host = (cut < 0 ? text : text.slice(0, cut)).replace(/:\d+$/, '').replace(/\.$/, '');
+  const name = parseName(host);
+  if (!name) return undefined;
+  let url: URL;
+  try {
+    url = new URL(cut < 0 ? '/' : text.slice(cut), 'https://x.invalid/');
+  } catch {
+    return undefined;
+  }
+  return { label: name.label, path: url.pathname, search: url.search };
+}
+
+/** The viewer's own hash for a target: `#alice.dash/blog?x`. */
+export const viewerHash = (target: Target): string => `#${target.label}.dash${target.path}${target.search}`;
+
+export const RULE_IDS = { direct: 1, frame: 2, searchBase: 100 } as const;
+
+const LABEL = '([a-zA-Z0-9-]+)';
+/** `http(s)://<label>.dash[.][:port][/path?query]` and nothing longer: `alice.dash.site` is not a `.dash` address. */
+const DIRECT = `^https?://${LABEL}\\.dash\\.?(?::[0-9]+)?(/[^#]*)?(?:#.*)?$`;
+
+/** Search engines whose result URL carries the typed text in one query parameter. */
+export const SEARCH_ENGINES: { name: string; prefix: string; param: string }[] = [
+  { name: 'Google', prefix: 'https?://(?:www\\.)?google\\.[a-z]{2,3}(?:\\.[a-z]{2})?/search\\?', param: 'q' },
+  { name: 'Bing', prefix: 'https?://(?:www\\.)?bing\\.com/search\\?', param: 'q' },
+  { name: 'DuckDuckGo', prefix: 'https?://(?:html\\.)?duckduckgo\\.com/(?:html/?)?\\?', param: 'q' },
+  { name: 'Brave', prefix: 'https?://search\\.brave\\.com/search\\?', param: 'q' },
+  { name: 'Yahoo', prefix: 'https?://(?:[a-z]+\\.)?search\\.yahoo\\.com/search\\?', param: 'p' },
+  { name: 'Ecosia', prefix: 'https?://www\\.ecosia\\.org/search\\?', param: 'q' },
+  { name: 'Startpage', prefix: 'https?://(?:www\\.)?startpage\\.com/(?:do|sp)/search\\?', param: 'query' },
+  { name: 'Kagi', prefix: 'https?://kagi\\.com/search\\?', param: 'q' },
+  { name: 'Qwant', prefix: 'https?://(?:www\\.)?qwant\\.com/\\?', param: 'q' },
+];
+
+type Rule = chrome.declarativeNetRequest.Rule;
+
+/**
+ * The redirect rules, given the extension's own base URL. They act before a request leaves the
+ * browser: a `.dash` address is never looked up in DNS, and a search for exactly a `.dash` name is
+ * never sent to the search engine.
+ */
+export function redirectRules(base: string, settings: Settings, sandbox: boolean): Rule[] {
+  const viewer = `${base}site.html#`;
+  const rules: Rule[] = [
+    {
+      id: RULE_IDS.direct,
+      priority: 2,
+      action: { type: 'redirect', redirect: { regexSubstitution: `${viewer}\\1.dash\\2` } },
+      condition: { regexFilter: DIRECT, resourceTypes: ['main_frame'], isUrlFilterCaseSensitive: false },
+    } as Rule,
+  ];
+  if (sandbox) {
+    // A site page that navigates its own frame lands back in the sandbox, which asks the viewer for that address.
+    rules.push({
+      id: RULE_IDS.frame,
+      priority: 2,
+      action: { type: 'redirect', redirect: { regexSubstitution: `${base}sandbox.html#https://\\1.dash\\2` } },
+      condition: { regexFilter: DIRECT, resourceTypes: ['sub_frame'], isUrlFilterCaseSensitive: false },
+    } as Rule);
+  }
+  if (settings.catchSearches) {
+    SEARCH_ENGINES.forEach((engine, i) => {
+      rules.push({
+        id: RULE_IDS.searchBase + i,
+        priority: 1,
+        action: { type: 'redirect', redirect: { regexSubstitution: `${viewer}\\1.dash\\2` } },
+        condition: {
+          regexFilter: `^${engine.prefix}(?:[^#]*&)?${engine.param}=${LABEL}\\.dash((?:/|%2[fF])[^&#+%]*)?(?:[&#].*)?$`,
+          resourceTypes: ['main_frame'],
+          isUrlFilterCaseSensitive: false,
+        },
+      } as Rule);
+    });
+  }
+  return rules;
+}
+
+const SEARCH_PARAMS = ['q', 'query', 'p', 'text'];
+
+/**
+ * The target for a search URL whose query is exactly a `.dash` address, for engines the rules do
+ * not list (for those, the rules have already redirected, and a second navigation would cancel theirs). By then the engine has the request; the rules are what keeps a search private.
+ */
+export function targetForSearch(searchUrl: string): Target | undefined {
+  let url: URL;
+  try {
+    url = new URL(searchUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'https:' || url.hostname.endsWith('.dash')) return undefined;
+  if (SEARCH_ENGINES.some((engine) => new RegExp(`^${engine.prefix}`, 'i').test(searchUrl))) return undefined;
+  for (const param of SEARCH_PARAMS) {
+    const query = url.searchParams.get(param)?.trim();
+    if (query && /^[a-z0-9-]+\.dash(\/\S*)?$/i.test(query)) return parseTarget(query);
+  }
+  return undefined;
+}
 
 /** A gateway must be https, or plain http on this machine. */
-export function parseGateway(input: string): Gateway | undefined {
+export function parseGateway(input: string): { origin: string; host: string; protocol: string } | undefined {
   let url: URL;
   try {
     url = new URL(/^[a-z]+:\/\//i.test(input.trim()) ? input.trim() : `https://${input.trim()}`);
@@ -32,119 +139,22 @@ export function parseGateway(input: string): Gateway | undefined {
     return undefined;
   }
   if (url.pathname !== '/' || url.search || url.hash || url.username || url.password) return undefined;
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOOPBACK.test(url.hostname))) return undefined;
-  if (!/^[a-z0-9.-]+$/.test(url.hostname) || !url.hostname.includes('.') && url.hostname !== 'localhost') return undefined;
-  return { origin: url.origin, protocol: url.protocol as Gateway['protocol'], host: url.host, hostname: url.hostname };
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && /^(localhost|[a-z0-9-]+\.localhost)$/.test(url.hostname))) return undefined;
+  if (!url.hostname.includes('.') && url.hostname !== 'localhost') return undefined;
+  return { origin: url.origin, host: url.host, protocol: url.protocol };
 }
 
-export function siteUrl(gateway: Gateway, label: string, path = '/'): string {
-  return `${gateway.protocol}//${label}.${gateway.host}${path.startsWith('/') ? path : `/${path}`}`;
+/** The gateway's address for a target, when the user turned the fallback on. */
+export function gatewayUrl(settings: Settings, target: Target): string | undefined {
+  const gateway = settings.gatewayFallback ? parseGateway(settings.gateway) : undefined;
+  return gateway ? `${gateway.protocol}//${target.label}.${gateway.host}${target.path}${target.search}` : undefined;
 }
 
-/**
- * Sends navigations to `http(s)://<label>.dash/…` to the gateway instead. The pattern has no
- * counted repetition (Chrome caps a compiled rule at 2 KB); the gateway rejects invalid labels.
- */
-export function redirectRule(gateway: Gateway): chrome.declarativeNetRequest.Rule {
-  return {
-    id: RULE_ID,
-    priority: 1,
-    action: { type: 'redirect', redirect: { regexSubstitution: `${gateway.protocol}//\\1.${gateway.host}\\2` } },
-    condition: {
-      regexFilter: '^https?://([a-z0-9-]+)\\.dash(?::[0-9]+)?(/.*)?$',
-      resourceTypes: ['main_frame', 'sub_frame'],
-    },
-  } as chrome.declarativeNetRequest.Rule;
+export async function loadSettings(): Promise<Settings> {
+  const stored = (await chrome.storage.local.get('settings')).settings as Partial<Settings> | undefined;
+  return { ...DEFAULT_SETTINGS, ...stored };
 }
 
-/** `alice`, `alice.dash`, `alice.dash/blog` or `http://alice.dash/blog` to a gateway URL. */
-export function urlForInput(input: string, gateway: Gateway): string | undefined {
-  const text = input.trim().replace(/^https?:\/\//i, '');
-  const slash = text.indexOf('/');
-  const host = slash < 0 ? text : text.slice(0, slash);
-  const path = slash < 0 ? '/' : text.slice(slash);
-  const name = parseName(host);
-  if (!name || /\s/.test(path)) return undefined;
-  return siteUrl(gateway, name.label, path);
-}
-
-const SEARCH_HOSTS = /^(www\.)?(google\.[a-z.]{2,6}|bing\.com|duckduckgo\.com|search\.brave\.com|search\.yahoo\.com|ecosia\.org|startpage\.com|kagi\.com)$/;
-
-/** The gateway URL for a search-engine URL whose query is exactly a `.dash` name. */
-export function urlForSearch(searchUrl: string, gateway: Gateway): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(searchUrl);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== 'https:' || !SEARCH_HOSTS.test(url.hostname)) return undefined;
-  const query = (url.searchParams.get('q') ?? url.searchParams.get('query') ?? url.searchParams.get('p') ?? '').trim();
-  if (!/^[a-z0-9-]+\.dash(\/\S*)?$/i.test(query)) return undefined;
-  return urlForInput(query, gateway);
-}
-
-/** The label of the `.dash` site a tab URL shows through this gateway. */
-export function labelForUrl(tabUrl: string, gateway: Gateway): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(tabUrl);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== gateway.protocol) return undefined;
-  const match = matchHost(url.host, [gateway.hostname]);
-  if (match.kind !== 'site' || url.host !== `${match.label}.${gateway.host}`) return undefined;
-  return match.label;
-}
-
-/** What the page was told about the site it shows, from the `X-Dash-*` headers of its own file. */
-export interface Claims {
-  owner?: string;
-  content?: string;
-  revision?: number;
-}
-
-export function claimsFromHeaders(headers: { get(name: string): string | null }): Claims {
-  const revision = Number(headers.get('x-dash-site-revision'));
-  return {
-    owner: headers.get('x-dash-owner') ?? undefined,
-    content: headers.get('x-dash-content') ?? undefined,
-    revision: Number.isFinite(revision) && revision > 0 ? revision : undefined,
-  };
-}
-
-export interface Verdict {
-  kind: 'match' | 'behind' | 'mismatch' | 'none';
-  detail: string;
-}
-
-/** Compares what the page was served with what the extension itself proves from Dash Platform. */
-export function compare(claims: Claims, resolution: Resolution): Verdict {
-  const serves = claims.content !== undefined;
-  switch (resolution.status) {
-    case 'invalid':
-      return { kind: 'none', detail: 'This is not a valid Dash Platform name.' };
-    case 'unregistered':
-      return serves
-        ? { kind: 'mismatch', detail: 'This page shows a site, but Dash Platform proves this name is not registered.' }
-        : { kind: 'none', detail: 'Dash Platform proves this name is not registered.' };
-    case 'no-site':
-      return serves
-        ? { kind: 'mismatch', detail: 'This page shows a site, but Dash Platform proves the owner has published none.' }
-        : { kind: 'none', detail: 'The name is registered and its owner has not published a site.' };
-    case 'unsupported':
-    case 'ok': {
-      const site = resolution.site;
-      if (!serves) return { kind: 'none', detail: 'The owner has published a site, and this page is not showing it.' };
-      if (claims.owner !== resolution.ownerId) {
-        return { kind: 'mismatch', detail: `This page was served for owner ${claims.owner ?? 'nobody'}; Dash Platform proves the owner is ${resolution.ownerId}.` };
-      }
-      if (claims.content === site.content) return { kind: 'match', detail: 'This page shows the site record Dash Platform proves.' };
-      if ((claims.revision ?? 0) < site.revision) {
-        return { kind: 'behind', detail: `This page shows revision ${claims.revision ?? '?'}; the owner has published revision ${site.revision}. Reload to get it.` };
-      }
-      return { kind: 'mismatch', detail: 'This page shows different content from the site record Dash Platform proves.' };
-    }
-  }
+export async function saveSettings(settings: Settings): Promise<void> {
+  await chrome.storage.local.set({ settings });
 }

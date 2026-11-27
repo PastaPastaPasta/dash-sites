@@ -209,7 +209,11 @@ refunds (`--prune`, `gc`) — lives in
    page and unzip it.
 2. Open `chrome://extensions`, turn on Developer mode and choose "Load
    unpacked".
-3. Type `p2p.dash` in the address bar, or `dash`, a space and a name.
+3. Type `forg3.dash` in the address bar, or `dash`, a space and a name.
+
+The extension reads the site straight from Dash Platform nodes and verifies it,
+starting from the Dash chain itself; it needs no gateway or DNS. Mainnet by
+default; testnet in its settings.
 
 The Firefox build is `dash-sites-extension-firefox-<version>.zip`; load it
 from `about:debugging` with "Load Temporary Add-on". There are no store
@@ -242,15 +246,18 @@ npm run lint
 `npm run e2e:shell` opens a live name in a fresh Chromium profile. It fails
 unless the host sent only the static page, every other host the browser
 contacted is a Dash Platform node or the quorum key service, and the site
-still loads with the host blocked. `e2e:extension` opens a live name through
-the extension, and `e2e:builder` publishes through the testnet builder and
+still loads with the host blocked. `e2e:extension` opens a live mainnet name
+through the extension and fails if any host is reached by name or a search
+reaches the engine (`e2e:extension-static` drives the Firefox build's
+renderer, `e2e:resolve` resolves a name in Node the same way), and `e2e:builder` publishes through the testnet builder and
 reads the page back.
 
 ```sh
 npx playwright install chromium
 npm run e2e:shell                      # p2p.dash through id.dashhq.org
 npm run e2e:shell -- d4shhq dash.site  # a mainnet name through dash.site
-npm run e2e:extension
+npm run e2e:extension                  # forg3.dash from Dash Platform, no gateway
+npm run chain:checkpoint               # refresh the extension's chain checkpoint and seeds (release step)
 npm run e2e:builder -- identity.json <label>  # a name the identity owns; publishes on testnet (spends testnet credits)
 ```
 

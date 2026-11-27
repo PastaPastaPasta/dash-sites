@@ -1,105 +1,46 @@
-import { loadGateway } from './settings.js';
-import { claimsFromHeaders, compare, labelForUrl, urlForInput, type Verdict } from './shared.js';
+import { snapshotTip, type ChainSnapshot } from '@dash-sites/core/chain';
+import { loadSettings, parseTarget, viewerHash } from './shared.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
-const short = (id: string): string => (id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
 
-function show(verdict: Verdict['kind'] | 'checking' | 'error', title: string, detail: string): void {
-  $('state').dataset.kind = verdict;
-  $('title').textContent = title;
-  $('detail').textContent = detail;
-}
-
-function row(label: string, value: string, full = value): void {
-  const dt = document.createElement('dt');
-  dt.textContent = label;
-  const dd = document.createElement('dd');
-  dd.textContent = value;
-  dd.title = full;
-  $('facts').append(dt, dd);
-}
-
-const TITLES: Record<Verdict['kind'], string> = {
-  match: 'Verified against Dash Platform',
-  behind: 'Page is behind',
-  mismatch: 'Does not match Dash Platform',
-  none: 'No site',
-};
-
-interface Served {
-  headers: Record<string, string | null>;
-  sha256: string;
-  pathname: string;
-}
-
-/**
- * Fetches the tab's own address from the page's own script world, the only place a request takes the
- * path the page did (through the shell's service worker), and returns what came back. A consistency
- * check, not a defence against a hostile shell: whoever controls the worker also controls that world.
- */
-async function inspect(tabId: number): Promise<Served | undefined> {
-  const [injection] = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: async (): Promise<Served> => {
-      const response = await fetch(location.href, { cache: 'no-store' });
-      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await response.arrayBuffer()));
-      const names = ['x-dash-owner', 'x-dash-content', 'x-dash-site-revision'];
-      return {
-        headers: Object.fromEntries(names.map((name) => [name, response.headers.get(name)])),
-        sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-        pathname: new URL(response.url).pathname,
-      };
-    },
-  });
-  return injection?.result as Served | undefined;
+function ago(ms: number): string {
+  const minutes = Math.round((Date.now() - ms) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
 }
 
 async function main(): Promise<void> {
-  const { settings, gateway } = await loadGateway();
-  $('gateway').textContent = gateway.host;
-  $<HTMLAnchorElement>('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
-  $<HTMLInputElement>('name').addEventListener('input', (event) => (event.target as HTMLInputElement).setCustomValidity(''));
+  const settings = await loadSettings();
+  $('network').textContent = settings.network;
+  $('options').addEventListener('click', () => void chrome.runtime.openOptionsPage());
+  const input = $<HTMLInputElement>('name');
+  input.addEventListener('input', () => input.setCustomValidity(''));
   $<HTMLFormElement>('open').addEventListener('submit', (event) => {
     event.preventDefault();
-    const url = urlForInput($<HTMLInputElement>('name').value, gateway);
-    if (url) void chrome.tabs.create({ url });
-    else $<HTMLInputElement>('name').setCustomValidity('Enter a name such as alice.dash');
+    const target = parseTarget(input.value);
+    if (!target) {
+      input.setCustomValidity('Enter a name such as alice.dash');
+      input.reportValidity();
+      return;
+    }
+    void chrome.tabs.create({ url: chrome.runtime.getURL(`site.html${viewerHash(target)}`) });
+    window.close();
   });
-
-  const override = new URLSearchParams(location.search).get('url');
-  const tabs = await chrome.tabs.query(override ? {} : { active: true, currentWindow: true });
-  const tab = override ? tabs.find((candidate) => candidate.url === override) : tabs[0];
-  const tabUrl = override ?? tab?.url ?? '';
-  const label = labelForUrl(tabUrl, gateway);
-  if (!label) {
-    show('none', 'Not a .dash site', 'Open a site by name below, or type “dash”, a space and a name in the address bar.');
-    return;
+  const key = `chain:${settings.network}`;
+  const snapshot = (await chrome.storage.local.get(key))[key] as ChainSnapshot | undefined;
+  const chain = $('chain');
+  if (snapshot) {
+    const tip = snapshotTip(snapshot);
+    chain.innerHTML = '';
+    const strong = document.createElement('b');
+    strong.textContent = `block ${tip.height.toLocaleString()}`;
+    chain.append('Dash chain verified to ', strong, `, ${ago(snapshot.syncedAt)}. ${snapshot.quorums.length} Platform quorum keys proven; ${snapshot.nodes.length} nodes known.`);
+  } else {
+    chain.textContent = 'The first site you open verifies the Dash chain from the checkpoint in this release.';
   }
-  $('site').textContent = `${label}.dash`;
-  show('checking', 'Checking…', 'Reading the name and its site record from Dash Platform, with proofs.');
-
-  const [served, verify] = await Promise.all([tab?.id === undefined ? undefined : inspect(tab.id), import('./verify.js')]);
-  if (!served) throw new Error('The extension could not read this tab. Reload the page and open the popup again.');
-  const claims = claimsFromHeaders({ get: (name) => served.headers[name] ?? null });
-  const resolution = await verify.resolve(label, settings.network);
-  const verdict = compare(claims, resolution);
-  show(verdict.kind, TITLES[verdict.kind], verdict.detail);
-  if (resolution.status === 'invalid') return;
-  if ('ownerId' in resolution) row('Owner', short(resolution.ownerId), resolution.ownerId);
-  if ('site' in resolution) {
-    row('Revision', String(resolution.site.revision));
-    row('Published', new Date(resolution.site.updatedAt).toLocaleString());
-  }
-  row('Proved at', `block ${resolution.meta.height}`, new Date(resolution.meta.timeMs).toLocaleString());
-  row('Network', settings.network);
-
-  if (verdict.kind !== 'match' || resolution.status !== 'ok') return;
-  const audit = await verify.auditFile(resolution, served.pathname, served.sha256, settings.network);
-  const line = $('audit');
-  line.dataset.ok = String(audit.ok);
-  line.textContent = audit.ok ? `This page's file (${audit.path}) matches the hash its owner published.` : audit.reason;
-  if (!audit.ok) show('mismatch', TITLES.mismatch, audit.reason);
+  input.focus();
 }
 
-main().catch((error: unknown) => show('error', 'Could not check', String((error as Error)?.message ?? error)));
+void main();

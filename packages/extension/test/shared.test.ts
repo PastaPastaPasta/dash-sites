@@ -1,97 +1,91 @@
 import { describe, expect, it } from 'vitest';
-import type { Resolution } from '@dash-sites/core';
-import { claimsFromHeaders, compare, labelForUrl, parseGateway, redirectRule, siteUrl, urlForInput, urlForSearch, type Gateway } from '../src/shared.js';
+import { asFrameMessage } from '../src/protocol.js';
+import { DEFAULT_SETTINGS, gatewayUrl, parseTarget, redirectRules, targetForSearch, viewerHash } from '../src/shared.js';
 
-const gw = parseGateway('https://id.dashhq.org') as Gateway;
-const local = parseGateway('http://localhost:8080') as Gateway;
+const BASE = 'chrome-extension://abc/';
 
-describe('gateway setting', () => {
-  it('accepts https and loopback http only', () => {
-    expect(gw).toEqual({ origin: 'https://id.dashhq.org', protocol: 'https:', host: 'id.dashhq.org', hostname: 'id.dashhq.org' });
-    expect(parseGateway('id.dashhq.org')?.origin).toBe('https://id.dashhq.org');
-    expect(local.host).toBe('localhost:8080');
-    for (const bad of ['http://id.dashhq.org', 'https://id.dashhq.org/path', 'https://u:p@id.dashhq.org', 'ftp://x.org', 'javascript:alert(1)', '', 'https://', 'http://127.0.0.1.evil.org']) {
-      expect(parseGateway(bad), bad).toBeUndefined();
-    }
+/** Applies the rules as the browser would: the first matching rule's substitution, with RE2 syntax JS also reads. */
+function redirect(url: string, type: 'main_frame' | 'sub_frame' = 'main_frame', settings = DEFAULT_SETTINGS): string | undefined {
+  const rules = redirectRules(BASE, settings, true).sort((a, b) => (b.priority ?? 1) - (a.priority ?? 1));
+  for (const rule of rules) {
+    if (!rule.condition.resourceTypes?.includes(type as chrome.declarativeNetRequest.ResourceType)) continue;
+    const pattern = new RegExp(rule.condition.regexFilter as string, rule.condition.isUrlFilterCaseSensitive === false ? 'i' : '');
+    const match = pattern.exec(url);
+    if (!match) continue;
+    return (rule.action.redirect?.regexSubstitution as string).replace(/\\(\d)/g, (_, n: string) => match[Number(n)] ?? '');
+  }
+  return undefined;
+}
+
+describe('targets', () => {
+  it('parses names, paths and queries', () => {
+    expect(parseTarget('alice')).toEqual({ label: 'alice', path: '/', search: '' });
+    expect(parseTarget('Alice.DASH/blog/a b')).toEqual({ label: 'alice', path: '/blog/a%20b', search: '' });
+    expect(parseTarget('http://alice.dash:80/blog?x=1#top')).toEqual({ label: 'alice', path: '/blog', search: '?x=1' });
+    expect(parseTarget('alice.dash%2Fblog')).toEqual({ label: 'alice', path: '/blog', search: '' });
+    expect(parseTarget('alice.dash.')).toEqual({ label: 'alice', path: '/', search: '' });
+    expect(parseTarget('alice.com')).toBeUndefined();
+    expect(parseTarget('a.b.dash')).toBeUndefined();
+    expect(parseTarget('')).toBeUndefined();
+    expect(viewerHash({ label: 'alice', path: '/blog', search: '?x=1' })).toBe('#alice.dash/blog?x=1');
   });
 });
 
-describe('redirect rule', () => {
-  const rule = redirectRule(gw);
-  const apply = (url: string, gateway = gw): string | undefined => {
-    const r = redirectRule(gateway);
-    const match = new RegExp(r.condition.regexFilter as string, 'i').exec(url);
-    if (!match) return undefined;
-    return (r.action.redirect?.regexSubstitution as string).replace(/\\(\d)/g, (_all, n: string) => match[Number(n)] ?? '');
-  };
-
-  it('only touches top-level and frame navigations', () => {
-    expect(rule.condition.resourceTypes).toEqual(['main_frame', 'sub_frame']);
+describe('redirect rules', () => {
+  it('send .dash addresses to the viewer before any DNS lookup', () => {
+    expect(redirect('http://alice.dash/')).toBe(`${BASE}site.html#alice.dash/`);
+    expect(redirect('https://Alice.dash/blog?x=1')).toBe(`${BASE}site.html#Alice.dash/blog?x=1`);
+    expect(redirect('http://alice.dash')).toBe(`${BASE}site.html#alice.dash`);
+    expect(redirect('http://alice.dash./')).toBe(`${BASE}site.html#alice.dash/`);
+    expect(redirect('https://alice.dash.site/')).toBeUndefined();
+    expect(redirect('https://alice.dashboard.com/')).toBeUndefined();
   });
 
-  it('rewrites .dash URLs to the gateway', () => {
-    expect(apply('http://alice.dash/')).toBe('https://alice.id.dashhq.org/');
-    expect(apply('https://alice.dash/blog/post?x=1#top')).toBe('https://alice.id.dashhq.org/blog/post?x=1#top');
-    expect(apply('http://alice.dash:8080/a')).toBe('https://alice.id.dashhq.org/a');
-    expect(apply('http://alice.dash/', local)).toBe('http://alice.localhost:8080/');
+  it('send a site frame that navigates itself back to the sandbox', () => {
+    expect(redirect('https://alice.dash/next', 'sub_frame')).toBe(`${BASE}sandbox.html#https://alice.dash/next`);
   });
 
-  it('leaves everything else alone', () => {
-    for (const url of ['https://example.com/alice.dash/', 'http://blog.alice.dash/', 'http://alice.dash.evil.com/', 'http://user@alice.dash/', 'https://example.com/?u=http://alice.dash/', 'ftp://alice.dash/']) {
-      expect(apply(url), url).toBeUndefined();
-    }
-  });
-});
-
-describe('typed input and searches', () => {
-  it('turns names into gateway URLs', () => {
-    expect(urlForInput('alice', gw)).toBe('https://alice.id.dashhq.org/');
-    expect(urlForInput(' Alice.dash/Blog?x=1 ', gw)).toBe('https://alice.id.dashhq.org/Blog?x=1');
-    expect(urlForInput('http://alice.dash/a', local)).toBe('http://alice.localhost:8080/a');
-    for (const bad of ['', 'al', 'alice.eth', 'two words', 'alice.dash/a b', 'xn--abc.dash']) expect(urlForInput(bad, gw), bad).toBeUndefined();
+  it('catch a search for exactly a .dash name before it is sent', () => {
+    expect(redirect('https://www.google.com/search?q=alice.dash&oq=alice.dash&sourceid=chrome&ie=UTF-8')).toBe(`${BASE}site.html#alice.dash`);
+    expect(redirect('https://www.google.co.uk/search?client=firefox-b-d&q=alice.dash')).toBe(`${BASE}site.html#alice.dash`);
+    expect(redirect('https://www.bing.com/search?q=alice.dash%2Fblog&form=QBLH')).toBe(`${BASE}site.html#alice.dash%2Fblog`);
+    expect(redirect('https://duckduckgo.com/?t=ffab&q=alice.dash')).toBe(`${BASE}site.html#alice.dash`);
+    expect(redirect('https://search.yahoo.com/search?p=alice.dash')).toBe(`${BASE}site.html#alice.dash`);
+    expect(redirect('https://www.startpage.com/sp/search?query=alice.dash')).toBe(`${BASE}site.html#alice.dash`);
+    expect(parseTarget(decodeURIComponent('alice.dash%2Fblog'))).toEqual({ label: 'alice', path: '/blog', search: '' });
   });
 
-  it('catches a search for exactly a .dash name', () => {
-    expect(urlForSearch('https://www.google.com/search?q=alice.dash&sourceid=chrome', gw)).toBe('https://alice.id.dashhq.org/');
-    expect(urlForSearch('https://duckduckgo.com/?q=alice.dash%2Fblog', gw)).toBe('https://alice.id.dashhq.org/blog');
-    expect(urlForSearch('https://www.google.co.uk/search?q=alice.dash', gw)).toBe('https://alice.id.dashhq.org/');
-    for (const url of ['https://www.google.com/search?q=what+is+alice.dash', 'https://www.google.com/search?q=alice', 'https://evil.example/search?q=alice.dash', 'https://google.com.evil.example/search?q=alice.dash', 'not a url']) {
-      expect(urlForSearch(url, gw), url).toBeUndefined();
-    }
+  it('leave other searches alone', () => {
+    expect(redirect('https://www.google.com/search?q=what+is+alice.dash')).toBeUndefined();
+    expect(redirect('https://www.google.com/search?q=alice.dashboard')).toBeUndefined();
+    expect(redirect('https://www.google.com/search?q=alice.dash+price')).toBeUndefined();
+    expect(redirect('https://www.google.com/search?oq=alice.dash&q=cats')).toBeUndefined();
+    expect(redirect('https://evil.example/search?q=alice.dash')).toBeUndefined();
+    expect(redirect('https://www.google.com/search?q=alice.dash', 'main_frame', { ...DEFAULT_SETTINGS, catchSearches: false })).toBeUndefined();
   });
 
-  it('recognises a site shown through the gateway', () => {
-    expect(labelForUrl('https://alice.id.dashhq.org/blog', gw)).toBe('alice');
-    expect(labelForUrl('http://alice.localhost:8080/', local)).toBe('alice');
-    for (const url of ['https://id.dashhq.org/', 'https://a.b.id.dashhq.org/', 'http://alice.id.dashhq.org/', 'https://alice.id.dashhq.org.evil.com/', 'http://alice.localhost:9090/', 'chrome://newtab/']) {
-      expect(labelForUrl(url, url.includes('localhost') ? local : gw), url).toBeUndefined();
-    }
-    expect(siteUrl(gw, 'alice', 'x')).toBe('https://alice.id.dashhq.org/x');
+  it('fall back only for engines the rules do not list', () => {
+    expect(targetForSearch('https://search.example.org/?q=alice.dash')).toEqual({ label: 'alice', path: '/', search: '' });
+    expect(targetForSearch('https://www.google.com/search?q=alice.dash')).toBeUndefined();
+    expect(targetForSearch('https://search.example.org/?q=alice+dash')).toBeUndefined();
   });
 });
 
-describe('verdicts', () => {
-  const meta = { height: 1, timeMs: 1, coreChainLockedHeight: 1, protocolVersion: 14 };
-  const owned = { normalized: 'a11ce', canonicalLabel: 'alice', ownerId: 'alice-id', meta };
-  const site = { id: 's', ownerId: 'alice-id', label: 'alice', normalizedLabel: 'a11ce', content: 'dash-manifest:v1:aa', revision: 3, updatedAt: 2 };
-  const ok: Resolution = { status: 'ok', ...owned, site, content: { scheme: 'dash-manifest', chunks: ['aa'] } };
-  const headers = (h: Record<string, string>) => claimsFromHeaders({ get: (name) => h[name] ?? null });
-
-  it('matches when owner and content agree', () => {
-    expect(compare(headers({ 'x-dash-owner': 'alice-id', 'x-dash-content': site.content, 'x-dash-site-revision': '3' }), ok).kind).toBe('match');
+describe('gateway fallback', () => {
+  it('is off unless turned on', () => {
+    const target = { label: 'alice', path: '/a', search: '?b' };
+    expect(gatewayUrl({ ...DEFAULT_SETTINGS, gateway: 'https://dash.site' }, target)).toBeUndefined();
+    expect(gatewayUrl({ ...DEFAULT_SETTINGS, gatewayFallback: true, gateway: 'https://dash.site' }, target)).toBe('https://alice.dash.site/a?b');
+    expect(gatewayUrl({ ...DEFAULT_SETTINGS, gatewayFallback: true, gateway: 'http://example.com' }, target)).toBeUndefined();
   });
+});
 
-  it('flags a gateway that is behind, or serving something else', () => {
-    expect(compare(headers({ 'x-dash-owner': 'alice-id', 'x-dash-content': 'dash-manifest:v1:bb', 'x-dash-site-revision': '2' }), ok).kind).toBe('behind');
-    expect(compare(headers({ 'x-dash-owner': 'alice-id', 'x-dash-content': 'dash-manifest:v1:bb', 'x-dash-site-revision': '3' }), ok).kind).toBe('mismatch');
-    expect(compare(headers({ 'x-dash-owner': 'mallory-id', 'x-dash-content': site.content, 'x-dash-site-revision': '3' }), ok).kind).toBe('mismatch');
-  });
-
-  it('flags a site served for a name that has none', () => {
-    const served = headers({ 'x-dash-owner': 'alice-id', 'x-dash-content': site.content });
-    expect(compare(served, { status: 'no-site', ...owned }).kind).toBe('mismatch');
-    expect(compare(served, { status: 'unregistered', normalized: 'a11ce', meta }).kind).toBe('mismatch');
-    expect(compare(headers({}), { status: 'no-site', ...owned }).kind).toBe('none');
-    expect(compare(headers({}), ok).kind).toBe('none');
+describe('frame messages', () => {
+  it('accept only known, well-formed requests', () => {
+    expect(asFrameMessage({ type: 'navigate', url: 'https://a.dash/' })).toEqual({ type: 'navigate', url: 'https://a.dash/', replace: false });
+    expect(asFrameMessage({ type: 'title', title: 'x'.repeat(500) })).toEqual({ type: 'title', title: 'x'.repeat(200) });
+    expect(asFrameMessage({ type: 'navigate' })).toBeUndefined();
+    expect(asFrameMessage({ type: 'eval', url: 'x' })).toBeUndefined();
+    expect(asFrameMessage('navigate')).toBeUndefined();
   });
 });

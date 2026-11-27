@@ -2,7 +2,7 @@
 process.on('uncaughtException', (e) => { console.log('UNCAUGHT', e?.message ?? e, String(e?.stack ?? '').split('\n').slice(0,3).map(l=>l.slice(0,200)).join(' | ')); process.exit(2); });
 process.on('unhandledRejection', (e) => { console.log('UNHANDLED', e?.message ?? e); process.exit(2); });
 // prove the quorum keys, then read the name with proofs. Fails if any request goes to a host name.
-//   node e2e/native-resolve.mjs [name] [network]
+//   node e2e/resolve.mjs [name] [network]
 import { readerConfig, resolveName } from '@dash-sites/core';
 import { CHECKPOINTS, SEEDS, syncChain } from '@dash-sites/core/chain';
 import { EvoReader } from '@dash-sites/core/evo';

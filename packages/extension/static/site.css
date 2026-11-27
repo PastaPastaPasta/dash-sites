@@ -1,0 +1,36 @@
+html,body{height:100%}
+body{display:flex;flex-direction:column}
+#bar{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line);background:var(--bg);flex:none}
+.logo{width:22px;height:22px;flex:none}
+#go{flex:1;min-width:0}
+#address{width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:var(--field);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+#address:focus{outline:2px solid var(--accent);outline-offset:-1px}
+#badge{display:flex;align-items:center;gap:7px;flex:none;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--field);color:var(--fg);font-weight:600;font-size:12.5px;white-space:nowrap}
+#badge .dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+#badge[data-kind=ok] .dot{background:var(--ok)}
+#badge[data-kind=ok]{color:var(--ok)}
+#badge[data-kind=partial] .dot{background:var(--warn)}
+#badge[data-kind=error] .dot{background:var(--bad)}
+#badge[data-kind=error]{color:var(--bad)}
+#badge[data-kind=checking] .dot{animation:pulse 1s infinite alternate}
+@keyframes pulse{to{opacity:.25}}
+button.icon{flex:none;display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:8px;background:none;color:var(--muted)}
+button.icon:hover{background:var(--field);color:var(--fg)}
+#details{flex:none;padding:12px 16px 14px;border-bottom:1px solid var(--line);background:var(--field);font-size:13px}
+#details p{margin:0 0 10px;max-width:72ch;color:var(--muted)}
+#facts{display:grid;grid-template-columns:max-content 1fr;gap:3px 16px;margin:0 0 6px}
+#facts dt{color:var(--muted)}
+#facts dd{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#stage{flex:1;position:relative;min-height:0}
+#frame-slot,#frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:Canvas}
+#frame-slot:empty{display:none}
+#status{max-width:34rem;margin:12vh auto 0;padding:0 20px;text-align:center}
+#status[hidden]{display:none}
+#status h1{font-size:20px;margin:14px 0 6px}
+#status p{color:var(--muted);margin:0 0 16px;overflow-wrap:anywhere}
+#status-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.spinner{width:28px;height:28px;margin:0 auto;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin .9s linear infinite}
+#status:not([data-kind=checking]) .spinner{display:none}
+@keyframes spin{to{transform:rotate(1turn)}}
+@media (prefers-reduced-motion:reduce){.spinner,#badge .dot{animation:none!important}}
+@media (max-width:520px){#badge-text{display:none}#badge{padding:8px}}
