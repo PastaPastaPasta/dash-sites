@@ -57,11 +57,7 @@ for (const network of networks) {
     checkpoint = chain.serializeState(state);
   }
   checkpoints[network] = checkpoint;
-  const pool = [...new Set(snapshot.nodes)];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
+  const pool = chain.shuffle([...new Set(snapshot.nodes)]);
   seeds[network] = pool.slice(0, SEED_COUNT).sort();
   console.error(`${network}: checkpoint ${checkpoint.height}, ${seeds[network].length} seeds of ${pool.length} nodes`);
 }

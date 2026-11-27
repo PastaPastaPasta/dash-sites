@@ -1,8 +1,8 @@
-import { decide, loadManifest, readerConfig, readFile, resolveName, siteChunks, type Manifest, type PlatformReader, type Resolution } from '@dash-sites/core';
+import { decide, describeResolution, HOST_API, loadManifest, readerConfig, readFile, resolveName, siteChunks, type Manifest, type PlatformReader, type Resolution } from '@dash-sites/core';
 import { ChainKeeper, pickNodes } from './chain.js';
 import { asFrameMessage, type PageMessage } from './protocol.js';
-import { dataUrl, Rewriter, type SiteFile } from './render.js';
-import { gatewayUrl, loadSettings, parseTarget, siteOrigin, targetUrl, viewerHash, type Settings, type Target } from './shared.js';
+import { dataUrl, NO_REFERRER, Rewriter, type SiteFile } from './render.js';
+import { displayAddress, gatewayUrl, loadSettings, parseTarget, siteOrigin, targetUrl, viewerHash, viewerUrl, type Settings, type Target } from './shared.js';
 
 /** Chrome builds render in a sandboxed extension page that runs the site's scripts; Firefox has none, so its builds render without scripts. */
 declare const __SANDBOX__: boolean;
@@ -136,6 +136,12 @@ class Viewer {
     };
     await Promise.all(Array.from({ length: 4 }, worker));
     if (generation !== this.generation) return undefined;
+    // The host API every dash.site host answers, so a site that reads it works here too.
+    const json = (path: string, value: unknown): void => {
+      files.set(path, { path, type: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(value)) });
+    };
+    json(`${HOST_API}site.json`, { ...describeResolution(resolution, this.settings.network), servedBy: 'browser' });
+    json(`${HOST_API}manifest.json`, manifest);
     this.site = { label, resolution, manifest, files, skipped };
     return this.site;
   }
@@ -200,7 +206,7 @@ class Viewer {
     const generation = ++this.generation;
     this.target = target;
     if (retry) this.site = undefined;
-    $<HTMLInputElement>('address').value = `${target.label}.dash${target.path === '/' ? '' : target.path}${target.search}`;
+    $<HTMLInputElement>('address').value = displayAddress(target);
     try {
       const site = await this.load(target.label, generation);
       if (!site || generation !== this.generation) return;
@@ -236,12 +242,12 @@ class Viewer {
       this.pending = page;
     } else {
       frame.setAttribute('sandbox', STATIC_SANDBOX);
-      const viewerUrl = (link: URL): string | undefined => {
+      const linkTo = (link: URL): string | undefined => {
         const next = link.hostname.endsWith('.dash') ? parseTarget(link.href) : undefined;
-        return next ? chrome.runtime.getURL(`site.html${viewerHash(next)}`) : undefined;
+        return next ? viewerUrl(next) : undefined;
       };
-      const rewriter = new Rewriter({ origin: page.origin, url: page.url, html, files: site.files }, dataUrl, false, viewerUrl);
-      frame.srcdoc = rewriter.document('<meta name="referrer" content="no-referrer">');
+      const rewriter = new Rewriter({ origin: page.origin, url: page.url, html, files: site.files }, dataUrl, false, linkTo);
+      frame.srcdoc = rewriter.document(NO_REFERRER);
     }
     $('frame-slot').replaceChildren(frame);
   }
@@ -275,13 +281,15 @@ class Viewer {
         if (next && next.label === this.target.label) {
           this.target = next;
           history.replaceState(null, '', viewerHash(next));
-          $<HTMLInputElement>('address').value = `${next.label}.dash${next.path === '/' ? '' : next.path}${next.search}`;
+          $<HTMLInputElement>('address').value = displayAddress(next);
         }
         return;
       }
-      case 'title':
-        document.title = message.title.trim() ? `${message.title.trim()} · ${this.target.label}.dash` : `${this.target.label}.dash`;
+      case 'title': {
+        const title = message.title.trim();
+        document.title = title ? `${title} · ${this.target.label}.dash` : `${this.target.label}.dash`;
         return;
+      }
       case 'leave': {
         const url = new URL(message.url);
         if (url.protocol === 'https:' || url.protocol === 'http:') location.assign(url.href);

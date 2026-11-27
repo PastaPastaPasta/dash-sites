@@ -2,10 +2,12 @@
 // manifest's sandbox CSP, inside an iframe that is sandboxed again by the viewer. It receives one
 // page of a site from the viewer, rewrites it to load the verified files, and replaces itself with it.
 import type { FrameMessage, PageMessage } from './protocol.js';
-import { lookup, Rewriter, sameSite, type SiteFile } from './render.js';
+import { isSameDocumentFragment, lookup, NO_REFERRER, Rewriter, sameSite, type SiteFile } from './render.js';
 
 const parentOrigin = `chrome-extension://${location.host}`;
 const post = (message: FrameMessage): void => window.parent.postMessage(message, parentOrigin);
+const blob = (type: string, bytes: Uint8Array): Blob => new Blob([bytes as Uint8Array<ArrayBuffer>], { type });
+const blobUrl = (type: string, bytes: Uint8Array): string => URL.createObjectURL(blob(type, bytes));
 
 class MemoryStorage {
   private readonly items = new Map<string, string>();
@@ -50,7 +52,7 @@ function install(page: PageMessage, files: Map<string, SiteFile>): () => void {
   const rawUrl = (file: SiteFile): string => {
     let url = raw.get(file.path);
     if (!url) {
-      url = URL.createObjectURL(new Blob([file.bytes as Uint8Array<ArrayBuffer>], { type: file.type }));
+      url = blobUrl(file.type, file.bytes);
       raw.set(file.path, url);
     }
     return url;
@@ -70,7 +72,7 @@ function install(page: PageMessage, files: Map<string, SiteFile>): () => void {
     if (!url) return realFetch(input, init);
     const file = lookup(files, url.pathname);
     if (!file) return Promise.resolve(new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } }));
-    return Promise.resolve(new Response(new Blob([file.bytes as Uint8Array<ArrayBuffer>], { type: file.type }), { status: 200, headers: { 'Content-Type': file.type } }));
+    return Promise.resolve(new Response(blob(file.type, file.bytes), { status: 200, headers: { 'Content-Type': file.type } }));
   };
   const open = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
@@ -122,8 +124,7 @@ function install(page: PageMessage, files: Map<string, SiteFile>): () => void {
       }
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
       event.preventDefault();
-      const here = new URL(current);
-      if (sameSite(url, page.origin) && url.pathname === here.pathname && url.search === here.search && url.hash) {
+      if (isSameDocumentFragment(url, page.origin, new URL(current))) {
         document.getElementById(decodeURIComponent(url.hash.slice(1)))?.scrollIntoView();
         return;
       }
@@ -163,18 +164,16 @@ window.addEventListener('message', (event) => {
   if (shown || event.source !== window.parent || event.origin !== parentOrigin || !isPage(event.data)) return;
   shown = true;
   const page = event.data;
-  {
-    const files = new Map(page.files.map((file) => [file.path, file]));
-    const rewriter = new Rewriter({ ...page, files }, (type, bytes) => URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type })), true);
-    const html = rewriter.document('<meta name="referrer" content="no-referrer">');
-    const listen = install(page, files);
-    document.open();
-    document.write(html);
-    document.close();
-    listen();
-    watch(rewriter);
-    post({ type: 'title', title: document.title });
-  }
+  const files = new Map(page.files.map((file) => [file.path, file]));
+  const rewriter = new Rewriter({ ...page, files }, blobUrl, true);
+  const html = rewriter.document(NO_REFERRER);
+  const listen = install(page, files);
+  document.open();
+  document.write(html);
+  document.close();
+  listen();
+  watch(rewriter);
+  post({ type: 'title', title: document.title });
 });
 
 post({ type: 'ready', url: decodeURIComponent(location.hash.slice(1)) });

@@ -74,6 +74,11 @@ const hex = (value: unknown, what: string): string => {
   if (typeof value !== 'string' || !/^([0-9a-f]{2})*$/i.test(value)) throw new ChainError(`${what} is not hex`);
   return value.toLowerCase();
 };
+const sizedHex = (value: unknown, length: number, what: string, error = `${what} has the wrong length`): Uint8Array => {
+  const bytes = fromHex(hex(value, what));
+  if (bytes.length !== length) throw new ChainError(error);
+  return bytes;
+};
 
 /** Checks the shape of a diff before anything reads it. Only the fields this module uses are checked. */
 export function asDiff(value: unknown): MnListDiff {
@@ -92,24 +97,15 @@ const llmqSize = (type: number): number => {
 
 export function serializeCommitment(q: QuorumCommitment): Uint8Array {
   const size = llmqSize(q.llmqType);
-  const bitset = (value: string, what: string): Uint8Array => {
-    const bytes = fromHex(hex(value, what));
-    if (bytes.length !== Math.ceil(size / 8)) throw new ChainError(`${what} of a type ${q.llmqType} quorum has the wrong length`);
-    return bytes;
-  };
+  const bitset = (value: string, what: string): Uint8Array => sizedHex(value, Math.ceil(size / 8), what, `${what} of a type ${q.llmqType} quorum has the wrong length`);
   const w = new Writer().u16(q.version).u8(q.llmqType).bytes(fromDisplay(q.quorumHash));
   if (q.version === 2 || q.version === 4) {
     const index = q.quorumIndex ?? 0;
     w.u16(index < 0 ? index + 0x10000 : index);
   }
   w.compactSize(size).bytes(bitset(q.signers, 'signers')).compactSize(size).bytes(bitset(q.validMembers, 'validMembers'));
-  const fixed = (value: string, length: number, what: string): Uint8Array => {
-    const bytes = fromHex(hex(value, what));
-    if (bytes.length !== length) throw new ChainError(`${what} has the wrong length`);
-    return bytes;
-  };
-  w.bytes(fixed(q.quorumPublicKey, 48, 'quorumPublicKey')).bytes(fromDisplay(q.quorumVvecHash));
-  return w.bytes(fixed(q.quorumSig, 96, 'quorumSig')).bytes(fixed(q.membersSig, 96, 'membersSig')).finish();
+  w.bytes(sizedHex(q.quorumPublicKey, 48, 'quorumPublicKey')).bytes(fromDisplay(q.quorumVvecHash));
+  return w.bytes(sizedHex(q.quorumSig, 96, 'quorumSig')).bytes(sizedHex(q.membersSig, 96, 'membersSig')).finish();
 }
 
 const PURPOSE: Record<string, number> = { core_p2p: 0, platform_p2p: 1, platform_https: 2 };
@@ -190,8 +186,7 @@ const votingKey = base58check(sha256);
 export function serializeEntry(entry: MnListEntry): Uint8Array {
   const w = new Writer().bytes(fromDisplay(entry.proRegTxHash)).bytes(fromDisplay(entry.confirmedHash));
   w.bytes(entry.nVersion >= 3 ? extNetInfo(entry.addresses ?? {}) : legacyService(entry.service));
-  const operator = fromHex(hex(entry.pubKeyOperator, 'pubKeyOperator'));
-  if (operator.length !== 48) throw new ChainError('operator key has the wrong length');
+  const operator = sizedHex(entry.pubKeyOperator, 48, 'pubKeyOperator', 'operator key has the wrong length');
   const voting = votingKey.decode(entry.votingAddress);
   if (voting.length !== 21) throw new ChainError('voting address has the wrong length');
   w.bytes(operator).bytes(voting.subarray(1)).u8(entry.isValid ? 1 : 0);
@@ -199,9 +194,7 @@ export function serializeEntry(entry: MnListEntry): Uint8Array {
     w.u16(entry.nType);
     if (entry.nType === 1) {
       if (entry.nVersion < 3) w.u16(entry.platformHTTPPort ?? 0);
-      const nodeId = fromHex(hex(entry.platformNodeID, 'platformNodeID')).reverse();
-      if (nodeId.length !== 20) throw new ChainError('platform node id has the wrong length');
-      w.bytes(nodeId);
+      w.bytes(sizedHex(entry.platformNodeID, 20, 'platformNodeID', 'platform node id has the wrong length').reverse());
     }
   }
   return w.finish();
@@ -283,13 +276,17 @@ export function partialMerkleRoot(raw: Uint8Array, txid: Uint8Array): Uint8Array
  * of version 3 entries, and the service host with the Platform HTTP port before that. The `addresses`
  * Core prints for older entries is derived, not hashed, so it is not read.
  */
+function httpsAddresses(entry: MnListEntry): string[] {
+  if (entry.nVersion >= 3) return entry.addresses?.platform_https ?? [];
+  const host = /^(.*):\d+$/.exec(entry.service)?.[1];
+  return host && entry.platformHTTPPort ? [`${host}:${entry.platformHTTPPort}`] : [];
+}
+
 function nodeAddresses(entries: readonly MnListEntry[]): NodeAddress[] {
   const out: NodeAddress[] = [];
   for (const entry of entries) {
     if (entry.nType !== 1 || !entry.isValid) continue;
-    const host = /^(.*):\d+$/.exec(entry.service)?.[1];
-    const listed = entry.nVersion >= 3 ? (entry.addresses?.platform_https ?? []) : host && entry.platformHTTPPort ? [`${host}:${entry.platformHTTPPort}`] : [];
-    for (const address of listed) {
+    for (const address of httpsAddresses(entry)) {
       try {
         const parsed = parseAddress(address);
         if (parsed.port === 0 || (parsed.v4 && parsed.v4.every((b) => b === 0)) || (parsed.v6 && parsed.v6.every((b) => b === 0))) continue;
@@ -300,6 +297,17 @@ function nodeAddresses(entries: readonly MnListEntry[]): NodeAddress[] {
     }
   }
   return out;
+}
+
+/** Sorts `entries` by proRegTxHash and returns their merkle root, or undefined if one has a form this version cannot serialize. */
+function mnListRoot(entries: MnListEntry[]): Uint8Array | undefined {
+  try {
+    entries.sort((a, b) => compareBytes(fromDisplay(a.proRegTxHash), fromDisplay(b.proRegTxHash)));
+    return merkleRoot(entries.map((e) => sha256d(serializeEntry(e))));
+  } catch (error) {
+    if (error instanceof ChainError) return undefined;
+    throw error;
+  }
 }
 
 /**
@@ -315,13 +323,9 @@ export function verifyDiff(diff: MnListDiff, headerMerkleRoot: Uint8Array): Veri
   const commitments = diff.newQuorums.map((q) => sha256d(serializeCommitment(q))).sort(compareBytes);
   if (!equalBytes(merkleRoot(commitments), coinbase.merkleRootQuorums)) throw new ChainError('the quorum list does not match the root in the coinbase');
   const quorums = diff.newQuorums.map((q) => ({ llmqType: q.llmqType, quorumHash: q.quorumHash.toLowerCase(), publicKey: q.quorumPublicKey.toLowerCase(), validMembers: q.validMembersCount }));
-  let nodes: NodeAddress[] | undefined;
-  try {
-    const entries = [...diff.mnList].sort((a, b) => compareBytes(fromDisplay(a.proRegTxHash), fromDisplay(b.proRegTxHash)));
-    if (equalBytes(merkleRoot(entries.map((e) => sha256d(serializeEntry(e)))), coinbase.merkleRootMNList)) nodes = nodeAddresses(entries);
-    else throw new ChainError('the masternode list does not match the root in the coinbase');
-  } catch (error) {
-    if (!(error instanceof ChainError) || /does not match/.test(error.message)) throw error;
-  }
+  const entries = [...diff.mnList];
+  const listRoot = mnListRoot(entries);
+  if (listRoot && !equalBytes(listRoot, coinbase.merkleRootMNList)) throw new ChainError('the masternode list does not match the root in the coinbase');
+  const nodes = listRoot ? nodeAddresses(entries) : undefined;
   return { blockHash: diff.blockHash.toLowerCase(), height: coinbase.height, quorums, ...(nodes ? { nodes } : {}) };
 }

@@ -45,6 +45,13 @@ export function parseTarget(input: string): Target | undefined {
 
 /** The viewer's own hash for a target: `#alice.dash/blog?x`. */
 export const viewerHash = (target: Target): string => `#${target.label}.dash${target.path}${target.search}`;
+export const viewerUrl = (target: Target): string => chrome.runtime.getURL(`site.html${viewerHash(target)}`);
+
+/** A target as the viewer's address box shows it: `alice.dash`, `alice.dash/blog?x`. */
+export const displayAddress = (target: Target): string => `${target.label}.dash${target.path === '/' ? '' : target.path}${target.search}`;
+
+/** Where the extension keeps a network's chain snapshot. */
+export const chainKey = (network: Network): string => `chain:${network}`;
 
 export const RULE_IDS = { direct: 1, frame: 2, searchBase: 100 } as const;
 

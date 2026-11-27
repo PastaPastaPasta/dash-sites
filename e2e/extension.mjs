@@ -77,6 +77,8 @@ try {
     check(info.chrome === 'undefined', 'the site has no extension APIs');
     check(info.text.length > 0, `the site shows content: ${JSON.stringify(info.text.slice(0, 60))}`);
     check(info.storage === 'v', 'localStorage works (in memory)');
+    const record = await frame.evaluate(async () => (await fetch('/.well-known/dash/site.json')).json());
+    check(record.status === 'ok' && record.servedBy === 'browser', `the site reads the host API: ${record.name}, proved at block ${record.proof?.height}`);
   }
   const title = await page.title();
   check(title.includes(`${name}.dash`), `tab title: ${title}`);

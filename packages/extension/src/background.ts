@@ -1,11 +1,6 @@
-import { loadSettings, parseTarget, redirectRules, targetForSearch, viewerHash } from './shared.js';
+import { loadSettings, parseTarget, redirectRules, targetForSearch, viewerUrl } from './shared.js';
 
 declare const __SANDBOX__: boolean;
-
-const viewer = (input: string): string | undefined => {
-  const target = parseTarget(input);
-  return target ? chrome.runtime.getURL(`site.html${viewerHash(target)}`) : undefined;
-};
 
 async function applyRules(): Promise<void> {
   const settings = await loadSettings();
@@ -26,7 +21,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 chrome.omnibox.setDefaultSuggestion({ description: 'Open a .dash site from Dash Platform: type a name such as alice or alice.dash/blog' });
 chrome.omnibox.onInputEntered.addListener((text, disposition) => {
-  const url = viewer(text) ?? chrome.runtime.getURL('site.html');
+  const target = parseTarget(text);
+  const url = target ? viewerUrl(target) : chrome.runtime.getURL('site.html');
   if (disposition === 'currentTab') void chrome.tabs.update({ url });
   else void chrome.tabs.create({ url, active: disposition === 'newForegroundTab' });
 });
@@ -37,6 +33,6 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   const target = targetForSearch(details.url);
   if (!target) return;
   void loadSettings().then((settings) => {
-    if (settings.catchSearches) void chrome.tabs.update(details.tabId, { url: chrome.runtime.getURL(`site.html${viewerHash(target)}`) });
+    if (settings.catchSearches) void chrome.tabs.update(details.tabId, { url: viewerUrl(target) });
   });
 });

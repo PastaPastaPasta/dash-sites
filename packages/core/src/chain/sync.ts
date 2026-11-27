@@ -52,7 +52,8 @@ const KEEP_HEADERS = 2048;
 
 export const SNAPSHOT_VERSION = 1;
 
-function shuffle<T>(items: readonly T[], random: () => number): T[] {
+/** A copy of `items` in random order (Fisher-Yates). */
+export function shuffle<T>(items: readonly T[], random: () => number = Math.random): T[] {
   const out = [...items];
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(random() * (i + 1));
@@ -61,17 +62,17 @@ function shuffle<T>(items: readonly T[], random: () => number): T[] {
   return out;
 }
 
-const startState = (options: SyncOptions): ChainState => {
-  const from = options.previous?.network === options.network && options.previous.chain.height >= options.checkpoint.height ? options.previous.chain : options.checkpoint;
+function startState(options: SyncOptions, previous: ChainSnapshot | undefined): ChainState {
+  const from = previous && previous.chain.height >= options.checkpoint.height ? previous.chain : options.checkpoint;
   if (from.network !== options.network) throw new ChainError('checkpoint is for another network');
   return stateFromHeaders(options.network, from.height, from.headers.map(fromHex));
-};
+}
 
 /** Verified headers by height, newest kept, so a diff's block can be looked up after the chain moved on. */
 class Recent {
   private readonly byHeight = new Map<number, BlockHeader>();
   constructor(state: ChainState) {
-    state.window.forEach((header, i) => this.byHeight.set(state.height - state.window.length + 1 + i, header));
+    this.add(state.window, state.height);
   }
   add(headers: readonly BlockHeader[], lastHeight: number): void {
     headers.forEach((header, i) => this.byHeight.set(lastHeight - headers.length + 1 + i, header));
@@ -90,9 +91,10 @@ class Recent {
 export async function syncChain(options: SyncOptions): Promise<ChainSnapshot> {
   const random = options.random ?? Math.random;
   const progress = options.onProgress ?? (() => undefined);
-  const pool = shuffle(options.previous?.network === options.network && options.previous.nodes.length >= 8 ? options.previous.nodes : options.seeds, random);
+  const previous = options.previous?.network === options.network ? options.previous : undefined;
+  const pool = shuffle(previous && previous.nodes.length >= 8 ? previous.nodes : options.seeds, random);
   if (pool.length === 0) throw new ChainError('no nodes to ask');
-  let state = startState(options);
+  let state = startState(options, previous);
   const recent = new Recent(state);
   const failed = new Set<string>();
 
@@ -144,7 +146,7 @@ export async function syncChain(options: SyncOptions): Promise<ChainSnapshot> {
       const platform = list.quorums.filter((q) => q.llmqType === PLATFORM_LLMQ[options.network]);
       if (platform.length === 0) throw new ChainError('the list has no Platform quorums');
       const current = new Set(platform.map((q) => q.quorumHash));
-      const kept = (options.previous?.network === options.network ? options.previous.quorums : []).filter((q) => !current.has(q.quorumHash));
+      const kept = (previous?.quorums ?? []).filter((q) => !current.has(q.quorumHash));
       return {
         version: SNAPSHOT_VERSION,
         network: options.network,
@@ -152,7 +154,7 @@ export async function syncChain(options: SyncOptions): Promise<ChainSnapshot> {
         listHeight: claimed,
         listBlockHash: list.blockHash,
         quorums: [...platform.map((q) => ({ ...q, provenAt: claimed })), ...kept].slice(0, KEEP_QUORUMS),
-        nodes: list.nodes && list.nodes.length > 0 ? list.nodes : (options.previous?.nodes ?? [...options.seeds]),
+        nodes: list.nodes && list.nodes.length > 0 ? list.nodes : (previous?.nodes ?? [...options.seeds]),
         syncedAt: Date.now(),
       };
     } catch (error) {

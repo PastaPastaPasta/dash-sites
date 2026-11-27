@@ -1,13 +1,12 @@
 import type { Network } from '@dash-sites/core';
-import { CHECKPOINTS, SEEDS, SNAPSHOT_VERSION, syncChain, type ChainSnapshot } from '@dash-sites/core/chain';
+import { CHECKPOINTS, SEEDS, shuffle, SNAPSHOT_VERSION, syncChain, type ChainSnapshot } from '@dash-sites/core/chain';
+import { chainKey } from './shared.js';
 
 /** A snapshot younger than this is used as it is; the SDK asks again when it meets a newer quorum. */
 const FRESH_MS = 30_000;
 
-const key = (network: Network): string => `chain:${network}`;
-
 async function stored(network: Network): Promise<ChainSnapshot | undefined> {
-  const value = (await chrome.storage.local.get(key(network)))[key(network)] as ChainSnapshot | undefined;
+  const value = (await chrome.storage.local.get(chainKey(network)))[chainKey(network)] as ChainSnapshot | undefined;
   return value?.version === SNAPSHOT_VERSION && value.network === network ? value : undefined;
 }
 
@@ -36,14 +35,14 @@ export class ChainKeeper {
 
   sync(): Promise<ChainSnapshot> {
     this.running ??= (async () => {
-      const checkpoint = CHECKPOINTS[this.network];
-      const seeds = SEEDS[this.network];
-      if (!checkpoint || !seeds) throw new Error(`This build has no checkpoint for ${this.network}`);
       try {
+        const checkpoint = CHECKPOINTS[this.network];
+        const seeds = SEEDS[this.network];
+        if (!checkpoint || !seeds) throw new Error(`This build has no checkpoint for ${this.network}`);
         const previous = this.snapshot ?? (await stored(this.network));
         const next = await syncChain({ network: this.network, checkpoint, seeds, ...(previous ? { previous } : {}), onProgress: this.onProgress });
         this.snapshot = next;
-        await chrome.storage.local.set({ [key(this.network)]: next });
+        await chrome.storage.local.set({ [chainKey(this.network)]: next });
         return next;
       } finally {
         this.running = undefined;
@@ -55,10 +54,5 @@ export class ChainKeeper {
 
 /** Up to `count` nodes of the list, in random order. */
 export function pickNodes(nodes: readonly string[], count: number): string[] {
-  const pool = [...nodes];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j] as string, pool[i] as string];
-  }
-  return pool.slice(0, count);
+  return shuffle(nodes).slice(0, count);
 }

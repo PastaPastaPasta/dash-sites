@@ -1,5 +1,5 @@
 import { snapshotTip, type ChainSnapshot } from '@dash-sites/core/chain';
-import { loadSettings, parseTarget, viewerHash } from './shared.js';
+import { chainKey, loadSettings, parseTarget, viewerUrl } from './shared.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -25,10 +25,10 @@ async function main(): Promise<void> {
       input.reportValidity();
       return;
     }
-    void chrome.tabs.create({ url: chrome.runtime.getURL(`site.html${viewerHash(target)}`) });
+    void chrome.tabs.create({ url: viewerUrl(target) });
     window.close();
   });
-  const key = `chain:${settings.network}`;
+  const key = chainKey(settings.network);
   const snapshot = (await chrome.storage.local.get(key))[key] as ChainSnapshot | undefined;
   const chain = $('chain');
   if (snapshot) {

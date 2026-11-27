@@ -6,7 +6,7 @@ import type { ChainSnapshot, StoredQuorum } from './sync.js';
  */
 export const LOCAL_QUORUM_URL = 'https://quorums.dash-sites.invalid';
 
-/** Proven quorum keys. `fresh` may sync again; the SDK asks for it when it meets a quorum it has no key for. */
+/** Proven quorum keys. It may sync again: the SDK asks for it when it meets a quorum it has no key for. */
 export type SnapshotSource = () => Promise<ChainSnapshot>;
 
 const quorumData = (q: StoredQuorum, height: number) => ({ quorum_hash: q.quorumHash, key: q.publicKey, height, valid_members_count: q.validMembers });

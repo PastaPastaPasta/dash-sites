@@ -1,5 +1,5 @@
 import type { Network } from '@dash-sites/core';
-import { loadSettings, parseGateway, saveSettings } from './shared.js';
+import { chainKey, loadSettings, parseGateway, saveSettings } from './shared.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
     });
   });
   $('reset-chain').addEventListener('click', () => {
-    void chrome.storage.local.remove(['chain:mainnet', 'chain:testnet']).then(() => say(true, 'The next site you open verifies the chain again from the bundled checkpoint.'));
+    void chrome.storage.local.remove([chainKey('mainnet'), chainKey('testnet')]).then(() => say(true, 'The next site you open verifies the chain again from the bundled checkpoint.'));
   });
 }
 

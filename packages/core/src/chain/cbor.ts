@@ -1,6 +1,8 @@
 import { ChainError } from './wire.js';
 
 const MAX_DEPTH = 16;
+/** Bytes of the argument that follows an initial byte with additional info 24 to 27. */
+const ARGUMENT_SIZE: Record<number, number> = { 24: 1, 25: 2, 26: 4, 27: 8 };
 
 /** Decodes the CBOR DAPI wraps Core's JSON answers in: maps, arrays, strings, numbers, booleans, null. */
 export function decodeCbor(bytes: Uint8Array): unknown {
@@ -12,8 +14,8 @@ export function decodeCbor(bytes: Uint8Array): unknown {
   };
   const argument = (info: number): number => {
     if (info < 24) return info;
-    const size = info === 24 ? 1 : info === 25 ? 2 : info === 26 ? 4 : info === 27 ? 8 : 0;
-    if (size === 0) throw new ChainError('indefinite or reserved CBOR length');
+    const size = ARGUMENT_SIZE[info];
+    if (size === undefined) throw new ChainError('indefinite or reserved CBOR length');
     need(size);
     let value: number;
     if (size === 1) value = view.getUint8(offset);

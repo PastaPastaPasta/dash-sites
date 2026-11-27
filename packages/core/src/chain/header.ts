@@ -1,5 +1,6 @@
 import x11 from '@dashevo/x11-hash-js';
 import { toHex } from '../bytes.js';
+import type { Checkpoint } from './sync.js';
 import { ChainError, Reader, equalBytes, toDisplay } from './wire.js';
 
 export type ChainNetwork = 'mainnet' | 'testnet';
@@ -63,12 +64,6 @@ export function bitsFromTarget(target: bigint): number {
   return (compact | (size << 24)) >>> 0;
 }
 
-/** Chain work a header adds, as Core counts it. */
-export const workOf = (bits: number): bigint => {
-  const target = targetFromBits(bits);
-  return (~target & ((1n << 256n) - 1n)) / (target + 1n) + 1n;
-};
-
 /** Dash's DarkGravityWave v3 over the last 24 headers, oldest first, with the testnet minimum-difficulty rules. */
 export function nextBits(window: readonly BlockHeader[], time: number, network: ChainNetwork): number {
   if (window.length !== DGW_WINDOW) throw new ChainError(`difficulty needs the last ${DGW_WINDOW} headers`);
@@ -101,8 +96,6 @@ export interface ChainState {
   window: BlockHeader[];
 }
 
-export const tipOf = (state: ChainState): BlockHeader => state.window[state.window.length - 1] as BlockHeader;
-
 export function stateFromHeaders(network: ChainNetwork, height: number, raws: readonly Uint8Array[]): ChainState {
   if (raws.length !== DGW_WINDOW) throw new ChainError(`a checkpoint holds ${DGW_WINDOW} headers`);
   const window = raws.map(parseHeader);
@@ -118,10 +111,9 @@ export function stateFromHeaders(network: ChainNetwork, height: number, raws: re
  * timestamps after the median of the previous eleven and less than two hours ahead of now.
  * Returns the new state and the accepted headers.
  */
-export function extend(state: ChainState, raws: readonly Uint8Array[], nowSeconds = Math.floor(Date.now() / 1000)): { state: ChainState; headers: BlockHeader[]; work: bigint } {
+export function extend(state: ChainState, raws: readonly Uint8Array[], nowSeconds = Math.floor(Date.now() / 1000)): { state: ChainState; headers: BlockHeader[] } {
   const window = [...state.window];
   let height = state.height;
-  let work = 0n;
   const headers: BlockHeader[] = [];
   for (const raw of raws) {
     const header = parseHeader(raw);
@@ -136,13 +128,12 @@ export function extend(state: ChainState, raws: readonly Uint8Array[], nowSecond
     window.push(header);
     window.shift();
     height += 1;
-    work += workOf(header.bits);
     headers.push(header);
   }
-  return { state: { network: state.network, height, window }, headers, work };
+  return { state: { network: state.network, height, window }, headers };
 }
 
-export const serializeState = (state: ChainState): { network: ChainNetwork; height: number; headers: string[] } => ({
+export const serializeState = (state: ChainState): Checkpoint => ({
   network: state.network,
   height: state.height,
   headers: state.window.map((h) => toHex(h.raw)),

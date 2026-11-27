@@ -39,6 +39,13 @@ export function lookup(files: ReadonlyMap<string, SiteFile>, pathname: string): 
 
 export const sameSite = (url: URL, origin: string): boolean => (url.protocol === 'https:' || url.protocol === 'http:') && url.hostname === new URL(origin).hostname;
 
+/** Whether `url` is a fragment of the page at `here`, which a frame scrolls to instead of loading. */
+export const isSameDocumentFragment = (url: URL, origin: string, here: URL): boolean =>
+  sameSite(url, origin) && url.pathname === here.pathname && url.search === here.search && url.hash !== '';
+
+/** Head markup every rendered page starts with. */
+export const NO_REFERRER = '<meta name="referrer" content="no-referrer">';
+
 const CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)|@import\s+(['"])([^'"]+)\3/g;
 const SKIP = /^(data:|blob:|#|about:|javascript:|mailto:)/i;
 
@@ -181,8 +188,9 @@ export class Rewriter {
 
   private link(element: Element, base: string): void {
     const href = element.getAttribute('href');
-    if (href === null || /^(javascript|data|blob):/i.test(href.trim())) {
-      if (href !== null) element.removeAttribute('href');
+    if (href === null) return;
+    if (/^(javascript|data|blob):/i.test(href.trim())) {
+      element.removeAttribute('href');
       return;
     }
     let url: URL;
@@ -191,8 +199,7 @@ export class Rewriter {
     } catch {
       return;
     }
-    const page = new URL(this.page.url);
-    if (href.trim().startsWith('#') || (sameSite(url, this.page.origin) && url.pathname === page.pathname && url.search === page.search && url.hash)) {
+    if (href.trim().startsWith('#') || isSameDocumentFragment(url, this.page.origin, new URL(this.page.url))) {
       // Same page: a fragment of the frame's own document, which the base would otherwise turn into a navigation.
       element.setAttribute('href', `about:srcdoc${url.hash}`);
       return;
