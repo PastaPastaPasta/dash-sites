@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,7 @@ import {
   createAssetLockTransaction,
   createP2PKHScript,
   defaultIdentityKeys,
+  deriveIdentityIdFromOutpoint,
   generateKeyPair,
   hash160,
   hexToBytes,
@@ -185,11 +186,21 @@ describe('fund-identity helpers', () => {
     expect(info.uri).toBe(`dash:${info.address}?amount=0.05`);
     expect(readFileSync(qrFile, 'utf8')).toContain('<svg');
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
+    const originalStateBytes = readFileSync(stateFile);
 
-    // Refuses overwrite
-    expect(() => execFileSync(process.execPath, [SCRIPT_PATH, 'init', '--network', 'testnet', '--state', stateFile], { stdio: 'pipe' })).toThrow();
+    // Refuses overwrite with clear diagnostic and preserves state bytes
+    const overwrite = spawnSync(process.execPath, [SCRIPT_PATH, 'init', '--network', 'testnet', '--state', stateFile], { encoding: 'utf8' });
+    expect(overwrite.status).not.toBe(0);
+    expect(overwrite.stderr).toMatch(/already exists\. Refusing to overwrite/);
+    expect(readFileSync(stateFile).equals(originalStateBytes)).toBe(true);
 
-    // qr subcommand re-displays without mutating
+    // Refuses --qr pointing at --state in both init and qr without modifying state
+    const sameQr = spawnSync(process.execPath, [SCRIPT_PATH, 'qr', '--state', stateFile, '--qr', stateFile], { encoding: 'utf8' });
+    expect(sameQr.status).not.toBe(0);
+    expect(sameQr.stderr).toMatch(/must not point to the state file/);
+    expect(readFileSync(stateFile).equals(originalStateBytes)).toBe(true);
+
+    // qr subcommand re-displays without mutating state bytes
     const qrOut = JSON.parse(
       execFileSync(process.execPath, [SCRIPT_PATH, 'qr', '--state', stateFile, '--format', 'qr'], {
         encoding: 'utf8',
@@ -198,10 +209,56 @@ describe('fund-identity helpers', () => {
     );
     expect(qrOut.address).toBe(info.address);
     expect(qrOut.uri).toBe(info.uri);
+    expect(readFileSync(stateFile).equals(originalStateBytes)).toBe(true);
 
     // Rejects invalid --identity in top-up mode
     expect(() =>
       execFileSync(process.execPath, [SCRIPT_PATH, 'init', '--network', 'testnet', '--identity', 'bad', '--state', join(dir, 'topup.json')], { stdio: 'pipe' }),
     ).toThrow();
+  });
+
+  it('CLI complete recovers matching identity export and refuses mismatched --out', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dash-sites-recover-'));
+    tempDirs.push(dir);
+    const stateFile = join(dir, 'pending.json');
+    const outFile = join(dir, 'identity.json');
+    const otherFile = join(dir, 'other.json');
+
+    execFileSync(process.execPath, [SCRIPT_PATH, 'init', '--network', 'testnet', '--state', stateFile], { stdio: 'pipe' });
+    const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+    const fakeTxid = 'ab'.repeat(32);
+    const derivedId = deriveIdentityIdFromOutpoint(fakeTxid, 0);
+    state.assetLockTxid = fakeTxid;
+    writeFileSync(stateFile, JSON.stringify(state, null, 2));
+
+    // Unrelated existing --out is refused
+    writeFileSync(otherFile, JSON.stringify({ network: 'testnet', identityId: '11'.repeat(22), identityKeys: [] }));
+    const mismatch = spawnSync(process.execPath, [SCRIPT_PATH, 'complete', '--state', stateFile, '--out', otherFile, '--no-wait'], { encoding: 'utf8' });
+    expect(mismatch.status).not.toBe(0);
+    expect(mismatch.stderr).toMatch(/already exists/);
+
+    // Matching export written before state checkpoint is recovered cleanly
+    writeFileSync(
+      outFile,
+      JSON.stringify({ network: 'testnet', identityId: derivedId, assetLockTxid: fakeTxid, identityKeys: state.identityKeys }, null, 2),
+    );
+    const recovered = JSON.parse(
+      execFileSync(process.execPath, [SCRIPT_PATH, 'complete', '--state', stateFile, '--out', outFile, '--no-wait'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    );
+    expect(recovered.identityId).toBe(derivedId);
+    expect(recovered.identityFile).toBe(resolve(outFile));
+
+    // Completed session omits identityFile if pointed at another identity's export
+    const wrongOut = JSON.parse(
+      execFileSync(process.execPath, [SCRIPT_PATH, 'complete', '--state', stateFile, '--out', otherFile, '--no-wait'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    );
+    expect(wrongOut.identityId).toBe(derivedId);
+    expect(wrongOut.identityFile).toBeUndefined();
   });
 });

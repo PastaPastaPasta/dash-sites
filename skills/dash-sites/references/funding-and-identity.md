@@ -118,7 +118,7 @@ What `complete` does safely under the hood:
 4. Saves `assetLockTxid` and `assetLockRawTxHex` to the `0600` state file **before** broadcasting.
 5. Broadcasts via Insight and waits for 1 Core block confirmation (~2.5 minutes).
 6. Connects to Dash Platform via `@dashevo/evo-sdk` (trusted proof mode) and waits until `coreChainLockedHeight >= assetLockBlockHeight`.
-7. Submits a `ChainAssetLockProof` to create the new identity (or top up `--identity`) and writes `identity.json` (`0600`).
+7. Submits a `ChainAssetLockProof` to create the new identity (writing `identity.json` with mode `0600`) or top up `--identity` (prints the new balance and writes no `identity.json`; continue using the credentials you already hold for that identity).
 
 ### Crash Safety and Resuming
 

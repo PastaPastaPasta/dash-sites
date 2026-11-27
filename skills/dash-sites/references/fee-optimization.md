@@ -15,7 +15,7 @@ From `packages/core/src/cost.ts` and `packages/core/src/limits.ts`:
 
 | Stored (compressed) size | Approx. chunks | Approx. one-time publish cost | Cold-load queries |
 | --- | --- | --- | --- |
-| 10 KB (single page) | 2 (1 data + 1 manifest) | ~0.0024 DASH | 1 composite query |
+| 10 KB (single page) | 2 (1 data + 1 manifest) | ~0.0050 DASH | 1 composite query |
 | 50 KB (small site) | 5 | ~0.018 DASH | 1 composite query |
 | 100 KB | 8 | ~0.034 DASH | 1 composite query |
 | 450 KB | 32 | ~0.145 DASH | **1 composite query (preload cap)** |
@@ -110,7 +110,7 @@ By default, `dash-sites` compresses compressible files with gzip (when smaller t
 Therefore, optimize these **before** running `publish`:
 - **Images:** convert PNG/JPEG to **WebP** or **AVIF** (often 50–80% smaller), resize to exact rendered dimensions (never ship 4000px photos for 600px cards), and strip EXIF metadata. Prefer crisp, SVGO-minified **SVG** for icons, logos, and diagrams (SVGs *are* Brotli/gzip compressed).
 - **Fonts:** prefer system font stacks (`system-ui, -apple-system, sans-serif`) for zero font cost. If custom fonts are needed, use `@fontsource/*` via `--external` or subset WOFF2 to the needed glyph range.
-- **HTML/CSS/JS:** minify and tree-shake; strip source maps (`*.map`), license banners, unused CSS, and dead assets. Do not ship `README.md`, test fixtures, or raw design files in the publish directory.
+- **HTML/CSS/JS:** minify and tree-shake; strip source maps (`*.map`), non-legal comments, unused CSS, and dead assets while preserving required third-party license notices (either in the bundle or in an accompanying `LICENSES.txt`). Do not ship `README.md`, test fixtures, or raw design files in the publish directory.
 - **Single-page sites:** inlining small CSS/JS directly into `index.html` shrinks the manifest and improves Brotli cross-file compression.
 
 ### 5. Manifest Version Compatibility Matrix

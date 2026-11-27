@@ -42,6 +42,7 @@ Estimate the exact storage cost **before** asking the user for DASH so you reque
    - Offload large media/binaries (> ~50 KB) with `--elsewhere places.json` (manifest v3; HTTPS with `Access-Control-Allow-Origin: *` such as Cloudflare R2/S3/Arweave, or `ipfs://<cid>`; verified by SHA-256, up to 64 MiB/file).
    - See [references/fee-optimization.md](references/fee-optimization.md) for the exact credit formula, compatibility matrix, and optimization recipes.
 3. **Dry-run and preview locally:**
+   Pass the same packing flags (`--brotli`, `--external`, `--elsewhere`) you will use on publish so the stored byte count and cost estimate match:
    ```sh
    dash-sites publish ./site --name <label> --network mainnet --brotli --dry-run
    dash-sites preview ./site --name <label> --port 8080
@@ -93,7 +94,7 @@ node <skill-dir>/scripts/fund-identity.mjs complete \
   --out ~/.config/dash-sites/identity-mainnet.json
 ```
 
-`complete` authenticates the deposit UTXO against raw tx bytes, signs and broadcasts a Dash Core v3 type-8 asset-lock transaction, waits for 1 Core block (~2.5 min) plus Platform ChainLock, creates (or tops up) the identity, and writes `identity.json` (`0600`) in the exact format `dash-sites --identity-file` accepts. It is crash-safe and idempotent: if interrupted or timed out, re-run `complete` with the same `--state` file.
+`complete` authenticates the deposit UTXO against raw tx bytes, signs and broadcasts a Dash Core v3 type-8 asset-lock transaction, waits for 1 Core block (~2.5 min) plus Platform ChainLock, and creates or tops up the identity. In **create** mode it writes `identity.json` (`0600`) in the exact format `dash-sites --identity-file` accepts; in **top-up** mode (`--identity <id>`) it credits the existing identity and writes no `identity.json` (publish using the credentials you already hold for that identity). It is crash-safe and idempotent: if interrupted or timed out, re-run `complete` with the same `--state` file.
 
 See [references/funding-and-identity.md](references/funding-and-identity.md) for Path C (Dash Bridge), testnet faucet staging, key management, and recovery details.
 
@@ -117,18 +118,17 @@ dash-sites register <label> --network mainnet --identity-file ~/.config/dash-sit
 
 ### 5. Publish and Verify
 
-Publish with either a saved wallet session (`dash-sites login`), `--identity-file <file>`, or `--identity <id>` with `DASH_SITES_KEY=<WIF>`:
+Publish with a saved wallet session (`dash-sites login`), or pass `--identity-file <file>` (or `--identity <id>` with `DASH_SITES_KEY=<WIF>`):
 
 ```sh
-dash-sites publish ./site \
-  --name <label> \
-  --network mainnet \
-  --brotli \
-  [--spa] \
-  [--external external.json] \
-  [--elsewhere places.json] \
-  [--identity-file ~/.config/dash-sites/identity-mainnet.json]
+dash-sites publish ./site --name <label> --network mainnet --brotli
 ```
+
+Add optional flags as needed:
+- `--spa` for single-page apps (rewrite unmatched non-file routes to `/index.html`).
+- `--external external.json` for hash-pinned npm CDN assets.
+- `--elsewhere places.json` for large files hosted outside Platform (HTTPS with CORS or IPFS).
+- `--identity-file ~/.config/dash-sites/identity-mainnet.json` when publishing with an identity file instead of a saved wallet login.
 
 Verify immediately after publishing:
 

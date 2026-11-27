@@ -13,8 +13,8 @@
  *             and create (or top up) the Dash Platform identity. Safe to re-run to resume.
  */
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { AssetLockProof, EvoSDK, Identity, IdentityPublicKey, IdentitySigner, OutPoint, PrivateKey } from '@dashevo/evo-sdk';
@@ -493,6 +493,71 @@ function writePrivateJson(filePath, value) {
   writePrivateAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function writePrivateExclusive(filePath, value) {
+  const content = `${JSON.stringify(value, null, 2)}\n`;
+  mkdirSync(dirname(resolve(filePath)), { recursive: true, mode: 0o700 });
+  const tmp = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+  writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
+  try {
+    try {
+      chmodSync(tmp, 0o600);
+    } catch {
+      // Non-POSIX filesystems may ignore chmod.
+    }
+    linkSync(tmp, filePath);
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+}
+
+function canonicalTarget(filePath) {
+  const abs = resolve(filePath);
+  if (existsSync(abs)) {
+    try {
+      return realpathSync(abs);
+    } catch {
+      return abs;
+    }
+  }
+  const parent = dirname(abs);
+  if (existsSync(parent)) {
+    try {
+      return join(realpathSync(parent), basename(abs));
+    } catch {
+      return abs;
+    }
+  }
+  return abs;
+}
+
+function assertDistinctPath(targetPath, protectedPath, label) {
+  if (canonicalTarget(targetPath) === canonicalTarget(protectedPath)) {
+    throw new Error(`${label} (${targetPath}) must not point to the state file (${protectedPath})`);
+  }
+}
+
+function matchesExportedIdentity(filePath, expectedId, expectedNetwork, expectedKeys) {
+  if (!expectedId || !existsSync(filePath)) return false;
+  try {
+    const doc = JSON.parse(readFileSync(filePath, 'utf8'));
+    if (doc?.identityId !== expectedId || doc?.network !== expectedNetwork) return false;
+    if (!expectedKeys) return true;
+    return Array.isArray(doc.identityKeys) && JSON.stringify(doc.identityKeys) === JSON.stringify(expectedKeys);
+  } catch {
+    return false;
+  }
+}
+
+async function connectPlatform(network) {
+  const sdk = new EvoSDK({ network, trusted: true, settings: { connectTimeoutMs: 10_000, timeoutMs: 30_000, retries: 4 } });
+  await sdk.connect();
+  return sdk;
+}
+
 async function fetchJson(url, init) {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
   const text = await res.text();
@@ -542,11 +607,29 @@ async function insightBroadcast(net, rawTxHex) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function displayPaymentRequest(state, { format, qrPath }) {
+function displayPaymentRequest(state, { format, qrPath, statePath }) {
+  if (qrPath && statePath) assertDistinctPath(qrPath, statePath, '--qr');
   const uri = buildBip21Uri(state.funding.address, state.suggestedAmountDash);
   const useColor = Boolean(process.stderr.isTTY && !process.env.NO_COLOR);
   const showAddress = format === 'address' || format === 'both';
   const showQr = format === 'qr' || format === 'both';
+
+  if (qrPath) {
+    const absQr = resolve(qrPath);
+    mkdirSync(dirname(absQr), { recursive: true });
+    const tmp = `${absQr}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+    writeFileSync(tmp, qrSvg(uri), { flag: 'wx' });
+    try {
+      renameSync(tmp, absQr);
+    } catch (error) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        // Best-effort cleanup.
+      }
+      throw error;
+    }
+  }
 
   console.error('');
   if (showAddress) {
@@ -561,8 +644,6 @@ function displayPaymentRequest(state, { format, qrPath }) {
     console.error(`Payment URI: ${uri}`);
   }
   if (qrPath) {
-    mkdirSync(dirname(resolve(qrPath)), { recursive: true });
-    writeFileSync(qrPath, qrSvg(uri));
     console.error(`Wrote QR SVG to ${qrPath}`);
   }
   console.error('');
@@ -572,6 +653,10 @@ function getNetwork(name) {
   const net = NETWORKS[name];
   if (!net) throw new Error(`--network must be testnet or mainnet (got "${name}")`);
   return net;
+}
+
+export function deriveIdentityIdFromOutpoint(txid, vout = 0) {
+  return base58.encode(hash256(concatBytes(reverseBytes(hexToBytes(txid)), serUint32(vout))));
 }
 
 export function isValidIdentityId(id) {
@@ -591,6 +676,7 @@ async function cmdInit(values) {
     throw new Error(`Invalid --identity "${values.identity}": expected a 32-byte base58 Platform identity ID`);
   }
   const statePath = values.state ?? `./dash-funding.${net.network}.json`;
+  if (values.qr) assertDistinctPath(values.qr, statePath, '--qr');
   if (existsSync(statePath)) {
     throw new Error(`State file ${statePath} already exists. Refusing to overwrite existing keys; use "qr", "status", or "complete", or pass a different --state path.`);
   }
@@ -609,8 +695,15 @@ async function cmdInit(values) {
     ...(mode === 'create' ? { identityKeys: defaultIdentityKeys(net) } : {}),
   };
 
-  writePrivateJson(statePath, state);
-  displayPaymentRequest(state, { format, qrPath: values.qr });
+  try {
+    writePrivateExclusive(statePath, state);
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      throw new Error(`State file ${statePath} already exists. Refusing to overwrite existing keys; use "qr", "status", or "complete", or pass a different --state path.`);
+    }
+    throw error;
+  }
+  displayPaymentRequest(state, { format, qrPath: values.qr, statePath });
 
   const uri = buildBip21Uri(state.funding.address, state.suggestedAmountDash);
   console.log(
@@ -635,8 +728,9 @@ async function cmdQr(values) {
   if (!values.state) throw new Error('qr requires --state <state.json>');
   const format = values.format;
   if (!['address', 'qr', 'both'].includes(format)) throw new Error('--format must be address, qr, or both');
+  if (values.qr) assertDistinctPath(values.qr, values.state, '--qr');
   const state = JSON.parse(readFileSync(values.state, 'utf8'));
-  displayPaymentRequest(state, { format, qrPath: values.qr });
+  displayPaymentRequest(state, { format, qrPath: values.qr, statePath: values.state });
   console.log(
     JSON.stringify(
       {
@@ -666,6 +760,7 @@ async function cmdStatus(values) {
     depositBalance: formatDashFromDuffs(totalDuffs),
     assetLockTxid: state.assetLockTxid ?? null,
     assetLockBlockHeight: state.assetLockBlockHeight ?? null,
+    platformChainLockedHeight: null,
     identityId: state.identityId ?? state.targetIdentityId ?? null,
     completedAt: state.completedAt ?? null,
   };
@@ -673,6 +768,17 @@ async function cmdStatus(values) {
     const tx = await insightTx(net, state.assetLockTxid);
     out.assetLockConfirmations = tx?.confirmations ?? 0;
     if (tx?.blockheight > 0) out.assetLockBlockHeight = tx.blockheight;
+  }
+  if (out.assetLockBlockHeight && !state.completedAt) {
+    try {
+      const sdk = await connectPlatform(net.network);
+      const { metadata } = await sdk.protocol.versionUpgradeStateWithProof();
+      out.platformChainLockedHeight = Number(metadata.coreChainLockedHeight);
+      out.chainLockReady = out.platformChainLockedHeight >= out.assetLockBlockHeight;
+    } catch (error) {
+      out.platformChainLockedHeight = 'unavailable';
+      out.platformChainLockedError = String(error?.message ?? error);
+    }
   }
   console.log(JSON.stringify(out, null, 2));
 }
@@ -683,19 +789,21 @@ async function cmdComplete(values) {
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   const net = getNetwork(state.network);
   const outPath = values.out ?? `./identity.${net.network}.json`;
+  if (state.mode === 'create') assertDistinctPath(outPath, statePath, '--out');
   const waitSeconds = values['no-wait'] ? 0 : Number(values.wait);
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0) throw new Error('--wait must be a non-negative number of seconds');
   const deadline = Date.now() + waitSeconds * 1000;
 
   if (state.completedAt) {
     console.error(`Already completed at ${state.completedAt}.`);
+    const matchedExport = state.mode === 'create' && matchesExportedIdentity(outPath, state.identityId, state.network);
     console.log(
       JSON.stringify(
         {
           network: state.network,
           mode: state.mode,
           identityId: state.identityId ?? state.targetIdentityId,
-          ...(state.mode === 'create' && existsSync(outPath) ? { identityFile: resolve(outPath) } : {}),
+          ...(matchedExport ? { identityFile: resolve(outPath) } : {}),
           completedAt: state.completedAt,
         },
         null,
@@ -705,27 +813,55 @@ async function cmdComplete(values) {
     return;
   }
 
+  const expectedCreateId =
+    state.mode === 'create'
+      ? (state.identityId ?? (state.assetLockTxid ? deriveIdentityIdFromOutpoint(state.assetLockTxid, 0) : undefined))
+      : undefined;
+
   if (state.mode === 'create' && existsSync(outPath)) {
-    let existingOut;
-    try {
-      existingOut = JSON.parse(readFileSync(outPath, 'utf8'));
-    } catch {
-      existingOut = null;
+    if (expectedCreateId && matchesExportedIdentity(outPath, expectedCreateId, state.network, state.identityKeys)) {
+      state.identityId = expectedCreateId;
+      state.completedAt = new Date().toISOString();
+      writePrivateJson(statePath, state);
+      console.error(`Recovered completed identity export at ${outPath}.`);
+      console.log(
+        JSON.stringify(
+          {
+            network: state.network,
+            mode: 'create',
+            identityId: expectedCreateId,
+            assetLockTxid: state.assetLockTxid,
+            identityFile: resolve(outPath),
+            completedAt: state.completedAt,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
     }
-    if (!existingOut || (state.identityId && existingOut.identityId !== state.identityId) || (!state.identityId && existingOut.identityId)) {
-      throw new Error(`Output file ${outPath} already exists (identity ${existingOut?.identityId ?? 'unknown'}). Pass a different --out path so it is not overwritten.`);
+    throw new Error(`Output file ${outPath} already exists. Pass a different --out path so it is not overwritten.`);
+  }
+
+  let sdk;
+  if (state.mode === 'topup' && !state.assetLockTxid) {
+    sdk = await connectPlatform(net.network);
+    const target = await sdk.identities.fetch(state.targetIdentityId);
+    if (!target) {
+      throw new Error(`Target identity ${state.targetIdentityId} does not exist on ${net.network}; refusing to lock funds.`);
     }
   }
 
-  // Step 1: Wait for deposit and broadcast the asset-lock transaction (once).
+  // Step 1: Wait for deposit and sign the asset-lock transaction (once).
   if (!state.assetLockTxid) {
     console.error(`Waiting for DASH deposit at ${state.funding.address} (${net.network})…`);
     let rawUtxos = [];
     for (;;) {
       rawUtxos = await insightUtxos(net, state.funding.address);
       if (rawUtxos.length > 0) break;
-      if (Date.now() >= deadline) throw new Error(`No deposit received at ${state.funding.address} yet. Re-run complete once funded.`);
-      await sleep(5000);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`No deposit received at ${state.funding.address} yet. Re-run complete once funded.`);
+      await sleep(Math.min(5000, remaining));
     }
 
     const selected = selectDepositUtxos(rawUtxos);
@@ -751,12 +887,18 @@ async function cmdComplete(values) {
     console.error(`Signed asset-lock tx ${txid} (${formatDashFromDuffs(state.lockAmountDuffs)}); broadcasting…`);
   }
 
-  if (!state.broadcastedAt) {
-    const alreadySeen = await insightTx(net, state.assetLockTxid);
-    if (!alreadySeen) await insightBroadcast(net, state.assetLockRawTxHex);
-    state.broadcastedAt = new Date().toISOString();
-    writePrivateJson(statePath, state);
-    console.error(`Broadcast asset-lock tx ${state.assetLockTxid}. Waiting for 1 Core block (~2.5 min)…`);
+  // Broadcast if not yet confirmed and currently absent from Insight (handles mempool eviction on retries).
+  if (!state.assetLockBlockHeight) {
+    const visible = await insightTx(net, state.assetLockTxid);
+    if (!visible) {
+      await insightBroadcast(net, state.assetLockRawTxHex);
+      state.broadcastedAt = new Date().toISOString();
+      writePrivateJson(statePath, state);
+      console.error(`Broadcast asset-lock tx ${state.assetLockTxid}. Waiting for 1 Core block (~2.5 min)…`);
+    } else if (!state.broadcastedAt) {
+      state.broadcastedAt = new Date().toISOString();
+      writePrivateJson(statePath, state);
+    }
   }
 
   // Step 2: Wait for 1 Core block confirmation.
@@ -769,17 +911,17 @@ async function cmdComplete(values) {
         console.error(`Asset-lock tx confirmed in Core block ${tx.blockheight}.`);
         break;
       }
-      if (Date.now() >= deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
         throw new Error(`Asset-lock tx ${state.assetLockTxid} is not confirmed in a block yet. Re-run complete in 2-3 minutes.`);
       }
-      await sleep(10_000);
+      await sleep(Math.min(10_000, remaining));
     }
   }
 
   // Step 3: Wait for Dash Platform to ChainLock that Core block height.
   console.error(`Connecting to Dash Platform (${net.network}) and waiting for coreChainLockedHeight >= ${state.assetLockBlockHeight}…`);
-  const sdk = new EvoSDK({ network: net.network, trusted: true, settings: { connectTimeoutMs: 10_000, timeoutMs: 30_000, retries: 4 } });
-  await sdk.connect();
+  sdk ??= await connectPlatform(net.network);
 
   let chainLockedHeight = 0;
   for (;;) {
@@ -789,10 +931,11 @@ async function cmdComplete(values) {
       console.error(`Platform coreChainLockedHeight reached ${chainLockedHeight}.`);
       break;
     }
-    if (Date.now() >= deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
       throw new Error(`Platform coreChainLockedHeight is ${chainLockedHeight}, waiting for ${state.assetLockBlockHeight}. Re-run complete shortly.`);
     }
-    await sleep(10_000);
+    await sleep(Math.min(10_000, remaining));
   }
 
   // Step 4: Create or top up the Platform identity using the Chain Asset Lock proof.
@@ -832,7 +975,17 @@ async function cmdComplete(values) {
       assetLockTxid: state.assetLockTxid,
       identityKeys: state.identityKeys,
     };
-    writePrivateJson(outPath, identityDoc);
+    try {
+      writePrivateExclusive(outPath, identityDoc);
+    } catch (error) {
+      if (error?.code === 'EEXIST') {
+        if (!matchesExportedIdentity(outPath, identityId, state.network, state.identityKeys)) {
+          throw new Error(`Output file ${outPath} already exists for another identity. Pass a different --out path so it is not overwritten.`);
+        }
+      } else {
+        throw error;
+      }
+    }
     state.identityId = identityId;
     state.completedAt = new Date().toISOString();
     writePrivateJson(statePath, state);
@@ -857,8 +1010,22 @@ async function cmdComplete(values) {
   // Top-up mode
   const identity = await sdk.identities.fetch(state.targetIdentityId);
   if (!identity) throw new Error(`Identity ${state.targetIdentityId} not found on ${state.network}`);
+  if (state.balanceBeforeTopUp === undefined) {
+    state.balanceBeforeTopUp = BigInt((await sdk.identities.balance(state.targetIdentityId)) ?? 0n).toString();
+    writePrivateJson(statePath, state);
+  }
   console.error(`Topping up Platform identity ${state.targetIdentityId}…`);
-  const newBalance = BigInt(await sdk.identities.topUp({ identity, assetLockProof: proof, assetLockPrivateKey }));
+  let newBalance;
+  try {
+    newBalance = BigInt(await sdk.identities.topUp({ identity, assetLockProof: proof, assetLockPrivateKey }));
+  } catch (error) {
+    const current = BigInt((await sdk.identities.balance(state.targetIdentityId)) ?? 0n);
+    if (current > BigInt(state.balanceBeforeTopUp) && /already|spent|used|duplicate/i.test(String(error?.message ?? error))) {
+      newBalance = current;
+    } else {
+      throw error;
+    }
+  }
   state.completedAt = new Date().toISOString();
   writePrivateJson(statePath, state);
 
