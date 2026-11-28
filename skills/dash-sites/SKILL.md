@@ -35,7 +35,7 @@ Estimate the exact storage cost **before** asking the user for DASH so you reque
    - Include `/index.html`. Follow the visitor's system theme (`<meta name="color-scheme" content="light dark">` and `color-scheme: light dark` on `:root`).
    - **Never use `<a download>` for site files**: browsers such as Chrome bypass the verifier Service Worker on download links and save `dash.site`'s loading shell instead. Remove `download` (or generate a `blob:` URL in JS).
    - Keep internal links valid (`publish` warns about missing targets and download links).
-2. **Minimize storage fees** (~0.3 DASH per stored MB; 14,700-byte chunks; keep total chunks <= 32 / ~470 KB compressed for a single-query cold load):
+2. **Minimize storage fees** (~0.35 DASH per stored MB; 14,700-byte chunks; keep total chunks <= 32 / ~470 KB compressed for a single-query cold load):
    - Minify HTML/CSS/JS; delete `.map` files, docs, and unused assets; pre-optimize binary assets (WebP/AVIF, SVGO-minified SVG, subset WOFF2) because `dash-sites` does not re-compress `png`, `jpeg`, `gif`, `webp`, `avif`, `woff`, `woff2`, `audio/*`, `video/*`, `zip`, or `pdf`.
    - Use `--brotli` for text/SVG/JSON/WASM (typically 15–25% smaller than gzip; manifest v2, supported on `dash.site`).
    - Offload unmodified npm libraries/fonts/WASM with `--external external.json` (manifest v2; verified by SHA-384 from jsDelivr/unpkg).

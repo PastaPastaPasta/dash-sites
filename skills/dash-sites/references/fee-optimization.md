@@ -8,19 +8,21 @@ From `packages/core/src/cost.ts` and `packages/core/src/limits.ts`:
 
 - **Unit:** `1 DASH = 100,000,000,000 credits` (`1e11`).
 - **Chunk size:** `14,700 bytes` per chunk document (3 fields x 4,900 bytes).
-- **Upper-bound publish estimate (`estimateCredits`):**
-  - Site record: `110,000,000 credits` (~`0.0011 DASH` on first publish; replacing an existing record costs `< 0.0001 DASH`).
-  - Each new chunk: `50,000,000 credits` (`0.0005 DASH`) + `28,500 credits` per stored byte.
-- **Rule of thumb:** **~0.30–0.32 DASH per stored megabyte** (after compression).
+- **Upper-bound publish estimate (`estimateCredits`):** Platform's own fee model. `loadFeeModel` in `packages/core/src/evo.ts` prices each document with the SDK's `documentCreateCost` over the bundled dash-sites contract (no network needed), assuming every index value is new.
+  - Site record: about `0.00101 DASH` on first publish (replacing an existing record costs much less).
+  - A full chunk (14,700 bytes): about `0.00497 DASH`; smaller chunks cost less, in proportion to their bytes plus a fixed part.
+  - On testnet the estimate came out 14–27% above what publishes actually spent.
+- **Rule of thumb:** **~0.35 DASH per stored megabyte** (after compression).
+- **Name registration** (a name that needs no vote): about `0.00076 DASH`, the DPNS `preorder` plus `domain` documents.
 
 | Stored (compressed) size | Approx. chunks | Approx. one-time publish cost | Cold-load queries |
 | --- | --- | --- | --- |
 | 10 KB (single page) | 2 (1 data + 1 manifest) | ~0.0050 DASH | 1 composite query |
-| 50 KB (small site) | 5 | ~0.018 DASH | 1 composite query |
-| 100 KB | 8 | ~0.034 DASH | 1 composite query |
-| 450 KB | 32 | ~0.145 DASH | **1 composite query (preload cap)** |
-| 1 MB | 72 | ~0.32 DASH | 2+ queries |
-| 5 MB | 357 | ~1.60 DASH | 5+ queries |
+| 50 KB (small site) | 5 | ~0.019 DASH | 1 composite query |
+| 100 KB | 8 | ~0.036 DASH | 1 composite query |
+| 450 KB | 32 | ~0.16 DASH | **1 composite query (preload cap)** |
+| 1 MB | 72 | ~0.36 DASH | 2+ queries |
+| 5 MB | 357 | ~1.78 DASH | 5+ queries |
 
 ### The 32-Chunk Fast-Load Threshold (`PRELOAD_CHUNKS = 32`)
 

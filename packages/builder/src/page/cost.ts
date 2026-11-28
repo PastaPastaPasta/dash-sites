@@ -1,22 +1,43 @@
 import { buildSite, estimateCost, estimateCredits, formatDash, MAX_SITE_BYTES, PackError, type CostEstimate, type FeeModel, type SiteBundle, type SiteFile } from '@dash-sites/core';
 
 let fees: FeeModel | undefined;
+let failed = false;
 const listeners = new Set<() => void>();
+const changed = (): void => {
+  for (const listener of listeners) listener();
+};
 
 /** Platform's fees, once the SDK has computed them; every price here is unknown until then. */
 export function setFees(model: FeeModel): void {
   fees = model;
-  for (const listener of listeners) listener();
+  changed();
 }
 
-export function onFeesChange(listener: () => void): void {
+export function failFees(): void {
+  failed = true;
+  changed();
+}
+
+export function onFeesChange(listener: () => void): () => void {
   listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 export const currentFees = (): FeeModel | undefined => fees;
 
+/** What to show in place of a price while the fees are unknown. */
+export const pendingCostText = (): string => (failed ? 'This browser could not work out what publishing costs.' : 'Working out what publishing costs…');
+
 /** The upper estimate for publishing `bundle` when nothing of it is stored yet. */
-export const siteCost = (bundle: SiteBundle): CostEstimate | undefined => fees && estimateCost(bundle, fees);
+export function siteCost(bundle: SiteBundle): CostEstimate | undefined {
+  if (!fees) return undefined;
+  try {
+    return estimateCost(bundle, fees);
+  } catch {
+    failed = true;
+    return undefined;
+  }
+}
 
 const known = new WeakMap<Uint8Array, bigint>();
 

@@ -26,7 +26,7 @@ import { normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { browserFetchers } from './elsewhere.js';
 import { keepOutside, loadOutside, onOutsideChange } from './outside.js';
 import { mountOutsidePanel } from './outside-panel.js';
-import { currentFees, onFeesChange, platformPrice, setFees, siteCost, sizeText } from './page/cost.js';
+import { currentFees, failFees, onFeesChange, pendingCostText, platformPrice, setFees, siteCost, sizeText } from './page/cost.js';
 import { mountPageTab, pageFiles, suggestReopen } from './page-tab.js';
 
 declare const __GATEWAY_DOMAIN__: string;
@@ -72,7 +72,6 @@ let publishing = false;
 let wantedName: string | undefined;
 let working = 0;
 let leftSignedIn = false;
-let feesFailed = false;
 const autoSignOut = new AutoSignOut({ idleMs: IDLE_SIGN_OUT_MS, signOut: (reason) => signOut(SIGNED_OUT[reason]), busy: () => publishing || working > 0 });
 
 const label = (): string => chosen?.label.toLowerCase() ?? 'yourname';
@@ -120,7 +119,8 @@ function refresh(): void {
     }),
   );
   const estimate = bundle && costText(bundle);
-  $('upload-cost').textContent = mode === 'upload' && estimate ? estimate : '';
+  const uploadCost = mode === 'upload' && estimate ? estimate : '';
+  if ($('upload-cost').textContent !== uploadCost) $('upload-cost').textContent = uploadCost;
   const cost = $('cost');
   if (!bundle) {
     cost.textContent = mode === 'write' ? 'Build a page in step 3 first.' : 'Add your site in step 3 first.';
@@ -143,7 +143,7 @@ function refresh(): void {
 /** The estimate for publishing `site` from scratch, with what goes into it. */
 function costText(site: SiteBundle): string {
   const cost = siteCost(site);
-  if (!cost) return feesFailed ? 'This browser could not work out what publishing costs.' : 'Working out what publishing costs…';
+  if (!cost) return pendingCostText();
   const parts = `${cost.chunkCount} ${cost.chunkCount === 1 ? 'part' : 'parts'}`;
   return `Estimated cost to publish: about ${formatDash(cost.total)} (${formatCredits(cost.total)} credits). Storing the files in ${parts} is about ${formatDash(cost.chunks)}, and the site record about ${formatDash(cost.siteRecord)}. Parts this name already stores are not paid for again.`;
 }
@@ -775,12 +775,9 @@ function start(): void {
   const idle = (window as { requestIdleCallback?: (fn: () => void) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
   onFeesChange(refresh);
   idle(() => {
-    void loadFees().then(setFees, () => {
-      feesFailed = true;
-      refresh();
-    });
+    void loadFees().then(setFees, failFees);
     void loadEvo().then((module) => module.nameRegistrationCredits(networkConfig(NETWORK))).then(
-      (credits) => ($('register-cost').textContent = ` Registering one costs about ${formatDash(credits)}.`),
+      (credits) => ($('register-cost').textContent = ` Registering a name that needs no vote costs about ${formatDash(credits)}.`),
       () => {},
     );
     void loadConnect().catch(() => {});

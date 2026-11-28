@@ -11,6 +11,7 @@ import {
   type PlatformWriter,
   refundCredits,
   estimateCost,
+  formatCredits,
   readerConfig,
   ContentError,
   decide,
@@ -835,8 +836,16 @@ describe('resolve and publish', () => {
       expect(cost.chunkCount).toBe(bundle.chunks.size);
       expect(cost.total).toBe(cost.siteRecord + cost.chunks);
       expect(estimateCost(bundle, fees, []).total).toBe(cost.siteRecord);
-      expect(await nameRegistrationCredits(readerConfig(network))).toBeGreaterThan(0n);
+      const name = await nameRegistrationCredits(readerConfig(network));
+      expect(name).toBeGreaterThan(0n);
+      expect(name).toBeLessThan(1_000_000_000n);
     }
+  });
+
+  it('writes credits with thousands separators', () => {
+    expect(formatCredits(0n)).toBe('0');
+    expect(formatCredits(999n)).toBe('999');
+    expect(formatCredits(3_222_000_920n)).toBe('3,222,000,920');
   });
 
   it('estimates refunds from the storage fee distribution table', () => {

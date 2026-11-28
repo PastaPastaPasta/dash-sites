@@ -164,6 +164,11 @@ describe('the contract to register', () => {
     const chunk = documentCreateCost(contract, 'chunk', { fields: { site: { length: 32 }, d0: { length: CHUNK_FIELD_SIZE }, d1: { length: CHUNK_FIELD_SIZE }, d2: { length: CHUNK_FIELD_SIZE } } }, PROTOCOL_VERSION);
     const site = documentCreateCost(contract, 'site', { fields: { normalizedParentDomainName: { length: 4 }, normalizedLabel: { length: 63 }, content: { length: 81 } } }, PROTOCOL_VERSION);
     const fees = await loadFeeModel(readerConfig('mainnet'));
+    const deployed = knownContract(KNOWN_CONTRACTS.mainnet![DEPLOYMENTS.mainnet!.contractId]!.bytes);
+    const full = documentCreateCost(deployed, 'chunk', { fields: { d0: { length: CHUNK_FIELD_SIZE }, d1: { length: CHUNK_FIELD_SIZE }, d2: { length: CHUNK_FIELD_SIZE } } }, PROTOCOL_VERSION);
+    const small = documentCreateCost(deployed, 'chunk', { fields: { d0: { length: 100 }, d1: { present: false }, d2: { present: false } } }, PROTOCOL_VERSION);
+    expect(fees.chunk(CHUNK_SIZE)).toBe(BigInt(full.totalCredits.newValues));
+    expect(fees.chunk(100)).toBe(BigInt(small.totalCredits.newValues));
     const quoted = estimateCredits({ contentUri: 'x'.repeat(81), chunks: new Map([['', new Uint8Array(CHUNK_SIZE)]]) } as SiteBundle, fees);
     expect(BigInt(chunk.storage.credits.newValues + site.storage.credits.newValues)).toBeLessThanOrEqual(quoted);
     expect(chunk.refund.afterOneYear.knownValues / chunk.storage.credits.knownValues).toBeGreaterThan(0.9);

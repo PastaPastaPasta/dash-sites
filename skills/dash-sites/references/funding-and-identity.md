@@ -65,7 +65,7 @@ Run `dash-sites publish <dir> --name <label> --network mainnet --dry-run` first,
 | --- | --- |
 | Identity creation + Core asset-lock tx fee | ~0.001–0.002 DASH |
 | Instant (non-contested) DPNS name registration | ~0.003–0.01 DASH |
-| First site record + chunks | Dry-run estimate (~0.3 DASH per stored MB) |
+| First site record + chunks | Dry-run estimate (~0.35 DASH per stored MB) |
 | **Recommended buffer** | Add **~0.015–0.02 DASH** on top of the dry-run site estimate (minimum **0.01 DASH** for a minimal single-page site) |
 
 Minimum deposit enforced by `fund-identity.mjs`: **0.00101 DASH** (100,000 duffs locked + 1,000 duffs Core relay fee).

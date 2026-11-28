@@ -174,7 +174,8 @@ try {
   await closeEditor(page);
 
   check((await page.textContent('#page-summary')) === '5 blocks: Profile header, Text, Link list, Columns of cards, Footer.', `the builder lists the page: ${await page.textContent('#page-summary')}`);
-  check(/text about 0\.\d{5} DASH, one image \([\d.]+ KB\) about 0\.\d{5} DASH/.test(await page.textContent('#page-cost')), `and splits its cost: ${await page.textContent('#page-cost')}`);
+  await page.waitForFunction(() => /Estimated cost/.test(document.getElementById('page-cost')?.textContent ?? ''), undefined, { timeout: 60000 }).catch(() => {});
+  check(/Text about 0\.\d{5} DASH, one image \([\d.]+ KB\) about 0\.\d{5} DASH/.test(await page.textContent('#page-cost')), `and splits its cost: ${await page.textContent('#page-cost')}`);
   check((await page.locator('#page-images li').count()) === 1, `and lists the image with its price: ${await page.textContent('#page-images li')}`);
   await page.waitForTimeout(400);
   if (shots) await page.screenshot({ path: join(shots, 'builder-page-tab.png'), fullPage: true });
