@@ -556,15 +556,16 @@ and the extension all call the same functions.
 - Both use `@dashevo/evo-sdk` (wasm) directly against DAPI. There is no
   publishing server.
 
-**Signing in with a mobile wallet** is the builder's first choice. It is App
-Connect v2, the `dashpay://connect` flow that DashPay for Android (11.9.2) and
-Dash Wallet for iOS (9.1.4) answer and that Dash Forge and Yappr use. The
+**Signing in with a wallet** is the builder's first choice. It is App
+Connect v2, the `dashpay://connect` flow that DashPay for Android (11.9.2),
+Dash Wallet for iOS (9.1.4) and the desktop Dash Wallet (1.0.0-rc.2) answer,
+and that Dash Forge and Yappr use. The
 protocol code is theirs, vendored unchanged in
 `packages/core/src/vendor/app-connect/`; what Dash Sites asks for is in
 `packages/core/src/connect.ts`.
 
 1. The builder makes a one-time key pair and shows a request as a QR code
-   (and, on a phone, as a link that opens the wallet). The request asks for
+   and, on every device, as a link that opens the wallet on that device. The request asks for
    **one key**: AUTHENTICATION, HIGH, bound to the dash-sites contract
    (`singleContract`), proposing a budget of 0.2 DASH and 90 days. The app id
    is the dash-sites contract, so the wallet's rule that the bound contract

@@ -55,13 +55,13 @@ Ask the user which setup they have and how they want to authorize or pay. Never 
 
 | Situation | Path | How the user interacts |
 | --- | --- | --- |
-| User already has **DashPay mobile wallet** with an identity & `.dash` name | **Path A: Wallet login** (recommended when available; least privilege) | Scans QR code or opens `dashpay://connect` link in DashPay |
+| User already has **DashPay** (phone or desktop) with an identity & `.dash` name | **Path A: Wallet login** (recommended when available; least privilege) | Scans QR code or opens `dashpay://connect` link in DashPay |
 | Starting from **nothing** (no DashPay / no identity / needs a new `.dash` name) or **topping up** an identity | **Path B: Direct DASH deposit** via `scripts/fund-identity.mjs` | Sends DASH using their choice of **plain Dash address** or **BIP21 QR code** |
 | User prefers to generate and hold keys in their own browser | **Path C: Dash Bridge** (`https://bridge.thepasta.org/?network=mainnet`) | Browser shows both address & QR code; user exports `identity.json` |
 
-#### Path A — DashPay Mobile Wallet Login (Contract-Bound Limited Key)
+#### Path A — DashPay Wallet Login (Contract-Bound Limited Key)
 
-Best when the user already owns a `.dash` name in DashPay (Android 11.9.2+ or iOS 9.1.4+). The wallet issues a contract-bound `AUTHENTICATION/HIGH` key with a spending budget and expiry; full wallet keys never leave the phone.
+Best when the user already owns a `.dash` name in DashPay (Android 11.9.2+, iOS 9.1.4+, or the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2+). The wallet issues a contract-bound `AUTHENTICATION/HIGH` key with a spending budget and expiry; full wallet keys never leave the wallet.
 
 ```sh
 # In non-interactive agent shells, pin --name <label> (or --identity <id>, or --yes).

@@ -30,24 +30,22 @@
     <h2><span class="n">1</span>Sign in with your Dash identity</h2>
     <div id="signin-ways">
       <div id="wallet-start">
-        <p>Approve Dash Sites in the DashPay app on your phone. Your keys stay in the wallet: this page gets a key that can only publish sites, with a spending limit and an end date you set.</p>
+        <p>Approve Dash Sites in DashPay, on your phone or your computer. Your keys stay in the wallet: this page gets a key that can only publish sites, with a spending limit and an end date you set.</p>
         <div class="actions">
           <button type="button" id="wallet-button">Sign in with DashPay</button>
         </div>
-        <p class="hint">Works with DashPay for Android 11.9.2 or later and Dash Wallet for iOS 9.1.4 or later.</p>
-        <!--testnet--><p class="hint" id="wallet-testnet" hidden>This builder publishes to testnet, which needs DashPay's testnet build: the <code>-testnet.apk</code> on the <a href="https://github.com/dashpay/dash-wallet/releases/latest" target="_blank" rel="noopener">DashPay Wallet releases</a> page.</p><!--/testnet-->
+        <p class="hint">Works with DashPay for Android 11.9.2 or later, Dash Wallet for iOS 9.1.4 or later and the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2 or later.</p>
+        <!--testnet--><p class="hint" id="wallet-testnet" hidden>This builder publishes to testnet, which needs DashPay's testnet build: the <code>-testnet.apk</code> on the <a href="https://github.com/dashpay/dash-wallet/releases/latest" target="_blank" rel="noopener">DashPay Wallet releases</a> page. On a computer, switch the desktop wallet to Testnet.</p><!--/testnet-->
       </div>
       <div id="wallet-request" class="scan" hidden>
         <div class="scan-text">
-          <p class="on-desk"><b>Scan this code with DashPay</b></p>
-          <p class="hint on-desk">In the wallet: More, Tools, Connections, then Scan QR.</p>
-          <p class="on-phone"><b>Approve in DashPay on this device</b></p>
-          <a id="wallet-link" class="applink on-phone">Open in DashPay</a>
+          <p><b>Approve in DashPay</b></p>
+          <a id="wallet-link" class="applink">Open in DashPay</a>
+          <p class="hint">Open in DashPay works on this device, phone or computer. To use DashPay on another phone, scan the QR code with it: More, Tools, Connections, then Scan QR.</p>
           <p class="hint">Approve only a request shown on or opened from <b id="wallet-origin"></b>, and keep it private: anyone who scans or opens it can answer it.</p>
           <p class="status"><span id="wallet-status" aria-live="polite"></span> <span id="wallet-countdown"></span></p>
           <button type="button" class="quiet" id="wallet-cancel">Cancel</button>
         </div>
-        <p class="hint scan-alt on-phone">DashPay on another device? Scan this code there: More, Tools, Connections, then Scan QR.</p>
         <div id="wallet-qr" class="qr" role="img" aria-label="Sign-in code for DashPay"></div>
       </div>
       <div id="wallet-confirm" hidden>
