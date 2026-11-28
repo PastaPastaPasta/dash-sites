@@ -13,7 +13,7 @@ export function onFeesChange(listener: () => void): void {
   listeners.add(listener);
 }
 
-export const feesKnown = (): boolean => fees !== undefined;
+export const currentFees = (): FeeModel | undefined => fees;
 
 /** The upper estimate for publishing `bundle` when nothing of it is stored yet. */
 export const siteCost = (bundle: SiteBundle): CostEstimate | undefined => fees && estimateCost(bundle, fees);

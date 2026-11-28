@@ -3,7 +3,7 @@ import type { EvoReader } from '@dash-sites/core/evo';
 import { onSiteAssetsChange, setSiteAssets, siteAssets } from './assets.js';
 import { keepOutside, onOutsideChange, outsidePlaces, rememberOutside } from './outside.js';
 import { BLOCKS } from './page/blocks.js';
-import { costSplit, feesKnown, onFeesChange, platformPrice, sizeText, type CostSplit } from './page/cost.js';
+import { costSplit, currentFees, onFeesChange, platformPrice, sizeText, type CostSplit } from './page/cost.js';
 import { loadPageDraft, savePageDraft } from './page/draft.js';
 import { imagePaths, isBlankModel, tidyPageModel, type PageModel } from './page/model.js';
 import { renderSite } from './page/render.js';
@@ -100,7 +100,7 @@ function render(): void {
       const name = document.createElement('span');
       name.textContent = path;
       const size = document.createElement('span');
-      size.textContent = `${sizeText(asset.bytes.length)}, ${outsidePlaces(asset.bytes).length > 0 ? 'outside Platform' : (platformPrice(asset) ?? (feesKnown() ? 'too large for Platform' : 'cost not known yet'))}`;
+      size.textContent = `${sizeText(asset.bytes.length)}, ${outsidePlaces(asset.bytes).length > 0 ? 'outside Platform' : (platformPrice(asset) ?? (currentFees() ? 'too large for Platform' : 'cost not known yet'))}`;
       item.append(name, size);
       return [item];
     }),

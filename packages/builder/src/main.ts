@@ -26,7 +26,7 @@ import { normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { browserFetchers } from './elsewhere.js';
 import { keepOutside, loadOutside, onOutsideChange } from './outside.js';
 import { mountOutsidePanel } from './outside-panel.js';
-import { onFeesChange, platformPrice, setFees, siteCost, sizeText } from './page/cost.js';
+import { currentFees, onFeesChange, platformPrice, setFees, siteCost, sizeText } from './page/cost.js';
 import { mountPageTab, pageFiles, suggestReopen } from './page-tab.js';
 
 declare const __GATEWAY_DOMAIN__: string;
@@ -42,6 +42,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getEl
 const message = (error: unknown): string => String((error as Error)?.message ?? error);
 const loadEvo = () => import('@dash-sites/core/evo');
 const loadConnect = () => import('@dash-sites/core/connect');
+const loadFees = async () => (await loadEvo()).loadFeeModel(networkConfig(NETWORK));
 const SVG = 'http://www.w3.org/2000/svg';
 const EXPIRY_MARGIN_MS = 5 * 60_000;
 /** On dash.site the builder shares a site with every user's pages, so a sign-in never outlives its use. */
@@ -579,7 +580,7 @@ async function publish(): Promise<void> {
       } else if (step.step === 'record') {
         status.textContent = `Pointing ${published}.dash at the new site…`;
       }
-    });
+    }, { fees: currentFees() ?? (await loadFees().catch(() => undefined)) });
     status.textContent = `Stored ${result.uploaded} new ${result.uploaded === 1 ? 'part' : 'parts'}, reused ${result.reused}. Cost ${formatDash(result.creditsSpent)}.`;
     const link = $<HTMLAnchorElement>('result-link');
     link.href = url;
@@ -774,12 +775,11 @@ function start(): void {
   const idle = (window as { requestIdleCallback?: (fn: () => void) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
   onFeesChange(refresh);
   idle(() => {
-    const evo = loadEvo();
-    void evo.then((module) => module.loadFeeModel(networkConfig(NETWORK))).then(setFees, () => {
+    void loadFees().then(setFees, () => {
       feesFailed = true;
       refresh();
     });
-    void evo.then((module) => module.nameRegistrationCredits(networkConfig(NETWORK))).then(
+    void loadEvo().then((module) => module.nameRegistrationCredits(networkConfig(NETWORK))).then(
       (credits) => ($('register-cost').textContent = ` Registering one costs about ${formatDash(credits)}.`),
       () => {},
     );
