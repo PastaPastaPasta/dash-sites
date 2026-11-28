@@ -580,7 +580,7 @@ async function publish(): Promise<void> {
       } else if (step.step === 'record') {
         status.textContent = `Pointing ${published}.dash at the new site…`;
       }
-    }, { fees: currentFees() ?? (await loadFees().catch(() => undefined)) });
+    }, { fees: currentFees() ?? (await loadFees().then((model) => (setFees(model), model), () => undefined)) });
     status.textContent = `Stored ${result.uploaded} new ${result.uploaded === 1 ? 'part' : 'parts'}, reused ${result.reused}. Cost ${formatDash(result.creditsSpent)}.`;
     const link = $<HTMLAnchorElement>('result-link');
     link.href = url;
@@ -659,6 +659,7 @@ function start(): void {
   loadOutside(storage('localStorage'));
   mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, identity: () => writer?.identityId, places, onChange: refresh });
   const price = (file: SiteFile): string | undefined => {
+    if (!currentFees()) return 'cost not known yet';
     const costs = platformPrice(file);
     return costs && `about ${costs} on Platform`;
   };

@@ -64,7 +64,7 @@ Run `dash-sites publish <dir> --name <label> --network mainnet --dry-run` first,
 | Item | Approximate Cost |
 | --- | --- |
 | Identity creation + Core asset-lock tx fee | ~0.001–0.002 DASH |
-| Instant (non-contested) DPNS name registration | ~0.003–0.01 DASH |
+| Instant (non-contested) DPNS name registration | ~0.0007–0.0008 DASH (the SDK prices its preorder and domain at about 76.5 M credits; one was measured at about 65 M) |
 | First site record + chunks | Dry-run estimate (~0.35 DASH per stored MB) |
 | **Recommended buffer** | Add **~0.015–0.02 DASH** on top of the dry-run site estimate (minimum **0.01 DASH** for a minimal single-page site) |
 

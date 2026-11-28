@@ -2,10 +2,15 @@ import { buildSite, estimateCost, estimateCredits, formatDash, MAX_SITE_BYTES, P
 
 let fees: FeeModel | undefined;
 let failed = false;
+let version = 0;
 const listeners = new Set<() => void>();
 const changed = (): void => {
+  version++;
   for (const listener of listeners) listener();
 };
+
+/** Changes whenever the fees load or fail: a snapshot for React's useSyncExternalStore. */
+export const feesVersion = (): number => version;
 
 /** Platform's fees, once the SDK has computed them; every price here is unknown until then. */
 export function setFees(model: FeeModel): void {
@@ -83,15 +88,17 @@ const isImage = (file: SiteFile): boolean => (file.type ?? '').startsWith('image
 export function costSplit(files: SiteFile[]): CostSplit | undefined {
   if (files.length === 0 || !fees) return undefined;
   let total: bigint;
-  try {
-    total = estimateCredits(buildSite(files), fees);
-  } catch (error) {
-    if (error instanceof PackError) return undefined;
-    throw error;
-  }
+  let images: bigint;
   const all = files.filter(isImage);
   const pictures = all.filter((file) => !file.src);
-  const images = pictures.reduce((sum, file) => sum + (fileCredits(file) ?? 0n), 0n);
+  try {
+    total = estimateCredits(buildSite(files), fees);
+    images = pictures.reduce((sum, file) => sum + (fileCredits(file) ?? 0n), 0n);
+  } catch (error) {
+    if (error instanceof PackError) return undefined;
+    failed = true;
+    return undefined;
+  }
   return {
     total,
     images,

@@ -305,6 +305,7 @@ try {
   await panel.click('#outside summary');
   const row = panel.locator('.outside-files li');
   check((await row.count()) === 1 && /KB, about 0\.\d{5} DASH on Platform/.test(await row.textContent()), `the builder offers to move the one large file: ${(await row.textContent()).replace(/\s+/g, ' ')}`);
+  await panel.waitForFunction(() => /Estimated cost/.test(document.getElementById('page-cost')?.textContent ?? ''), undefined, { timeout: 60000 }).catch(() => {});
   const before = await panel.textContent('#page-cost');
   await row.locator('input').fill('https://media.example.com/other.webp');
   await row.locator('button:has-text("Check and keep outside")').click();
@@ -315,7 +316,7 @@ try {
   await row.locator('.outside-places').waitFor();
   check((await row.locator('.outside-places').textContent()) === 'Kept at media.example.com', 'an address that serves the file is kept as its place');
   const after = await panel.textContent('#page-cost');
-  const total = (text) => Number(/^About ([\d.]+) DASH/.exec(text)[1]);
+  const total = (text) => Number(/^Estimated cost to publish: about ([\d.]+) DASH/.exec(text)?.[1]);
   check(/one image \([\d.]+ KB\) about 0\.\d{5} DASH\. One image is kept outside Platform/.test(after) && total(after) < total(before) / 2, `and the page costs less: ${after}`);
   check(/outside Platform$/.test(await listed.textContent()), 'the image is listed as kept outside');
   if (shots) await panel.locator('#step-content').screenshot({ path: join(shots, 'outside-address-light.png') });
