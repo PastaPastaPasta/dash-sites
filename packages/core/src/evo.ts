@@ -19,6 +19,7 @@ import { KNOWN_CONTRACTS } from './known-contracts.js';
 import { CHUNK_FIELD_SIZE, CHUNK_SIZE, PRELOAD_CHUNKS } from './limits.js';
 import { DASH_TLD, isValidLabel, normalizeLabel } from './names.js';
 import type { DomainRecord, NameRecord, PlatformReader, PlatformWriter, ProofMeta, Proved, SiteRecord, StoredChunk } from './platform.js';
+import { LOCAL_QUORUM_URL, withLocalQuorums, type SnapshotSource } from './chain/quorums.js';
 
 const PAGE = 100;
 const PROTOCOL_VERSION = 14;
@@ -88,6 +89,11 @@ export interface ConnectOptions {
   timeoutMs?: number;
   /** Fetch every contract from the network instead of starting from the bundled snapshots. */
   fetchContracts?: boolean;
+  /**
+   * Quorum keys this page proved from the chain itself. The SDK is pointed at a quorum service that
+   * this page answers, so no quorum key comes from a server.
+   */
+  quorums?: SnapshotSource;
 }
 
 export const knownContract = (bytes: string): DataContract => DataContract.fromBase64(bytes, false, PROTOCOL_VERSION);
@@ -190,11 +196,22 @@ function installReadDeadline(): void {
   globalThis.fetch = withReadDeadline(globalThis.fetch.bind(globalThis));
 }
 
+let localQuorums: SnapshotSource | undefined;
+let localQuorumsInstalled = false;
+function installLocalQuorums(source: SnapshotSource): void {
+  localQuorums = source;
+  if (localQuorumsInstalled || typeof globalThis.fetch !== 'function') return;
+  localQuorumsInstalled = true;
+  globalThis.fetch = withLocalQuorums(globalThis.fetch.bind(globalThis), () => (localQuorums as SnapshotSource)());
+}
+
 export async function connectSdk(config: NetworkConfig, options: ConnectOptions = {}): Promise<EvoSDK> {
   installReadDeadline();
+  if (options.quorums) installLocalQuorums(options.quorums);
   const sdk = new EvoSDK({
     network: config.network,
     trusted: true,
+    ...(options.quorums ? { quorumUrl: LOCAL_QUORUM_URL } : {}),
     ...(options.addresses ? { addresses: options.addresses } : {}),
     settings: { connectTimeoutMs: 10000, timeoutMs: options.timeoutMs ?? 30000, retries: 4 },
   });

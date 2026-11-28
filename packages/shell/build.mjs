@@ -3,8 +3,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, 
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { brotliCompressSync, brotliDecompressSync, constants, gunzipSync } from 'node:zlib';
+import { brotliCompressSync, brotliDecompressSync, constants } from 'node:zlib';
 import { build } from 'esbuild';
+import { evoWasmPlugin } from '../../scripts/evo-wasm.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const out = join(root, 'dist');
@@ -23,13 +24,6 @@ const common = { bundle: true, format: 'iife', target: 'es2022', minify: true, l
 const onlyNetwork = { __ONLY_NETWORK__: JSON.stringify(network) };
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
-/** Exactly one match of `pattern` in `text`, or the build stops: the SDK bundle changed shape. */
-function only(text, pattern, what) {
-  const found = [...text.matchAll(new RegExp(pattern.source, 'g'))];
-  if (found.length !== 1) throw new Error(`evo-sdk: expected one ${what}, found ${found.length}; update the patch in packages/shell/build.mjs`);
-  return found[0];
-}
-
 /**
  * The Dash SDK bundle carries its WebAssembly inline as base64 of gzip, which costs 9 MB on the wire.
  * The verifier build takes it out and serves it as a separate file compressed with brotli at the
@@ -38,22 +32,9 @@ function only(text, pattern, what) {
  * compiled from those bytes after checking their hash.
  */
 let sdkWasm;
-const sdkPlugin = {
-  name: 'evo-sdk-wasm',
-  setup(b) {
-    b.onLoad({ filter: /[\\/]@dashevo[\\/]evo-sdk[\\/]dist[\\/]evo-sdk\.module\.js$/ }, ({ path }) => {
-      let code = readFileSync(path, 'utf8');
-      const inline = only(code, /const ([\w$]+)="(H4sI[A-Za-z0-9+/=]+)"/, 'inline WebAssembly');
-      sdkWasm = gunzipSync(Buffer.from(inline[2], 'base64'));
-      if (sdkWasm.readUInt32BE(0) !== 0x0061736d) throw new Error('evo-sdk: the inline payload is not WebAssembly');
-      code = code.replace(inline[0], () => `const ${inline[1]}=""`);
-      const init = only(code, /async function ([\w$]+)\(([\w$]+)\)\{if\(([\w$]+)\)\{if\(void 0===\2\)\{return [\w$]+\(\{module:await [\w$]+\(\)\}\)\}return ([\w$]+)\(\2\)\}/, 'WebAssembly init');
-      const [whole, , arg, , instantiate] = init;
-      code = code.replace(whole, () => whole.replace('{', () => `{if(void 0===${arg})return ${instantiate}({module_or_path:globalThis.dashSitesSdk});`));
-      return { contents: code, loader: 'js' };
-    });
-  },
-};
+const sdkPlugin = evoWasmPlugin((wasm) => {
+  sdkWasm = wasm;
+});
 
 const require = createRequire(import.meta.url);
 const decoderWasm = readFileSync(require.resolve('brotli-dec-wasm/web/bg.wasm'));

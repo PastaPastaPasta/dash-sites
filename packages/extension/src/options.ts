@@ -1,34 +1,37 @@
-import { loadSettings, saveSettings } from './settings.js';
 import type { Network } from '@dash-sites/core';
-import { DEFAULT_GATEWAY, parseGateway } from './shared.js';
+import { clearSites } from './cache.js';
+import { chainKey, loadSettings, parseGateway, saveSettings } from './shared.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
+function say(ok: boolean, text: string): void {
+  $('status').dataset.ok = String(ok);
+  $('status').textContent = text;
+}
+
 async function main(): Promise<void> {
   const settings = await loadSettings();
-  const gateway = $<HTMLInputElement>('gateway');
-  const searches = $<HTMLInputElement>('searches');
   const network = $<HTMLSelectElement>('network');
-  gateway.value = settings.gateway;
-  searches.checked = settings.catchSearches;
+  const searches = $<HTMLInputElement>('searches');
+  const fallback = $<HTMLInputElement>('fallback');
+  const gateway = $<HTMLInputElement>('gateway');
   network.value = settings.network;
-  $('reset').addEventListener('click', () => {
-    gateway.value = DEFAULT_GATEWAY;
-  });
+  searches.checked = settings.catchSearches;
+  fallback.checked = settings.gatewayFallback;
+  gateway.value = settings.gateway;
   $<HTMLFormElement>('form').addEventListener('submit', (event) => {
     event.preventDefault();
-    const parsed = parseGateway(gateway.value);
-    const status = $('status');
-    if (!parsed) {
-      status.dataset.ok = 'false';
-      status.textContent = 'A gateway is an https address, or http on localhost, with no path.';
-      return;
-    }
-    void saveSettings({ gateway: parsed.origin, catchSearches: searches.checked, network: network.value as Network }).then(() => {
-      gateway.value = parsed.origin;
-      status.dataset.ok = 'true';
-      status.textContent = `Saved. alice.dash now opens ${parsed.protocol}//alice.${parsed.host}/`;
+    const parsed = gateway.value.trim() ? parseGateway(gateway.value) : undefined;
+    if (fallback.checked && !parsed) return say(false, 'Enter the domain as an https address with no path, such as dash.site.');
+    void saveSettings({ network: network.value as Network, catchSearches: searches.checked, gatewayFallback: fallback.checked, gateway: parsed?.origin ?? '' }).then(() => {
+      gateway.value = parsed?.origin ?? '';
+      say(true, 'Saved.');
     });
+  });
+  $('reset-chain').addEventListener('click', () => {
+    void Promise.all([chrome.storage.local.remove([chainKey('mainnet'), chainKey('testnet')]), clearSites()]).then(() =>
+      say(true, 'The next site you open verifies the chain again from the bundled checkpoint.'),
+    );
   });
 }
 

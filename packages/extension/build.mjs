@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { zipSync } from 'fflate';
+import { evoWasmPlugin, x11StrictPlugin } from '../../scripts/evo-wasm.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const out = join(root, 'build');
@@ -10,37 +11,53 @@ const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).ver
 rmSync(out, { recursive: true, force: true });
 
 function tree(dir, prefix = '') {
-  const out = {};
+  const files = {};
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) Object.assign(out, tree(path, `${prefix}${entry.name}/`));
-    else out[`${prefix}${entry.name}`] = [new Uint8Array(readFileSync(path)), { mtime: new Date('2026-01-01T00:00:00Z') }];
+    if (entry.isDirectory()) Object.assign(files, tree(path, `${prefix}${entry.name}/`));
+    else files[`${prefix}${entry.name}`] = [new Uint8Array(readFileSync(path)), { mtime: new Date('2026-01-01T00:00:00Z') }];
   }
-  return out;
+  return files;
 }
 
 for (const target of ['chrome', 'firefox']) {
   const dir = join(out, target);
   mkdirSync(dir, { recursive: true });
+  const sandbox = target === 'chrome';
+  let wasm;
+  const common = { bundle: true, minify: true, legalComments: 'none', logLevel: 'warning', target: sandbox ? 'chrome124' : 'firefox128', define: { __SANDBOX__: String(sandbox) } };
+  // The background worker holds the SDK and the chain proof for every tab. A service worker cannot
+  // use import(), so it is one file.
   await build({
-    entryPoints: ['background', 'popup', 'options'].map((name) => join(root, 'src', `${name}.ts`)),
+    ...common,
+    entryPoints: [join(root, 'src', 'background.ts')],
     outdir: dir,
-    bundle: true,
+    format: 'esm',
+    plugins: [evoWasmPlugin((bytes) => (wasm = bytes)), x11StrictPlugin()],
+  });
+  await build({
+    ...common,
+    entryPoints: ['site', 'popup', 'options'].map((name) => join(root, 'src', `${name}.ts`)),
+    outdir: dir,
     splitting: true,
     format: 'esm',
-    target: target === 'chrome' ? 'chrome116' : 'firefox128',
     chunkNames: 'chunks/[name]-[hash]',
-    minify: true,
-    legalComments: 'none',
-    logLevel: 'warning',
+    plugins: [x11StrictPlugin()],
   });
+  if (!wasm) throw new Error('the extension build did not load the SDK');
+  writeFileSync(join(dir, 'verifier.wasm'), wasm);
+  if (sandbox) await build({ ...common, entryPoints: [join(root, 'src', 'sandbox.ts')], outdir: dir, format: 'iife' });
   cpSync(join(root, 'static'), dir, { recursive: true });
   const manifest = JSON.parse(readFileSync(join(root, 'static', 'manifest.json'), 'utf8'));
   manifest.version = version;
-  if (target === 'firefox') {
-    manifest.background = { scripts: ['background.js'], type: 'module' };
-    manifest.browser_specific_settings = { gecko: { id: 'dash-sites@thepasta.org', strict_min_version: '128.0' } };
+  if (!sandbox) {
+    delete manifest.sandbox;
+    delete manifest.content_security_policy.sandbox;
     delete manifest.minimum_chrome_version;
+    manifest.web_accessible_resources[0].resources = ['site.html'];
+    manifest.background = { scripts: ['background.js'], type: 'module' };
+    manifest.browser_specific_settings = { gecko: { id: 'dash-sites@thepasta.org', strict_min_version: '128.0', data_collection_permissions: { required: ['none'] } } };
+    rmSync(join(dir, 'sandbox.html'));
   }
   writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   const zip = join(out, `dash-sites-extension-${target}-${version}.zip`);

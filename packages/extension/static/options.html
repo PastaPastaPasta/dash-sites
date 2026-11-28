@@ -2,38 +2,45 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Dash Sites settings</title>
 <link rel="stylesheet" href="ui.css">
 <style>
-main{max-width:560px;margin:0 auto;padding:40px 16px}
-h1{font-size:22px;margin:0 0 24px}
+main{max-width:620px;margin:0 auto;padding:28px 20px 40px}
+h1{font-size:22px;margin:0 0 20px}
 label{display:block;font-weight:600;margin:20px 0 6px}
+label.check{display:flex;gap:10px;font-weight:500;align-items:flex-start}
+label.check input{margin-top:4px}
 p{margin:6px 0 0;color:var(--muted)}
 .row{display:flex;gap:8px}
-.check{display:flex;gap:8px;align-items:flex-start;font-weight:400}
-.check input{margin-top:3px}
-#status{min-height:20px;margin-top:16px}
+fieldset{border:1px solid var(--line);border-radius:10px;padding:4px 14px 14px;margin:22px 0 0}
+legend{font-weight:600;padding:0 6px}
+#status{margin:18px 0 10px;min-height:1.4em}
 #status[data-ok=true]{color:var(--ok)}
 #status[data-ok=false]{color:var(--bad)}
+#reset-chain{margin-top:8px}
 </style>
 </head>
 <body>
 <main>
 <h1>Dash Sites settings</h1>
 <form id="form">
-  <label for="gateway">Gateway</label>
-  <div class="row"><input type="text" id="gateway" spellcheck="false" autocapitalize="none"><button type="button" class="quiet" id="reset">Default</button></div>
-  <p><code>alice.dash</code> opens at <code>alice.&lt;gateway&gt;</code>. The gateway only hands your browser the verifier; the site itself comes from Dash Platform and is checked on this computer. To depend on nobody's server, host the verifier yourself (<code>npm run serve -w @dash-sites/shell</code>) and enter <code>http://localhost:8080</code>.</p>
-
   <label for="network">Network</label>
-  <select id="network"><option value="testnet">Testnet</option><option value="mainnet">Mainnet</option></select>
-  <p>The Dash network the extension checks sites against. It should be the one your gateway is built for: <code>id.dashhq.org</code> for testnet, <code>dash.site</code> for mainnet.</p>
+  <select id="network"><option value="mainnet">Mainnet</option><option value="testnet">Testnet</option></select>
+  <p>The Dash network names are read from. Both are verified from this release’s checkpoint.</p>
 
-  <label class="check"><input type="checkbox" id="searches"><span>Open the site when the address bar turns <code>alice.dash</code> into a search<br><span class="muted">The extension looks at the address of pages you navigate to, and acts only on a search for exactly a <code>.dash</code> name.</span></span></label>
+  <label class="check"><input type="checkbox" id="searches"><span>Open the site when the address bar turns <code>alice.dash</code> into a search<br><span class="muted">For the search engines listed in the extension, the search is redirected before it leaves your browser.</span></span></label>
+
+  <fieldset>
+    <legend>Fallback</legend>
+    <label class="check"><input type="checkbox" id="fallback"><span>When Dash Platform cannot be read directly, offer to open the site on a web domain instead<br><span class="muted">Off by default. The domain is a web server and its DNS name: using it tells them which site you open.</span></span></label>
+    <label for="gateway">Domain</label>
+    <input type="text" id="gateway" placeholder="dash.site" spellcheck="false" autocapitalize="none">
+  </fieldset>
 
   <div id="status" aria-live="polite"></div>
   <button>Save</button>
+  <button type="button" class="quiet" id="reset-chain">Forget the verified chain</button>
 </form>
 </main>
 <script type="module" src="options.js"></script>

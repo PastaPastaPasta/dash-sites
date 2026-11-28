@@ -1,6 +1,6 @@
 {
   "name": "@dash-sites/extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -8,7 +8,8 @@
     "build": "node build.mjs"
   },
   "dependencies": {
-    "@dash-sites/core": "0.1.0"
+    "@dash-sites/core": "0.1.0",
+    "es-module-lexer": "1.7.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",

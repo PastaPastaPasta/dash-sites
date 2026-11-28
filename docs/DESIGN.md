@@ -720,48 +720,33 @@ queries for browsers.
 
 ### Extension (Chromium MV3; Firefox MV3 build from the same source)
 
-- **Navigation**: a declarativeNetRequest rule redirects `http(s)://<label>.dash/…`
-  to `https://<label>.<gateway>/…`, for page and frame navigations only. That
-  host is the shell, so the site is fetched from Platform and verified in the
-  browser; the extension does not route content through anyone's server. The
-  omnibox keyword `dash` opens a name directly. Chrome treats a bare
-  `alice.dash` as a search because `.dash` is not a TLD it knows, so the
-  extension also watches navigations (the `webNavigation` permission) and
-  turns a search for exactly a `.dash` name into a visit. That can be turned
-  off in the settings.
-- **Why not serve sites from the extension itself.** Bundling the shell would
-  remove the dependency on a static host, and was evaluated:
-  - An extension page (`chrome-extension://<id>/…`) is one origin for every
-    site. Site code there would have the extension's privileges, so it must
-    be sandboxed, and a sandboxed frame has an opaque origin: no storage, no
-    cookies, no service worker, and its requests are not seen by the
-    extension's worker, so every URL in HTML, CSS and scripts would have to
-    be rewritten to blobs. The address bar would show the extension URL.
-  - Chrome gives extensions no way to answer a request for a web origin with
-    their own bytes, and a service-worker script cannot be redirected, so an
-    extension cannot install the shell on `alice.<gateway>` without that host
-    answering.
-  - Firefox can rewrite response bodies (`webRequest.filterResponseData`) and
-    proxy `*.dash` (`proxy.onRequest`), which would keep `alice.dash` in the
-    address bar. It still needs some server to answer the proxied request,
-    and `http://alice.dash` is not a secure context (no service workers, no
-    WebCrypto), so the extension would have to answer every request itself.
-    Not built.
-  Real per-name origins with storage, a real URL, and verification in the
-  browser were judged worth more than removing the static host, whose role is
-  now three public files. The remaining dependency is bounded: the gateway
-  setting accepts any shell host, including one on the user's own machine
-  (`http://localhost:8080`), which is the no-third-party setup; and after
-  the first visit a site works without the host.
-- **Independent check**: the popup resolves the current site with its own
-  copy of the SDK, with proofs over DAPI, and compares the result with what
-  the page was served: the `X-Dash-*` facts (owner, revision, content URI)
-  and the SHA-256 of the page's file against the proved manifest. It reads
-  those from inside the tab, the only place a request takes the path the page
-  did. This catches a shell that is stale or broken. It is not a defence
-  against a hostile shell, which controls that same path, and a site's own
-  script could interfere with the reading; the owner, revision and proof
-  height the popup shows come from the extension's own query either way.
+Since 0.2.0 the extension opens names with no gateway, static host or DNS at
+run time. This replaces the earlier plan here, which redirected `.dash` to a
+gateway's shell. The details are in
+[packages/extension/README.md](../packages/extension/README.md). In short:
+
+- **Navigation.** declarativeNetRequest rules send `http(s)://<label>.dash/…`
+  to the extension's viewer page before any DNS lookup. They do the same for a
+  search for exactly a `.dash` name on the listed engines, before the search
+  is sent. The omnibox keyword `dash` opens a name directly.
+- **Trust.** The extension verifies the Dash header chain from a checkpoint
+  bundled with each release: X11 proof of work and DarkGravityWave. It then
+  checks the masternode list and quorums DAPI streams against that chain's
+  coinbase roots, and answers the SDK's quorum key requests from that proof.
+  No quorum service is asked. A key is used only if every list holds it: at
+  least two, one of them from a bundled seed. Every Platform read is then proof-verified as before. The
+  known gap is that ChainLock and commitment signatures are not checked: the
+  model is SPV plus the coinbase commitment, from several nodes. The README covers
+  this and the way to close it (DIP 175 proofs over DAPI).
+- **Nodes.** A bundled IP seed list, then the evonodes of the latest proven
+  masternode list.
+- **Rendering.** The objections listed here before still hold: one extension
+  origin, so sites must be sandboxed; an opaque origin; URLs rewritten to
+  blobs. The extension accepts those costs:
+  - Chrome renders in a manifest sandbox page inside a sandboxed frame, with
+    in-memory storage.
+  - Firefox has no sandbox pages, so it renders without site scripts.
+  - Single-page apps that read `location.pathname` do not work yet.
 
 ## 6. Security
 

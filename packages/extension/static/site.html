@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Dash Sites</title>
+<link rel="icon" href="icons/32.png">
+<link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header id="bar">
+  <img src="icons/48.png" alt="" class="logo">
+  <form id="go" role="search"><input type="text" id="address" placeholder="alice.dash" autocapitalize="none" autocomplete="off" spellcheck="false" aria-label=".dash address"></form>
+  <button type="button" id="badge" data-kind="checking" aria-expanded="false" aria-controls="details"><span class="dot" aria-hidden="true"></span><span id="badge-text">Verifying…</span></button>
+  <button type="button" id="settings" class="icon" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.7 7.7 0 0 0-1.7-1L15 3h-4l-.4 2.9c-.6.3-1.2.6-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg></button>
+</header>
+<section id="details" hidden>
+  <p>Everything on this page was read from Dash Platform nodes and checked in this browser. The extension proved the Platform quorum keys from the Dash chain itself, starting at a checkpoint bundled with this release, then checked each answer’s proof and each file’s hash. It used no gateway, DNS name or other server.</p>
+  <dl id="facts"></dl>
+  <p id="mode" class="muted" hidden>Firefox shows sites without their scripts: it has no sandboxed extension pages to run them in safely.</p>
+</section>
+<main id="stage">
+  <div id="status" data-kind="checking" aria-live="polite">
+    <div class="spinner" aria-hidden="true"></div>
+    <h1 id="status-title">Opening…</h1>
+    <p id="status-detail"></p>
+    <div id="status-actions"></div>
+  </div>
+  <div id="frame-slot"></div>
+</main>
+<script type="module" src="site.js"></script>
+</body>
+</html>
