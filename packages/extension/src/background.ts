@@ -1,13 +1,9 @@
+import { ruleInstaller } from './rules.js';
 import { loadSettings, parseTarget, redirectRules, targetForSearch, viewerUrl } from './shared.js';
 
 declare const __SANDBOX__: boolean;
 
-async function applyRules(): Promise<void> {
-  const settings = await loadSettings();
-  const rules = redirectRules(chrome.runtime.getURL('/'), settings, __SANDBOX__);
-  const existing = await chrome.declarativeNetRequest.getDynamicRules();
-  await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: existing.map((rule) => rule.id), addRules: rules });
-}
+const applyRules = ruleInstaller(chrome.declarativeNetRequest, async () => redirectRules(chrome.runtime.getURL('/'), await loadSettings(), __SANDBOX__));
 
 const reapply = (): void => {
   applyRules().catch((error: unknown) => console.error('Dash Sites: could not install the redirect rules', error));
