@@ -24,7 +24,7 @@ code:where(:not(.ed *)){font:13px var(--mono);overflow-wrap:anywhere}
 .lede b{color:var(--ink);font-weight:600;overflow-wrap:anywhere}
 
 .step{border-top:1px solid var(--line);padding:20px 0 24px}
-.step[inert]{opacity:.42}
+.step[inert]>:not(#cost){opacity:.42}
 .step h2{font-size:19px;font-weight:650;margin:0 0 14px;display:flex;align-items:baseline;gap:12px;letter-spacing:-.01em}
 .step .n{font:600 13px var(--mono);color:var(--muted);min-width:1ch}
 .step label{display:block;font-weight:600;font-size:14px;margin:14px 0 5px}
