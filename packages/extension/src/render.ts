@@ -139,19 +139,38 @@ export class Rewriter {
 
   importMap(): string {
     const imports: Record<string, string> = {};
-    for (const file of this.page.files.values()) if (isJs(file)) imports[this.page.origin + file.path] = this.fileUrl(file);
+    // Keyed as `module()` writes specifiers: parsed, so percent-encoded the way URLs are.
+    for (const file of this.page.files.values()) if (isJs(file)) imports[new URL(file.path, this.page.origin).href] = this.fileUrl(file);
     return JSON.stringify({ imports }).replace(/</g, '\\u003c');
   }
 
+  /**
+   * Rewrites each candidate's URL, splitting as the HTML parser does: a URL runs to whitespace and may
+   * hold commas (`data:`); one that ends in commas has no descriptors.
+   */
   srcset(value: string, base: string): string {
-    return value
-      .split(',')
-      .map((candidate) => {
-        const [ref, ...descriptor] = candidate.trim().split(/\s+/);
-        const target = ref ? this.urlFor(ref, base) : undefined;
-        return [target ?? ref, ...descriptor].join(' ');
-      })
-      .join(', ');
+    const out: string[] = [];
+    let at = 0;
+    while (at < value.length) {
+      while (at < value.length && /[\s,]/.test(value.charAt(at))) at++;
+      if (at >= value.length) break;
+      let end = at;
+      while (end < value.length && !/\s/.test(value.charAt(end))) end++;
+      let ref = value.slice(at, end);
+      let descriptor = '';
+      if (ref.endsWith(',')) {
+        ref = ref.replace(/,+$/, '');
+        at = end;
+      } else {
+        const comma = value.indexOf(',', end);
+        const stop = comma < 0 ? value.length : comma;
+        descriptor = value.slice(end, stop).trim();
+        at = stop + 1;
+      }
+      const target = this.urlFor(ref, base) ?? ref;
+      out.push(descriptor ? `${target} ${descriptor}` : target);
+    }
+    return out.join(', ');
   }
 
   /** Rewrites one element's references in place. */
@@ -161,7 +180,14 @@ export class Rewriter {
       const value = element.getAttribute(attribute);
       if (value === null) return;
       const target = this.urlFor(value, base);
-      if (target) element.setAttribute(attribute, target);
+      if (!target) return;
+      element.setAttribute(attribute, target);
+      // The bytes were checked against the manifest, and a rewritten stylesheet or module no longer has the hash the site declared.
+      element.removeAttribute('integrity');
+    };
+    /** Writes only a changed value: the sandbox rewrites again on every attribute mutation it observes. */
+    const set = (attribute: string, value: string): void => {
+      if (element.getAttribute(attribute) !== value) element.setAttribute(attribute, value);
     };
     if (['img', 'source', 'video', 'audio', 'track', 'embed', 'input'].includes(tag)) swap('src');
     if (tag === 'script') {
@@ -170,8 +196,8 @@ export class Rewriter {
       if (!element.hasAttribute('src') && element.getAttribute('type') === 'module') element.textContent = this.module(element.textContent ?? '', base);
     }
     if (tag === 'img' || tag === 'source') {
-      const set = element.getAttribute('srcset');
-      if (set) element.setAttribute('srcset', this.srcset(set, base));
+      const candidates = element.getAttribute('srcset');
+      if (candidates) set('srcset', this.srcset(candidates, base));
     }
     if (tag === 'video') swap('poster');
     if (tag === 'object') swap('data');
@@ -182,9 +208,12 @@ export class Rewriter {
     }
     if ((tag === 'a' || tag === 'area') && this.links) this.link(element, base);
     if ((tag === 'iframe' || tag === 'frame') && !this.scripts) this.frame(element, base);
-    if (tag === 'style') element.textContent = this.css(element.textContent ?? '', base);
+    if (tag === 'style') {
+      const css = this.css(element.textContent ?? '', base);
+      if (css !== element.textContent) element.textContent = css;
+    }
     const style = element.getAttribute('style');
-    if (style && /url\(/.test(style)) element.setAttribute('style', this.css(style, base));
+    if (style && /url\(/.test(style)) set('style', this.css(style, base));
   }
 
   /**

@@ -23,6 +23,8 @@ type Badge = 'checking' | 'ok' | 'partial' | 'none' | 'error';
 function badge(kind: Badge, text: string): void {
   $('badge').dataset.kind = kind;
   $('badge-text').textContent = text;
+  // The text is hidden on narrow screens; the button keeps its name.
+  $('badge').setAttribute('aria-label', `${text}. Show the verification details`);
 }
 
 function status(title: string, detail = '', kind: Badge = 'checking'): void {

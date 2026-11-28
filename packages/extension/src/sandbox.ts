@@ -100,13 +100,15 @@ function install(page: PageMessage, files: Map<string, SiteFile>): () => void {
   history.pushState = (_state: unknown, _title: string, url?: string | URL | null) => fakeHistory(url);
   history.replaceState = (_state: unknown, _title: string, url?: string | URL | null) => fakeHistory(url);
 
+  // `open` is the window's own property, not the prototype's: keep the real one before replacing it.
+  const realOpen = window.open.bind(window);
   window.open = ((url?: string | URL, target?: string, features?: string) => {
     const site = url === undefined ? undefined : siteUrl(String(url));
     if (site && (!target || target === '_self')) {
       post({ type: 'navigate', url: site.href });
       return null;
     }
-    return Window.prototype.open.call(window, url, target, features);
+    return realOpen(url, target, features);
   }) as typeof window.open;
 
   return () => {
