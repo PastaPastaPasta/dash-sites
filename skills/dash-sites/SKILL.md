@@ -61,7 +61,7 @@ Ask the user which setup they have and how they want to authorize or pay. Never 
 
 #### Path A — DashPay Mobile Wallet Login (Contract-Bound Limited Key)
 
-Best when the user already owns a `.dash` name in DashPay (Android 11.9.2+ or iOS 9.1.4+). The wallet issues a contract-bound `AUTHENTICATION/HIGH` key with a spending budget and expiry; full wallet keys never leave the phone.
+Best when the user already owns a `.dash` name in DashPay (Android 11.9.2+, iOS 9.1.4+, or the desktop Dash Wallet 1.0.0-rc.2+). The wallet issues a contract-bound `AUTHENTICATION/HIGH` key with a spending budget and expiry; full wallet keys never leave the phone.
 
 ```sh
 # In non-interactive agent shells, pin --name <label> (or --identity <id>, or --yes).

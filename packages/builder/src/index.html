@@ -34,14 +34,14 @@
         <div class="actions">
           <button type="button" id="wallet-button">Sign in with DashPay</button>
         </div>
-        <p class="hint">Works with DashPay for Android 11.9.2 or later, Dash Wallet for iOS 9.1.4 or later and DashPay Desktop 1.0.0-rc.1 or later.</p>
-        <!--testnet--><p class="hint" id="wallet-testnet" hidden>This builder publishes to testnet, which needs DashPay's testnet build: the <code>-testnet.apk</code> on the <a href="https://github.com/dashpay/dash-wallet/releases/latest" target="_blank" rel="noopener">DashPay Wallet releases</a> page.</p><!--/testnet-->
+        <p class="hint">Works with DashPay for Android 11.9.2 or later, Dash Wallet for iOS 9.1.4 or later and the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2 or later.</p>
+        <!--testnet--><p class="hint" id="wallet-testnet" hidden>This builder publishes to testnet, which needs DashPay's testnet build: the <code>-testnet.apk</code> on the <a href="https://github.com/dashpay/dash-wallet/releases/latest" target="_blank" rel="noopener">DashPay Wallet releases</a> page. On a computer, switch the desktop wallet to Testnet.</p><!--/testnet-->
       </div>
       <div id="wallet-request" class="scan" hidden>
         <div class="scan-text">
           <p><b>Approve in DashPay</b></p>
           <a id="wallet-link" class="applink">Open in DashPay</a>
-          <p class="hint">The button opens DashPay on this device, phone or computer. With DashPay on another device, scan the code there instead: More, Tools, Connections, then Scan QR.</p>
+          <p class="hint">Open in DashPay works on this device, phone or computer. To use DashPay on another phone, scan the QR code with it: More, Tools, Connections, then Scan QR.</p>
           <p class="hint">Approve only a request shown on or opened from <b id="wallet-origin"></b>, and keep it private: anyone who scans or opens it can answer it.</p>
           <p class="status"><span id="wallet-status" aria-live="polite"></span> <span id="wallet-countdown"></span></p>
           <button type="button" class="quiet" id="wallet-cancel">Cancel</button>

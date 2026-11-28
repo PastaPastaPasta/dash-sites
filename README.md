@@ -95,8 +95,10 @@ screen. The wallet's own keys never leave it. Then pick a name you own, write
 a page or upload a folder or zip, and publish. You see the fee before anything
 is sent.
 
-- Wallets: DashPay for Android 11.9.2 or later and Dash Wallet for iOS 9.1.4
-  or later. Testnet needs DashPay's testnet build, the `-testnet.apk` on the
+- Wallets: DashPay for Android 11.9.2 or later, Dash Wallet for iOS 9.1.4 or
+  later, and the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2 or later. The
+  sign-in step shows a QR code and an Open in DashPay button on every device.
+  Testnet needs DashPay's testnet build, the `-testnet.apk` on the
   [DashPay Wallet releases](https://github.com/dashpay/dash-wallet/releases/latest).
 - A wallet sign-in cannot register names, because its key is limited to Dash
   Sites. Register a name in the wallet, or use the key sign-in below.

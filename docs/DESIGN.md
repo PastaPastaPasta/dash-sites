@@ -557,8 +557,8 @@ and the extension all call the same functions.
   publishing server.
 
 **Signing in with a mobile wallet** is the builder's first choice. It is App
-Connect v2, the `dashpay://connect` flow that DashPay for Android (11.9.2) and
-Dash Wallet for iOS (9.1.4) answer and that Dash Forge and Yappr use. The
+Connect v2, the `dashpay://connect` flow that DashPay for Android (11.9.2),
+Dash Wallet for iOS (9.1.4) and the desktop Dash Wallet (1.0.0-rc.2) answer and that Dash Forge and Yappr use. The
 protocol code is theirs, vendored unchanged in
 `packages/core/src/vendor/app-connect/`; what Dash Sites asks for is in
 `packages/core/src/connect.ts`.

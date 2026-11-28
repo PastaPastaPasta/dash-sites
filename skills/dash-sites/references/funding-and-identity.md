@@ -14,7 +14,7 @@ Ask the user which option fits them best:
 
 ## Path A: DashPay Mobile Wallet Login
 
-Requires DashPay for Android 11.9.2+ or Dash Wallet for iOS 9.1.4+ (for testnet, use the `-testnet.apk` release from `dashpay/dash-wallet`).
+Requires DashPay for Android 11.9.2+, Dash Wallet for iOS 9.1.4+ or the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2+ (for testnet, use the `-testnet.apk` release from `dashpay/dash-wallet`).
 
 ```sh
 # Pin an existing name (recommended — skips interactive confirmation in non-TTY agent shells):
