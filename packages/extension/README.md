@@ -58,7 +58,7 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
   - The chain is stored 12 blocks below the verified tip. If nodes' headers do
     not follow the stored chain (it was on a branch the network left), the sync
     starts again from the checkpoint, and drops the quorum keys and nodes the
-  stranded chain proved. A network failure does not trigger this.
+    stranded chain proved. A network failure does not trigger this.
 - **Masternode list and quorums.** `Core/subscribeToMasternodeList` returns
   Core's `protx diff` from genesis to the tip, as CBOR. The list is accepted
   only if:
@@ -115,11 +115,14 @@ headers.
 | `alice.dash` | `.dash` is not a TLD Chrome knows, so the omnibox runs a search. A DNR rule matches the search URL of the engines in `SEARCH_ENGINES` (Google ccTLDs in the host permissions, Bing, DuckDuckGo, Brave, Yahoo, Ecosia, Startpage, Kagi, Qwant) when the query is exactly a `.dash` address, and redirects before the request is sent. Tested: no response from Google. | Same: Firefox searches for names under unknown suffixes, and the same DNR rules apply. |
 | `alice.dash/`, `http://alice.dash/blog` | Parsed as a URL. A DNR `main_frame` rule redirects to the viewer before any DNS lookup. Tested. | Same. |
 | `dash alice` (keyword, then space) | `omnibox` API. | Same API. |
-| Another search engine (Yandex, Baidu, Naver, Seznam, Mojeek, Presearch, You.com, AOL, Ask, MetaGer, Swisscows, Yahoo Japan), or a listed engine whose host access the user withheld | `webNavigation.onBeforeNavigate` sees the search URL and opens the viewer. By then the engine has the query. | Same. |
+| Another search engine (Yandex, Baidu, Naver, Seznam, Mojeek, Presearch, You.com, AOL, Ask, MetaGer, Swisscows, Yahoo Japan), or a listed engine the extension has no host access to (a Google domain not in its host permissions, or access the user withheld) | `webNavigation.onBeforeNavigate` sees the search URL and opens the viewer. By then the engine has the query. | Same. |
 
 Every other request to a `.dash` address (an image, style, media file or fetch
 the viewer has no file for, such as a missing file or one kept outside
-Platform) is blocked by a DNR rule before DNS.
+Platform) is blocked by a DNR rule before DNS. This is tested in Chromium.
+Firefox gets the same rule, but whether Firefox applies DNR to requests from
+the extension's own pages is not verified (Playwright cannot load extensions
+into Firefox).
 
 Remaining leaks: the browser itself may resolve `alice.dash` in DNS while you
 type, through Chrome's omnibox preconnect or Firefox's "did you mean" check.

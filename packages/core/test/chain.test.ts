@@ -214,6 +214,19 @@ describe('syncing from several nodes', () => {
     await expect(sync({ a: {}, b: { diff: tampered } })).rejects.toThrow(/1 of the 2 masternode lists/);
   });
 
+  it('falls back to the seeds when the lists prove no nodes', async () => {
+    const withoutNodes = (): MnListDiff => {
+      const changed = diff();
+      const evo = changed.mnList.find((m) => m.nType === 1 && m.nVersion >= 3 && m.addresses?.platform_https?.length);
+      if (evo?.addresses?.platform_https) evo.addresses.platform_https[0] = '1.2.3.4:443';
+      return changed;
+    };
+    const snapshot = await sync({ a: { diff: withoutNodes }, b: { diff: withoutNodes } });
+    expect(snapshot.nodes).toEqual(['a', 'b']);
+    const again = await sync({ a: { diff: withoutNodes }, b: { diff: withoutNodes } }, { ...snapshot, nodes: [] });
+    expect(again.nodes.length).toBeGreaterThan(0);
+  });
+
   it('takes a list whose block arrived after the nodes reported their tips', async () => {
     const snapshot = await sync({ a: { reported: tip - 1 }, b: { reported: tip - 1 } });
     expect(snapshot.listHeight).toBe(tip);
@@ -252,8 +265,16 @@ describe('syncing from several nodes', () => {
   it('starts again from the checkpoint when the stored chain is on a branch the nodes left', async () => {
     const good = await sync({ a: {}, b: {} });
     // A stored chain whose headers are real but labelled 30 blocks higher: nothing the nodes send follows it.
-    const stranded: ChainSnapshot = { ...good, chain: { network: 'testnet', height: tip - 70, headers: raws.slice(100, 124).map(toHex) } };
+    const fake = { llmqType: 6, quorumHash: 'ee'.repeat(32), publicKey: 'ab'.repeat(48), validMembers: 25, provenAt: tip };
+    const stranded: ChainSnapshot = {
+      ...good,
+      chain: { network: 'testnet', height: tip - 70, headers: raws.slice(100, 124).map(toHex) },
+      quorums: [...good.quorums, fake],
+    };
     const snapshot = await sync({ a: {}, b: {} }, stranded);
     expect(snapshot.listHeight).toBe(tip);
+    // The stranded branch's own keys are not carried over.
+    expect(snapshot.quorums.some((q) => q.quorumHash === fake.quorumHash)).toBe(false);
+    expect(snapshot.nodes.length).toBeGreaterThan(0);
   });
 });

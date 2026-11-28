@@ -288,7 +288,7 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
     listHeight: oldest.height,
     listBlockHash: oldest.blockHash,
     quorums: [...quorums.map((q) => ({ ...q, provenAt: oldest.height })), ...kept].slice(0, KEEP_QUORUMS),
-    nodes: nodes.length >= 8 ? nodes : (previous?.nodes ?? [...options.seeds]),
+    nodes: nodes.length >= 8 ? nodes : previous && previous.nodes.length > 0 ? previous.nodes : [...options.seeds],
     syncedAt: Date.now(),
   };
 }
@@ -300,14 +300,14 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
  */
 export async function syncChain(options: SyncOptions): Promise<ChainSnapshot> {
   const previous = options.previous?.network === options.network ? options.previous : undefined;
-  const fromCheckpoint = (): Promise<ChainSnapshot> => syncFrom(options, stateOf(options.network, options.checkpoint), previous);
-  if (!previous || previous.chain.height <= options.checkpoint.height) return fromCheckpoint();
+  const fromCheckpoint = (from: ChainSnapshot | undefined): Promise<ChainSnapshot> => syncFrom(options, stateOf(options.network, options.checkpoint), from);
+  if (!previous || previous.chain.height <= options.checkpoint.height) return fromCheckpoint(previous);
   try {
     return await syncFrom(options, stateOf(options.network, previous.chain), previous);
   } catch (error) {
     if (!(error instanceof LinkError)) throw error;
     options.onProgress?.(`Starting again from the checkpoint: ${error.message}`);
     // What the stranded chain proved belongs to a branch the network left: its keys and nodes go too.
-    return syncFrom(options, stateOf(options.network, options.checkpoint), { ...previous, quorums: [], nodes: [] });
+    return fromCheckpoint(undefined);
   }
 }

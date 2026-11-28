@@ -97,7 +97,8 @@ export function redirectRules(base: string, settings: Settings, sandbox: boolean
     action: { type: 'block' },
     condition: {
       regexFilter: `^https?://[a-zA-Z0-9-]+\\.dash\\.?(?::[0-9]+)?(?:[/?#].*)?$`,
-      excludedResourceTypes: ['main_frame', 'sub_frame'],
+      // Without the sandbox (Firefox) no rule sends a nested .dash frame anywhere, so it is blocked too.
+      excludedResourceTypes: sandbox ? ['main_frame', 'sub_frame'] : ['main_frame'],
       isUrlFilterCaseSensitive: false,
     },
   } as Rule);
