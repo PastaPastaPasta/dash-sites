@@ -1,5 +1,8 @@
+import { parseName } from '@dash-sites/core';
+import { SITE_PORT, type ViewerRequest, type WorkerReply } from './protocol.js';
 import { ruleInstaller } from './rules.js';
-import { loadSettings, parseTarget, redirectRules, targetForSearch, viewerUrl } from './shared.js';
+import { resetServices, serviceFor } from './service.js';
+import { chainKey, loadSettings, parseTarget, redirectRules, targetForSearch, viewerUrl } from './shared.js';
 
 declare const __SANDBOX__: boolean;
 
@@ -12,7 +15,10 @@ const reapply = (): void => {
 reapply();
 chrome.runtime.onInstalled.addListener(reapply);
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.settings) reapply();
+  if (area !== 'local') return;
+  if (changes.settings) reapply();
+  // "Forget the verified chain" in the settings removes the stored proof: the next open proves it again.
+  if ([chainKey('mainnet'), chainKey('testnet')].some((key) => key in changes && changes[key]?.newValue === undefined)) resetServices();
 });
 
 chrome.omnibox.setDefaultSuggestion({ description: 'Open a .dash site from Dash Platform: type a name such as alice or alice.dash/blog' });
@@ -33,3 +39,28 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
     if (target && (await loadSettings()).catchSearches) await chrome.tabs.update(details.tabId, { url: viewerUrl(target) });
   })();
 });
+
+// Viewers ask here to open a name: the chain proof, the SDK and each site's read are shared by all tabs.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== SITE_PORT || port.sender?.id !== chrome.runtime.id || !port.sender.url?.startsWith(chrome.runtime.getURL('site.html'))) return;
+  let open = true;
+  port.onDisconnect.addListener(() => {
+    open = false;
+  });
+  const reply = (message: WorkerReply): void => {
+    if (open) port.postMessage(message);
+  };
+  port.onMessage.addListener((message: ViewerRequest) => {
+    const name = message?.type === 'open' && typeof message.label === 'string' ? parseName(message.label) : undefined;
+    if (!name) return reply({ type: 'error', message: 'not a .dash name' });
+    void loadSettings()
+      .then((settings) => serviceFor(settings.network).open(name.label, (progress) => reply({ type: 'progress', message: progress })))
+      .then(
+        (result) => reply({ type: 'result', result }),
+        (error: unknown) => reply({ type: 'error', message: (error as Error)?.message ?? String(error) }),
+      );
+  });
+});
+
+// A stored proof that is a while old is refreshed as the worker starts, before any tab needs it.
+void loadSettings().then((settings) => serviceFor(settings.network).keeper.warm()).catch(() => undefined);

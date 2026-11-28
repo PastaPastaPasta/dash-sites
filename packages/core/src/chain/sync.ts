@@ -1,7 +1,7 @@
 import { fromHex } from '../bytes.js';
 import { bestBlockHeight, blockHeaders, masternodeListDiff, type DapiOptions } from './dapi.js';
 import { DGW_WINDOW, extend, serializeState, stateFromHeaders, type BlockHeader, type ChainNetwork, type ChainState } from './header.js';
-import { PLATFORM_LLMQ, parseCoinbase, verifyDiff, type NodeAddress, type VerifiedQuorum } from './mnlist.js';
+import { PLATFORM_LLMQ, parseCoinbase, verifyDiff, type MnListDiff, type NodeAddress, type VerifiedQuorum } from './mnlist.js';
 import { ChainError, LinkError, toDisplay } from './wire.js';
 
 export interface Checkpoint {
@@ -64,7 +64,8 @@ export const CORROBORATING_LISTS = 2;
 /** Nodes asked for their tip in a round; two of them always come from the bundled seeds. */
 const ASK = 6;
 const SEEDS_PER_ROUND = 2;
-const LISTS_ASKED = 4;
+const LISTS_ASKED = 2;
+const SPARE_LISTS = 1;
 const ROUNDS = 2;
 
 export const SNAPSHOT_VERSION = 1;
@@ -107,6 +108,44 @@ class Recent {
     }
     return { network, height, window };
   }
+}
+
+/** Tips wanted before the sync goes on; it also goes on after `TIP_GRACE_MS` with `CORROBORATING_LISTS` of them. */
+const TIPS_WANTED = 4;
+const TIP_GRACE_MS = 2500;
+
+/** The tips of the first nodes to answer, so that one hung node does not hold the sync; the rest are cancelled. */
+async function firstTips(nodes: readonly NodeAddress[], dapi: Dapi, options: DapiOptions): Promise<Tip[]> {
+  const cancel = new AbortController();
+  const signal = options.signal ? AbortSignal.any([options.signal, cancel.signal]) : cancel.signal;
+  const tips: Tip[] = [];
+  await new Promise<void>((done) => {
+    let pending = nodes.length;
+    let graceOver = false;
+    const enough = (): boolean => tips.length >= Math.min(TIPS_WANTED, nodes.length) || (graceOver && tips.length >= CORROBORATING_LISTS) || pending === 0;
+    const timer = setTimeout(() => {
+      graceOver = true;
+      if (enough()) done();
+    }, TIP_GRACE_MS);
+    if (nodes.length === 0) done();
+    for (const node of nodes) {
+      dapi
+        .bestBlockHeight(node, { ...options, signal })
+        .then((height) => {
+          if (!cancel.signal.aborted) tips.push({ node, height });
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          pending--;
+          if (enough()) {
+            clearTimeout(timer);
+            done();
+          }
+        });
+    }
+  });
+  cancel.abort();
+  return [...tips];
 }
 
 interface ProvenList {
@@ -220,35 +259,24 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
     const asked = pool.slice(round * ASK, (round + 1) * ASK);
     if (asked.length === 0) break;
     progress(`Asking ${asked.length} nodes for the chain tip`);
-    const answers = await Promise.allSettled(asked.map(async (node) => ({ node, height: await dapi.bestBlockHeight(node, options) })));
-    for (const answer of answers) if (answer.status === 'fulfilled') tips.push(answer.value);
+    tips.push(...(await firstTips(asked, dapi, options)));
     if (tips.length === 0) continue;
     await extendTo(Math.max(...usable().map((tip) => tip.height), state.height));
 
     progress('Proving the masternode lists and quorum keys');
-    const picked = shuffle(usable().filter((tip) => !listed.has(tip.node)), options.random).slice(0, LISTS_ASKED - lists.length);
-    const diffs = await Promise.all(
-      picked.map(async (tip) => {
-        listed.add(tip.node);
-        try {
-          return { tip, diff: await dapi.masternodeListDiff(tip.node, options) };
-        } catch (error) {
-          demote(tip);
-          errors.push(`${tip.node}: ${(error as Error).message}`);
-          return undefined;
-        }
-      }),
-    );
-    for (const fetched of diffs) {
-      if (!fetched) continue;
-      const { tip, diff } = fetched;
+    // One spare node is asked too, and the round ends once enough lists check out: a slow node
+    // does not hold the sync, and its request is cancelled.
+    const picked = shuffle(usable().filter((tip) => !listed.has(tip.node)), options.random).slice(0, LISTS_ASKED - lists.length + SPARE_LISTS);
+    const listing = new AbortController();
+    const roundOptions: DapiOptions = { ...options, signal: options.signal ? AbortSignal.any([options.signal, listing.signal]) : listing.signal };
+    const check = async (tip: Tip, diff: MnListDiff): Promise<void> => {
       let height: number;
       try {
         height = parseCoinbase(fromHex(diff.cbTx)).height;
       } catch (error) {
         invalid.add(tip.node);
         errors.push(`${tip.node}: ${(error as Error).message}`);
-        continue;
+        return;
       }
       // The node holds the list's block, which may be newer than the tip it reported a moment ago.
       tip.height = Math.max(tip.height, height);
@@ -256,7 +284,7 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
       const header = recent.get(height);
       if (!header || toDisplay(header.hash) !== diff.blockHash.toLowerCase()) {
         errors.push(`${tip.node}: its list's block ${diff.blockHash} is not at height ${height} of the verified chain`);
-        continue;
+        return;
       }
       try {
         const list = verifyDiff(diff, header.merkleRoot);
@@ -266,7 +294,34 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
         invalid.add(tip.node);
         errors.push(`${tip.node}: ${(error as Error).message}`);
       }
-    }
+    };
+    await new Promise<void>((done) => {
+      let pending = picked.length;
+      if (pending === 0) return done();
+      // Lists are checked one at a time, as they arrive: checking can extend the shared chain state.
+      let checking = Promise.resolve();
+      const arrive = (work: () => Promise<void>): void => {
+        checking = checking
+          .then(() => (listing.signal.aborted ? undefined : work()))
+          .catch(() => undefined)
+          .then(() => {
+            pending--;
+            if (pending === 0 || lists.length >= CORROBORATING_LISTS) done();
+          });
+      };
+      for (const tip of picked) {
+        listed.add(tip.node);
+        dapi.masternodeListDiff(tip.node, roundOptions).then(
+          (diff) => arrive(() => (lists.length < CORROBORATING_LISTS ? check(tip, diff) : Promise.resolve())),
+          (error: unknown) =>
+            arrive(async () => {
+              demote(tip);
+              errors.push(`${tip.node}: ${(error as Error).message}`);
+            }),
+        );
+      }
+    });
+    listing.abort();
   }
   if (lists.length < CORROBORATING_LISTS) {
     const message = `${lists.length} of the ${CORROBORATING_LISTS} masternode lists needed checked out${errors.length ? `: ${errors.join('; ')}` : ''}`;

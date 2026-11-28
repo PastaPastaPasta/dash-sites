@@ -1,19 +1,17 @@
-import { decide, describeResolution, HOST_API, loadManifest, readerConfig, readFile, resolveName, siteChunks, type Manifest, type PlatformReader, type Resolution } from '@dash-sites/core';
-import { ChainKeeper, pickNodes } from './chain.js';
-import { asFrameMessage, type PageMessage } from './protocol.js';
+import { decide, describeResolution, HOST_API, type Manifest, type Resolution } from '@dash-sites/core';
+import type { ChainSnapshot } from '@dash-sites/core/chain';
+import { getSite, siteKey, type CachedSite } from './cache.js';
+import { asFrameMessage, SITE_PORT, type OpenResult, type PageMessage, type WorkerReply } from './protocol.js';
 import { dataUrl, NO_REFERRER, Rewriter, type SiteFile } from './render.js';
-import { displayAddress, gatewayUrl, loadSettings, parseTarget, siteOrigin, targetUrl, viewerHash, viewerUrl, type Settings, type Target } from './shared.js';
+import { chainKey, displayAddress, gatewayUrl, loadSettings, parseTarget, siteOrigin, targetUrl, viewerHash, viewerUrl, type Settings, type Target } from './shared.js';
 
 /** Chrome builds render in a sandboxed extension page that runs the site's scripts; Firefox has none, so its builds render without scripts. */
 declare const __SANDBOX__: boolean;
-declare global {
-  var dashSitesSdk: WebAssembly.Module | undefined;
-}
 
 const FRAME_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads';
 const STATIC_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation';
-const MAX_SITE_BYTES = 64 << 20;
-const NODES = 16;
+/** A site Dash Platform proved current this recently is shown from the cache at once, and checked again behind it. */
+const SERVE_CACHED_MS = 10 * 60_000;
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const short = (id: string): string => (id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
@@ -64,11 +62,55 @@ interface LoadedSite {
   files: Map<string, SiteFile>;
   /** Files listed in the manifest that this extension did not load: they are stored outside Dash Platform. */
   skipped: string[];
+  /** Shown from the cache, and not yet checked again since. */
+  cached: boolean;
+  /** When Dash Platform last proved this record current. */
+  checkedAt: number;
+}
+
+function ago(ms: number): string {
+  const minutes = Math.round((Date.now() - ms) / 60000);
+  return minutes < 1 ? 'just now' : `${minutes} min ago`;
+}
+
+/** Asks the background worker to open a name. Its progress messages go to `onProgress`. */
+function request(label: string, onProgress: (message: string) => void): Promise<OpenResult> {
+  return new Promise<OpenResult>((resolve, reject) => {
+    const port = chrome.runtime.connect({ name: SITE_PORT });
+    let settled = false;
+    const settle = (finish: () => void): void => {
+      if (settled) return;
+      settled = true;
+      port.disconnect();
+      finish();
+    };
+    port.onMessage.addListener((message: WorkerReply) => {
+      if (message.type === 'progress') onProgress(message.message);
+      else if (message.type === 'result') settle(() => resolve(message.result));
+      else settle(() => reject(new Error(message.message)));
+    });
+    port.onDisconnect.addListener(() => settle(() => reject(new WorkerStopped())));
+    port.postMessage({ type: 'open', label });
+  });
+}
+
+class WorkerStopped extends Error {
+  constructor() {
+    super('The extension’s background worker stopped before it answered.');
+  }
+}
+
+/** `request`, asked again once if the worker stopped mid-way (the browser may stop an idle worker). */
+async function open(label: string, onProgress: (message: string) => void): Promise<OpenResult> {
+  try {
+    return await request(label, onProgress);
+  } catch (error) {
+    if (!(error instanceof WorkerStopped)) throw error;
+    return request(label, onProgress);
+  }
 }
 
 class Viewer {
-  private readonly keeper: ChainKeeper;
-  private reader?: Promise<PlatformReader>;
   private site?: LoadedSite;
   private target?: Target;
   private frame?: HTMLIFrameElement;
@@ -76,80 +118,85 @@ class Viewer {
   private shown?: PageMessage;
   private generation = 0;
 
-  constructor(private readonly settings: Settings) {
-    this.keeper = new ChainKeeper(settings.network, (message) => {
-      if (!this.site) $('status-detail').textContent = message;
-    });
-  }
+  constructor(private readonly settings: Settings) {}
 
-  private connect(): Promise<PlatformReader> {
-    this.reader ??= (async () => {
-      const [snapshot, module] = await Promise.all([this.keeper.get(), WebAssembly.compileStreaming(fetch(chrome.runtime.getURL('verifier.wasm')))]);
-      globalThis.dashSitesSdk = module;
-      const { EvoReader } = await import('@dash-sites/core/evo');
-      return EvoReader.connect(readerConfig(this.settings.network), { addresses: pickNodes(snapshot.nodes, NODES), quorums: () => this.keeper.get() });
-    })();
-    this.reader.catch(() => {
-      this.reader = undefined;
-    });
-    return this.reader;
-  }
-
-  private async load(label: string, generation: number): Promise<LoadedSite | undefined> {
-    if (this.site?.label === label) return this.site;
-    status(`Opening ${label}.dash`, 'Verifying the Dash chain from this extension’s checkpoint');
-    badge('checking', 'Verifying…');
-    const reader = await this.connect();
-    if (generation !== this.generation) return undefined;
-    $('status-detail').textContent = 'Reading the name and its site from Dash Platform, with proofs';
-    const resolution = await resolveName(reader, label, { preload: true });
-    if (generation !== this.generation) return undefined;
-    this.describe(resolution);
-    if (resolution.status !== 'ok') {
-      this.unavailable(label, resolution);
-      return undefined;
-    }
-    if (resolution.content.scheme !== 'dash-manifest') {
-      this.fail(`${label}.dash is stored outside Dash Platform`, `Its owner published it at ${resolution.site.content}. This extension only opens sites stored on Dash Platform.`);
-      return undefined;
-    }
-    const source = siteChunks(reader, resolution);
-    const manifest = await loadManifest(resolution.content, source);
-    const files = new Map<string, SiteFile>();
-    const skipped: string[] = [];
-    const paths = Object.keys(manifest.files);
-    let total = 0;
-    let done = 0;
-    const queue = [...paths];
-    const worker = async (): Promise<void> => {
-      for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
-        const entry = manifest.files[path];
-        if (!entry || entry.ext || entry.src || entry.unread) {
-          skipped.push(path);
-          continue;
-        }
-        total += entry.size;
-        if (total > MAX_SITE_BYTES) throw new Error(`${label}.dash is larger than this viewer opens (${MAX_SITE_BYTES >> 20} MB)`);
-        const { bytes } = await readFile(manifest, path, source);
-        files.set(path, { path, type: entry.type, bytes });
-        done++;
-        if (generation === this.generation) $('status-detail').textContent = `Checking files against their published hashes: ${done} of ${paths.length}`;
-      }
-    };
-    await Promise.all(Array.from({ length: 4 }, worker));
-    if (generation !== this.generation) return undefined;
+  private loaded(cached: CachedSite, fromCache: boolean): LoadedSite {
+    const files = new Map(cached.files.map((file) => [file.path, file]));
     // The host API every dash.site host answers, so a site that reads it works here too.
     const json = (path: string, value: unknown): void => {
       files.set(path, { path, type: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(value)) });
     };
-    json(`${HOST_API}site.json`, { ...describeResolution(resolution, this.settings.network), servedBy: 'browser' });
-    json(`${HOST_API}manifest.json`, manifest);
-    this.site = { label, resolution, manifest, files, skipped };
+    json(`${HOST_API}site.json`, { ...describeResolution(cached.resolution, this.settings.network), servedBy: 'browser' });
+    json(`${HOST_API}manifest.json`, cached.manifest);
+    return { label: cached.resolution.canonicalLabel, resolution: cached.resolution, manifest: cached.manifest, files, skipped: cached.skipped, cached: fromCache, checkedAt: cached.checkedAt };
+  }
+
+  private async load(label: string, generation: number): Promise<LoadedSite | undefined> {
+    if (this.site?.label === label) return this.site;
+    const key = siteKey(this.settings.network, label);
+    const cached = await getSite(key);
+    if (generation !== this.generation) return undefined;
+    if (cached && Date.now() - cached.checkedAt < SERVE_CACHED_MS) {
+      this.site = this.loaded(cached, true);
+      this.describe(cached.resolution, cached.checkedAt);
+      void this.revalidate(label);
+      return this.site;
+    }
+    status(`Opening ${label}.dash`, 'Asking the extension for the proven Dash chain state');
+    badge('checking', 'Verifying…');
+    const result = await open(label, (message) => {
+      if (generation === this.generation && !this.site) $('status-detail').textContent = message;
+    });
+    if (generation !== this.generation) return undefined;
+    if (result.kind === 'unavailable') {
+      this.describe(result.resolution);
+      this.unavailable(label, result.resolution);
+      return undefined;
+    }
+    if (result.kind === 'external') {
+      this.fail(`${label}.dash is stored outside Dash Platform`, `Its owner published it at ${result.content}. This extension only opens sites stored on Dash Platform.`);
+      return undefined;
+    }
+    const fresh = await getSite(result.key);
+    if (!fresh) throw new Error('The extension read the site but could not keep it. Try again.');
+    if (generation !== this.generation) return undefined;
+    this.site = this.loaded(fresh, false);
+    this.describe(fresh.resolution, fresh.checkedAt);
     return this.site;
   }
 
-  private describe(resolution: Resolution): void {
-    const snapshot = this.keeper.current;
+  /** Checks a site shown from the cache against Dash Platform, and shows what changed if anything did. */
+  private async revalidate(label: string): Promise<void> {
+    let result: OpenResult;
+    try {
+      result = await open(label, () => undefined);
+    } catch {
+      if (this.site?.label === label && this.site.cached) badge(this.site.skipped.length ? 'partial' : 'ok', `Verified ${ago(this.site.checkedAt)} · could not check for updates`);
+      return;
+    }
+    if (this.site?.label !== label || !this.target || this.target.label !== label) return;
+    if (result.kind === 'site' && !result.changed) {
+      const fresh = await getSite(result.key);
+      this.site.cached = false;
+      if (fresh) {
+        this.site.checkedAt = fresh.checkedAt;
+        this.describe(fresh.resolution, fresh.checkedAt);
+      }
+      this.verified(this.site);
+      return;
+    }
+    // A newer revision, or no site any more: show what Dash Platform proves now.
+    this.site = undefined;
+    void this.show(this.target);
+  }
+
+  private verified(site: LoadedSite): void {
+    const missing = site.skipped.length;
+    const checking = site.cached ? ' · checking for updates' : '';
+    badge(missing ? 'partial' : 'ok', missing ? `Verified · ${missing} file${missing === 1 ? '' : 's'} not loaded${checking}` : `Verified from Dash Platform${checking}`);
+  }
+
+  private describe(resolution: Resolution, checkedAt?: number): void {
     const rows: [string, string, string?][] = [];
     if ('ownerId' in resolution) rows.push(['Owner', short(resolution.ownerId), resolution.ownerId]);
     if ('site' in resolution) {
@@ -157,12 +204,16 @@ class Viewer {
       rows.push(['Published', new Date(resolution.site.updatedAt).toLocaleString()]);
     }
     if ('meta' in resolution) rows.push(['Proved at', `Platform block ${resolution.meta.height}`, new Date(resolution.meta.timeMs).toLocaleString()]);
-    if (snapshot) {
-      rows.push(['Quorum keys', `Core block ${snapshot.listHeight}`, snapshot.listBlockHash]);
-      rows.push(['Nodes', `${snapshot.nodes.length} from the masternode list`]);
-    }
+    if (checkedAt) rows.push(['Checked', ago(checkedAt), new Date(checkedAt).toLocaleString()]);
     rows.push(['Network', this.settings.network]);
     facts(rows);
+    const key = chainKey(this.settings.network);
+    void chrome.storage.local.get(key).then((stored) => {
+      const snapshot = stored[key] as ChainSnapshot | undefined;
+      if (!snapshot) return;
+      const network = rows.pop() as [string, string];
+      facts([...rows, ['Quorum keys', `Core block ${snapshot.listHeight}`, snapshot.listBlockHash], ['Nodes', `${snapshot.nodes.length} from the masternode list`], network]);
+    });
   }
 
   private unavailable(label: string, resolution: Resolution): void {
@@ -218,12 +269,10 @@ class Viewer {
         if (next) this.go(next, true);
         return;
       }
-      const missing = site.skipped.length;
-      badge(missing ? 'partial' : 'ok', missing ? `Verified · ${missing} file${missing === 1 ? '' : 's'} not loaded` : 'Verified from Dash Platform');
+      this.verified(site);
       this.render(site, url, page.html);
     } catch (error) {
       if (generation !== this.generation) return;
-      this.reader = undefined;
       this.fail(`Could not open ${target.label}.dash`, (error as Error)?.message ?? String(error));
     }
   }

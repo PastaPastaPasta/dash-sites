@@ -73,8 +73,9 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
   and `platformHTTPPort` of version 2 entries. Version 1 entries hash neither
   the type nor the port, so they are not used. A list whose masternode root
   does not match still gives its quorums, but no nodes.
-- **Lists must agree.** Lists are asked from up to four nodes picked at random,
-  not by the tip they claim. Each list must be proven against a block of the
+- **Lists must agree.** Lists are asked from two nodes picked at random, not
+  by the tip they claim, plus one spare; the sync goes on once two lists check
+  out and cancels the slower request. Each list must be proven against a block of the
   verified chain. At least two must check out. A quorum key (and a node) is used
   only if a majority of the proven lists, and at least two, hold it. A node that
   mines one block of its own, with a forged quorum in its coinbase, therefore
@@ -83,10 +84,42 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
 - **Into the SDK.** evo-sdk 5.1.0 in trusted mode is pointed at
   `https://quorums.dash-sites.invalid`. A `fetch` hook (`withLocalQuorums`)
   answers `/quorums` and `/previous` from the proven list, so that request
-  never leaves the page. When the SDK meets a quorum it has no key for, it asks
+  never leaves the background worker. When the SDK meets a quorum it has no key for, it asks
   again, and the hook syncs the chain if the list is more than 30 s old. If
-  that sync fails, the stored keys are used, and the viewer opens a site with
-  them too.
+  that sync fails, the stored keys are used.
+
+### One proof for every tab
+
+The background worker does all of this once, for every tab:
+
+- **The proven chain state** is kept in `chrome.storage.local` and used as soon
+  as it exists, whatever its age. It is refreshed in the background once it is
+  10 minutes old, and when the SDK meets a quorum it has no key for (at most
+  every 30 s). A sync already running is joined, not repeated. Each sync starts
+  from the stored chain and checks only the new headers; DAPI serves the
+  masternode list only as a diff from genesis, so two lists of about 1.3 MB are
+  read each time.
+- **One SDK**, with the verifier compiled once, connected to nodes of the proven
+  list that answered a probe within 2.5 s.
+- **Sites** are read and checked once and kept in IndexedDB (up to 40, least
+  recently used dropped). A viewer shows a site Dash Platform proved current in
+  the last 10 minutes at once, from that store, and asks the worker to check it
+  again behind it ("checking for updates" in the badge). A newer revision is
+  shown when it arrives; a site that is gone is removed. Opens of one name from
+  several tabs share one read.
+
+Measured in headless Chromium on mainnet, time until a site's content is on
+screen:
+
+| Open | Before | Now |
+| --- | --- | --- |
+| First open in a new profile | 4.2–6.0 s | 1.2–2.3 s |
+| Second tab, same site | 0.64–0.66 s | 0.09–0.12 s |
+| New tab, another site | 0.64–8.6 s | 0.12–0.35 s |
+| New tab after 45 s | 3.1–4.2 s (proves again) | 0.08–0.11 s |
+| After a browser restart | 0.65–1.7 s | 0.11–0.15 s |
+| Restart with a 3-hour-old proof, a site never opened | 7.7 s | 1.0–2.3 s |
+
 
 ### 3–5. Reading the site
 
@@ -133,8 +166,10 @@ does. Search catching can be turned off in the settings.
 
 - **The viewer** (`site.html`) is an extension page. Its CSP is
   `script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'`,
-  and it refuses to run in a frame. It holds the SDK and the extension APIs,
-  and never runs site code.
+  and it refuses to run in a frame. It has the extension APIs, reads checked
+  sites from the extension's IndexedDB, and never runs site code. The SDK and
+  the chain proof run in the background worker; only `site.html` pages may ask
+  it to open a name.
 - **Chrome: `sandbox.html`.** A manifest sandbox page: an opaque origin with
   no `chrome.*` APIs. It sits in an `<iframe sandbox="allow-scripts
   allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals
@@ -201,7 +236,8 @@ does. Search catching can be turned off in the settings.
   `/sandbox.html`. Hash routers and multi-page sites work. Firefox runs no
   site scripts.
 - **Size.** The verifier WebAssembly is 31.6 MB, and each zip is about
-  11.3 MB. Each open viewer tab compiles it once.
+  11.3 MB. The background worker compiles it once each time the browser starts
+  the worker.
 
 ## Permissions
 

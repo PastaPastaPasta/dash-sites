@@ -179,18 +179,28 @@ describe('syncing from several nodes', () => {
     reported?: number;
     headers?: (from: number, count: number) => Uint8Array[];
     diff?: () => MnListDiff;
+    /** Never answers a list request until it is cancelled. */
+    hangs?: boolean;
+    /** Never answers a tip request until it is cancelled. */
+    silent?: boolean;
   }
   function dapi(nodes: Record<string, FakeNode>): Dapi {
     const node = (address: string): FakeNode => nodes[address] ?? {};
     return {
-      bestBlockHeight: async (address) => node(address).reported ?? node(address).tip ?? tip,
+      bestBlockHeight: async (address, options) =>
+        node(address).silent
+          ? new Promise<never>((_, reject) => options?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }))
+          : (node(address).reported ?? node(address).tip ?? tip),
       blockHeaders: async (address, from, count) => {
         const custom = node(address).headers;
         if (custom) return custom(from, count);
         if (from + count - 1 > (node(address).tip ?? tip)) throw new Error('count exceeds chain tip');
         return raws.slice(from - first, from - first + count);
       },
-      masternodeListDiff: async (address) => (node(address).diff ?? diff)(),
+      masternodeListDiff: async (address, options) =>
+        node(address).hangs
+          ? new Promise<never>((_, reject) => options?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }))
+          : (node(address).diff ?? diff)(),
     };
   }
   const sync = (nodes: Record<string, FakeNode>, previous?: ChainSnapshot) =>
@@ -225,6 +235,20 @@ describe('syncing from several nodes', () => {
     expect(snapshot.nodes).toEqual(['a', 'b']);
     const again = await sync({ a: { diff: withoutNodes }, b: { diff: withoutNodes } }, { ...snapshot, nodes: [] });
     expect(again.nodes.length).toBeGreaterThan(0);
+  });
+
+  it('does not wait for a node that never sends its tip', async () => {
+    const started = Date.now();
+    const snapshot = await sync({ quiet: { silent: true }, a: {}, b: {} });
+    expect(snapshot.listHeight).toBe(tip);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it('does not wait for a node that never sends its list', async () => {
+    const started = Date.now();
+    const snapshot = await sync({ slow: { hangs: true }, a: {}, b: {} });
+    expect(snapshot.listHeight).toBe(tip);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('takes a list whose block arrived after the nodes reported their tips', async () => {

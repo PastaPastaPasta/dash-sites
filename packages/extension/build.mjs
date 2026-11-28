@@ -26,14 +26,23 @@ for (const target of ['chrome', 'firefox']) {
   const sandbox = target === 'chrome';
   let wasm;
   const common = { bundle: true, minify: true, legalComments: 'none', logLevel: 'warning', target: sandbox ? 'chrome124' : 'firefox128', define: { __SANDBOX__: String(sandbox) } };
+  // The background worker holds the SDK and the chain proof for every tab. A service worker cannot
+  // use import(), so it is one file.
   await build({
     ...common,
-    entryPoints: ['background', 'site', 'popup', 'options'].map((name) => join(root, 'src', `${name}.ts`)),
+    entryPoints: [join(root, 'src', 'background.ts')],
+    outdir: dir,
+    format: 'esm',
+    plugins: [evoWasmPlugin((bytes) => (wasm = bytes)), x11StrictPlugin()],
+  });
+  await build({
+    ...common,
+    entryPoints: ['site', 'popup', 'options'].map((name) => join(root, 'src', `${name}.ts`)),
     outdir: dir,
     splitting: true,
     format: 'esm',
     chunkNames: 'chunks/[name]-[hash]',
-    plugins: [evoWasmPlugin((bytes) => (wasm = bytes)), x11StrictPlugin()],
+    plugins: [x11StrictPlugin()],
   });
   if (!wasm) throw new Error('the extension build did not load the SDK');
   writeFileSync(join(dir, 'verifier.wasm'), wasm);

@@ -1,3 +1,4 @@
+import type { Resolution } from '@dash-sites/core';
 import type { SiteFile } from './render.js';
 
 /** The viewer hands the sandbox one page to show. */
@@ -37,3 +38,15 @@ export function asFrameMessage(data: unknown): FrameMessage | undefined {
       return undefined;
   }
 }
+
+/** What the background worker answers a viewer that asked to open a name. Plain data: it crosses a port. */
+export type OpenResult =
+  /** The site is in the cache under `key`; `changed` when it replaced an older revision there. */
+  | { kind: 'site'; key: string; changed: boolean }
+  | { kind: 'unavailable'; resolution: Exclude<Resolution, { status: 'ok' }> }
+  | { kind: 'external'; content: string };
+
+/** Messages on a viewer's port to the background worker. */
+export type ViewerRequest = { type: 'open'; label: string };
+export type WorkerReply = { type: 'progress'; message: string } | { type: 'result'; result: OpenResult } | { type: 'error'; message: string };
+export const SITE_PORT = 'site';
