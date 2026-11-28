@@ -10,6 +10,9 @@ import {
   prune,
   type PlatformWriter,
   refundCredits,
+  estimateCost,
+  formatCredits,
+  readerConfig,
   ContentError,
   decide,
   decodeManifest,
@@ -35,6 +38,7 @@ import {
   type PlatformWriter,
   type SiteFile,
 } from '../src/index.js';
+import { loadFeeModel, nameRegistrationCredits } from '../src/evo.js';
 import { MemoryPlatform } from '../src/memory.js';
 
 const text = (s: string) => utf8.encode(s);
@@ -473,7 +477,8 @@ describe('resolve and publish', () => {
     const platform = setup();
     platform.funds = 1n;
     const alice = platform.as('alice-id');
-    await expect(publishSite(alice, 'alice', buildSite(SITE))).rejects.toThrow(/costs about/);
+    const fees = await loadFeeModel(readerConfig('testnet'));
+    await expect(publishSite(alice, 'alice', buildSite(SITE), undefined, { fees })).rejects.toThrow(/costs about/);
     expect(await alice.listSites()).toEqual([]);
   });
 
@@ -818,6 +823,29 @@ describe('resolve and publish', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('prices a publish with the SDK fee model of the bundled contract', async () => {
+    for (const network of ['testnet', 'mainnet'] as const) {
+      const fees = await loadFeeModel(readerConfig(network));
+      expect(fees.chunk(100)).toBeGreaterThan(27_000n * 100n);
+      expect(fees.chunk(14_700)).toBeGreaterThan(27_000n * 14_700n);
+      expect(fees.chunk(14_700)).toBeLessThan(fees.chunk(100) * 147n);
+      const bundle = buildSite(SITE);
+      const cost = estimateCost(bundle, fees);
+      expect(cost.chunkCount).toBe(bundle.chunks.size);
+      expect(cost.total).toBe(cost.siteRecord + cost.chunks);
+      expect(estimateCost(bundle, fees, []).total).toBe(cost.siteRecord);
+      const name = await nameRegistrationCredits(readerConfig(network));
+      expect(name).toBeGreaterThan(0n);
+      expect(name).toBeLessThan(1_000_000_000n);
+    }
+  });
+
+  it('writes credits with thousands separators', () => {
+    expect(formatCredits(0n)).toBe('0');
+    expect(formatCredits(999n)).toBe('999');
+    expect(formatCredits(3_222_000_920n)).toBe('3,222,000,920');
   });
 
   it('estimates refunds from the storage fee distribution table', () => {

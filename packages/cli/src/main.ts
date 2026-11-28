@@ -37,7 +37,7 @@ import {
 } from '@dash-sites/core';
 import { connectPort } from '@dash-sites/core/connect';
 import { MemoryPlatform } from '@dash-sites/core/memory';
-import { connectSdk, EvoReader, EvoWriter, KeyRefused, registerContract, type Credentials } from '@dash-sites/core/evo';
+import { connectSdk, EvoReader, EvoWriter, KeyRefused, loadFeeModel, registerContract, type Credentials } from '@dash-sites/core/evo';
 import { createGateway, emptyDenylist, parseDomain } from '@dash-sites/gateway';
 import { readSiteDirectory } from './files.js';
 import { checkPlaces, cliPlaces, parsePlaceMap, storeElsewhere, type CliPlaces } from './places.js';
@@ -443,7 +443,8 @@ const commands: Record<string, () => Promise<void>> = {
     if (elsewhere.files > 0) console.error(`${elsewhere.files} files, ${elsewhere.bytes} bytes kept outside Platform`);
     if (!bundle.manifest.files['/index.html']) console.error('warning: the site has no /index.html');
     for (const problem of checkLinks(files, { spa: values.spa })) console.error(`warning: ${describeLinkProblem(problem)}`);
-    console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle))}`);
+    const fees = await loadFeeModel(network()).catch((error: unknown) => void console.error(`no cost estimate, and no balance check before publishing: ${(error as Error).message}`));
+    if (fees) console.error(`estimated cost if nothing is stored yet: ${formatDash(estimateCredits(bundle, fees))}`);
     if (values['dry-run']) return print({ content: bundle.contentUri, stats: bundle.stats });
     await withWriter(async (writer) => {
       if (values.prune) console.error('after the record is written, --prune checks the site records again from a newer block before deleting (a few minutes)');
@@ -454,7 +455,7 @@ const commands: Record<string, () => Promise<void>> = {
         (progress) => {
           if (progress.step === 'upload') console.error(`uploaded chunk ${progress.done}/${progress.total}`);
         },
-        values.prune ? { prune: { graceMs: graceMs() } } : {},
+        { fees, ...(values.prune ? { prune: { graceMs: graceMs() } } : {}) },
       );
       print({
         name: `${parseName(name)?.label}.dash`,

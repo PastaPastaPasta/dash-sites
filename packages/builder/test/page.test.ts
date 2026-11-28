@@ -1,12 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
-import { buildSite, FORMATS, gzip, publishSite, sha256Hex, utf8, type PlaceFetchers } from '@dash-sites/core';
+import { buildSite, FORMATS, gzip, publishSite, readerConfig, sha256Hex, utf8, type PlaceFetchers } from '@dash-sites/core';
+import { loadFeeModel } from '@dash-sites/core/evo';
 import { MemoryPlatform } from '@dash-sites/core/memory';
 import { cleanRichText, plainText, toHtml, h } from '../src/page/markup.js';
 import { BLOCKS } from '../src/page/blocks.js';
 import { emptyPageModel, newBlock, PAGE_MODEL_PATH, readPageModel, serializePageModel, tidyPageModel, type PageModel } from '../src/page/model.js';
 import { pageStylesheet, renderHomePage, renderSite } from '../src/page/render.js';
-import { costSplit, fileCredits } from '../src/page/cost.js';
+import { costSplit, fileCredits, setFees } from '../src/page/cost.js';
 import { LEGACY_DRAFT_KEY, loadPageDraft, modelFromLegacyDraft, PAGE_DRAFT_KEY, PAGE_IMAGES_KEY, savePageDraft } from '../src/page/draft.js';
 import { readPublishedPage, ReopenError, trustedOutside } from '../src/page/reopen.js';
 import type { KeyValue } from '../src/wallet.js';
@@ -50,6 +51,8 @@ function memory(): KeyValue & { values: Map<string, string> } {
 }
 
 const file = (files: ReturnType<typeof renderSite>, path: string) => utf8.decode(files.find((f) => f.path === path)!.bytes);
+
+beforeAll(async () => setFees(await loadFeeModel(readerConfig('mainnet'))));
 
 describe('rich text', () => {
   it('keeps the allowed tags and drops everything else', () => {
@@ -249,7 +252,7 @@ describe('cost', () => {
     expect(split.imageCount).toBe(1);
     expect(split.imageBytes).toBe(60_000);
     expect(split.images).toBe(fileCredits({ path: picture.path, bytes: picture.bytes, type: picture.type }));
-    expect(split.images).toBe(60_000n * 28_500n + 5n * 50_000_000n);
+    expect(split.images).toBeGreaterThan(60_000n * 27_000n);
     expect(split.text + split.images).toBe(split.total);
     expect(split.text).toBeGreaterThan(110_000_000n);
     expect(costSplit([])).toBeUndefined();

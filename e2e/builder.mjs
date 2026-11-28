@@ -100,7 +100,8 @@ try {
   await page.waitForTimeout(400);
   const preview = await page.frameLocator('#frame').locator('h1').textContent();
   check(preview === 'Made with the Dash Sites builder', `the preview shows the page: ${preview}`);
-  check(/costs about/.test(await page.textContent('#cost')), `cost: ${await page.textContent('#cost')}`);
+  await page.waitForFunction(() => /Estimated cost to publish: about/.test(document.getElementById('cost')?.textContent ?? ''), undefined, { timeout: 60000 }).catch(() => {});
+  check(/Estimated cost to publish: about/.test(await page.textContent('#cost')), `cost: ${await page.textContent('#cost')}`);
   if (shots) await page.screenshot({ path: join(shots, 'builder-ready.png') });
 
   await page.click('#publish');

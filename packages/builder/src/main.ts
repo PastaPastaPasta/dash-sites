@@ -4,7 +4,7 @@ import {
   collectGarbage,
   describeLinkProblem,
   DEPLOYMENTS,
-  estimateCredits,
+  formatCredits,
   formatDash,
   isValidLabel,
   networkConfig,
@@ -26,7 +26,7 @@ import { normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { browserFetchers } from './elsewhere.js';
 import { keepOutside, loadOutside, onOutsideChange } from './outside.js';
 import { mountOutsidePanel } from './outside-panel.js';
-import { platformPrice, sizeText } from './page/cost.js';
+import { currentFees, failFees, onFeesChange, pendingCostText, platformPrice, setFees, siteCost, sizeText } from './page/cost.js';
 import { mountPageTab, pageFiles, suggestReopen } from './page-tab.js';
 
 declare const __GATEWAY_DOMAIN__: string;
@@ -42,6 +42,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getEl
 const message = (error: unknown): string => String((error as Error)?.message ?? error);
 const loadEvo = () => import('@dash-sites/core/evo');
 const loadConnect = () => import('@dash-sites/core/connect');
+const loadFees = async () => (await loadEvo()).loadFeeModel(networkConfig(NETWORK));
 const SVG = 'http://www.w3.org/2000/svg';
 const EXPIRY_MARGIN_MS = 5 * 60_000;
 /** On dash.site the builder shares a site with every user's pages, so a sign-in never outlives its use. */
@@ -117,17 +118,19 @@ function refresh(): void {
       return item;
     }),
   );
+  const estimate = bundle && costText(bundle);
+  const uploadCost = mode === 'upload' && estimate ? estimate : '';
+  if ($('upload-cost').textContent !== uploadCost) $('upload-cost').textContent = uploadCost;
   const cost = $('cost');
   if (!bundle) {
     cost.textContent = mode === 'write' ? 'Build a page in step 3 first.' : 'Add your site in step 3 first.';
-  } else if (!writer || !chosen) {
-    cost.textContent = writer ? 'Pick a name in step 2 to publish this.' : 'Sign in and pick a name to publish this. Your draft is kept.';
   } else {
     const kb = Math.max(1, Math.round(bundle.stats.storedBytes / 1024));
     const noIndex = bundle.manifest.files['/index.html'] ? '' : ' There is no index.html at the top, so the home page will be empty.';
     const { elsewhere } = bundle.stats;
     const outside = elsewhere.files === 0 ? '' : ` ${elsewhere.files === 1 ? 'One file' : `${elsewhere.files} files`} (${sizeText(elsewhere.bytes)}) ${elsewhere.files === 1 ? 'is' : 'are'} kept outside Platform.`;
-    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${outside}${noIndex}`;
+    const next = writer && chosen ? '' : writer ? ' Pick a name in step 2 to publish this.' : ' Sign in and pick a name to publish this. Your draft is kept.';
+    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. ${estimate}${outside}${noIndex}${next}`;
   }
   const button = $<HTMLButtonElement>('publish');
   button.disabled = !bundle || !chosen || publishing || working > 0;
@@ -135,6 +138,14 @@ function refresh(): void {
 
   clearTimeout(previewTimer);
   previewTimer = setTimeout(renderPreview, 150);
+}
+
+/** The estimate for publishing `site` from scratch, with what goes into it. */
+function costText(site: SiteBundle): string {
+  const cost = siteCost(site);
+  if (!cost) return pendingCostText();
+  const parts = `${cost.chunkCount} ${cost.chunkCount === 1 ? 'part' : 'parts'}`;
+  return `Estimated cost to publish: about ${formatDash(cost.total)} (${formatCredits(cost.total)} credits). Storing the files in ${parts} is about ${formatDash(cost.chunks)}, and the site record about ${formatDash(cost.siteRecord)}. Parts this name already stores are not paid for again.`;
 }
 
 function renderPreview(): void {
@@ -569,7 +580,7 @@ async function publish(): Promise<void> {
       } else if (step.step === 'record') {
         status.textContent = `Pointing ${published}.dash at the new site…`;
       }
-    });
+    }, { fees: currentFees() ?? (await loadFees().then((model) => (setFees(model), model), () => undefined)) });
     status.textContent = `Stored ${result.uploaded} new ${result.uploaded === 1 ? 'part' : 'parts'}, reused ${result.reused}. Cost ${formatDash(result.creditsSpent)}.`;
     const link = $<HTMLAnchorElement>('result-link');
     link.href = url;
@@ -648,6 +659,7 @@ function start(): void {
   loadOutside(storage('localStorage'));
   mountPageTab({ network: NETWORK, storage: storage('localStorage'), siteName: () => `${label()}.dash`, identity: () => writer?.identityId, places, onChange: refresh });
   const price = (file: SiteFile): string | undefined => {
+    if (!currentFees()) return 'cost not known yet';
     const costs = platformPrice(file);
     return costs && `about ${costs} on Platform`;
   };
@@ -762,7 +774,15 @@ function start(): void {
   if (__REMEMBER_WALLET__) void resumeWallet();
   takeHandoff();
   const idle = (window as { requestIdleCallback?: (fn: () => void) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
-  idle(() => void Promise.all([loadEvo(), loadConnect()]).catch(() => {}));
+  onFeesChange(refresh);
+  idle(() => {
+    void loadFees().then(setFees, failFees);
+    void loadEvo().then((module) => module.nameRegistrationCredits(networkConfig(NETWORK))).then(
+      (credits) => ($('register-cost').textContent = ` Registering a name that needs no vote costs about ${formatDash(credits)}.`),
+      () => {},
+    );
+    void loadConnect().catch(() => {});
+  });
 }
 
 if (location.protocol === 'http:' && location.hostname === GATEWAY) location.replace(`https:${location.href.slice(5)}`);

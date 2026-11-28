@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createUsePuck, Puck, useGetPuck, type Config, type Data, type Fields } from '@puckeditor/core';
 import puckCss from '@puckeditor/core/no-external.css';
@@ -7,7 +7,7 @@ import { THEMES, type Theme } from '../template.js';
 import { BLOCKS } from '../page/blocks.js';
 import { BLOCK_TYPES, MAX_BLOCKS, newBlock, tidyPageModel, type Block, type BlockType, type PageModel } from '../page/model.js';
 import { pageStylesheet, renderSite, viewBlock } from '../page/render.js';
-import { costSplit } from '../page/cost.js';
+import { costSplit, currentFees, feesVersion, onFeesChange, pendingCostText } from '../page/cost.js';
 import { siteAssets } from '../assets.js';
 import { keepOutside } from '../outside.js';
 import { toReact } from './react-view.js';
@@ -131,8 +131,9 @@ const fromPuck = (data: Data, theme: Theme): PageModel => tidyPageModel({ theme,
 
 function Meter({ model, siteName }: { model: PageModel; siteName: string }) {
   useAssets();
+  useSyncExternalStore(onFeesChange, feesVersion);
   const split = costSplit(keepOutside(renderSite(model, siteName, siteAssets())));
-  if (!split) return <span className="ed-cost">Empty page</span>;
+  if (!split) return <span className="ed-cost">{currentFees() ? 'Empty page' : pendingCostText()}</span>;
   return (
     <span className="ed-cost" aria-live="polite" title="Upper estimate for publishing this page from scratch">
       <b>{formatDash(split.total)}</b>

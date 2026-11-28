@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { formatDash } from '@dash-sites/core';
 import { findSiteAsset, onSiteAssetsChange, putSiteAsset, siteAssets } from '../assets.js';
 import { dataUrl } from '../files.js';
-import { sizeText } from '../page/cost.js';
+import { feesVersion, onFeesChange, platformPrice, sizeText } from '../page/cost.js';
 import { ACCEPTED_IMAGES, DEFAULT_SIDE, IMAGE_SIDES, makeVariants, PICTURE_SIDES, pickDefault, variantsOf, type ImageVariant } from '../page/images.js';
 
 const urls = new WeakMap<Uint8Array, string>();
@@ -21,10 +20,11 @@ export function imageUrl(path: string): string | undefined {
 
 export const useAssets = () => useSyncExternalStore(onSiteAssetsChange, siteAssets);
 
-const describe = (variant: { width: number; height: number; bytes: Uint8Array; credits: bigint }): string => `${variant.width} × ${variant.height}, ${sizeText(variant.bytes.length)}, ${formatDash(variant.credits)}`;
+const describe = (variant: ImageVariant): string => [`${variant.width} × ${variant.height}`, sizeText(variant.bytes.length), platformPrice(variant)].filter(Boolean).join(', ');
 
 export function ImageField({ value, onChange, kind, label }: { value: string; onChange: (path: string) => void; kind: 'picture' | 'image'; label: string }) {
   useAssets();
+  useSyncExternalStore(onFeesChange, feesVersion);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [options, setOptions] = useState<ImageVariant[] | undefined>(() => (value ? variantsOf(value) : undefined));
