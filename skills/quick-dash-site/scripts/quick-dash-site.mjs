@@ -22,6 +22,8 @@ Environment
 `;
 
 const REPO = 'https://github.com/PastaPastaPasta/dash-sites.git';
+const REQUEST_AGE_MS = 10 * 60_000;
+const LOGIN_GRACE_MS = 2 * 60_000;
 const here = dirname(fileURLToPath(import.meta.url));
 
 const { values, positionals } = parseArgs({
@@ -74,19 +76,19 @@ function cliPath() {
     if (!existsSync(process.env.DASH_SITES_CLI)) fail(`DASH_SITES_CLI points at ${process.env.DASH_SITES_CLI}, which does not exist`);
     return process.env.DASH_SITES_CLI;
   }
-  const inRepo = resolve(here, '../../../packages/cli/bundle/dash-sites.mjs');
-  if (existsSync(inRepo)) return inRepo;
-  const cache = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'quick-dash-site', 'dash-sites');
-  const bundle = join(cache, 'packages/cli/bundle/dash-sites.mjs');
+  const repo = resolve(here, '../../..');
+  const inRepo = existsSync(join(repo, 'packages/cli/package.json'));
+  const root = inRepo ? repo : join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'quick-dash-site', 'dash-sites');
+  const bundle = join(root, 'packages/cli/bundle/dash-sites.mjs');
   if (existsSync(bundle)) return bundle;
   console.error('building the dash-sites CLI once (about a minute)…');
   const steps = [
-    ['git', ['clone', '--depth', '1', REPO, cache]],
-    ['npm', ['ci', '--no-audit', '--no-fund'], cache],
-    ['npx', ['tsc', '-b', 'packages/core', 'packages/gateway', 'packages/cli'], cache],
-    ['npm', ['run', 'bundle', '-w', '@dash-sites/cli'], cache],
+    ['git', ['clone', '--depth', '1', REPO, root]],
+    ['npm', ['ci', '--no-audit', '--no-fund'], root],
+    ['npx', ['tsc', '-b', 'packages/core', 'packages/gateway', 'packages/cli'], root],
+    ['npm', ['run', 'bundle', '-w', '@dash-sites/cli'], root],
   ];
-  if (existsSync(join(cache, '.git'))) steps.shift();
+  if (inRepo || existsSync(join(root, '.git'))) steps.shift();
   for (const [cmd, args, cwd] of steps) {
     const run = spawnSync(cmd, args, { cwd, stdio: ['ignore', 'ignore', 'inherit'] });
     if (run.status !== 0) fail(`${cmd} ${args.join(' ')} failed`);
@@ -115,6 +117,18 @@ function alive(pid) {
   }
 }
 
+function ourLogin(request) {
+  if (!request?.pid || !alive(request.pid) || Date.now() > request.expiresAt + LOGIN_GRACE_MS) return false;
+  const ps = spawnSync('ps', ['-o', 'command=', '-p', String(request.pid)], { encoding: 'utf8' });
+  return /dash-sites/.test(ps.stdout) && /\blogin\b/.test(ps.stdout);
+}
+
+function readJson(path) {
+  return existsSync(path) ? json(readFileSync(path, 'utf8')) : undefined;
+}
+
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
 function clock(ms) {
   const date = new Date(ms);
   const local = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
@@ -132,14 +146,27 @@ function estimate(dir, name) {
   };
 }
 
-function signedInFor(name) {
+function current(name) {
+  const run = cli(['resolve', name]);
+  return run.status === 0 ? json(run.stdout) : undefined;
+}
+
+function signedInFor(owner) {
   const run = cli(['whoami']);
   const who = run.status === 0 ? json(run.stdout) : undefined;
-  return who && Array.isArray(who.names) && who.names.includes(`${name}.dash`) ? who : undefined;
+  return who && owner && who.identityId === owner ? who : undefined;
 }
 
 async function waitForRequest(logFile, pid) {
   const deadline = Date.now() + 90_000;
+  const giveUp = (message) => {
+    try {
+      process.kill(pid, 'SIGINT');
+    } catch {
+      // Already gone.
+    }
+    fail(message);
+  };
   while (Date.now() < deadline) {
     const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
     const uri = log.match(/dashpay:\/\/\S+/)?.[0];
@@ -148,9 +175,9 @@ async function waitForRequest(logFile, pid) {
       return { uri, qr: qr.join('\n') };
     }
     if (!alive(pid)) fail(`sign-in did not start:\n${log.trim()}`);
-    await new Promise((done) => setTimeout(done, 250));
+    await sleep(250);
   }
-  fail('sign-in did not start within 90 seconds');
+  giveUp('sign-in did not start within 90 seconds');
 }
 
 async function start() {
@@ -159,21 +186,28 @@ async function start() {
   const state = stateDir(name);
 
   const plan = estimate(dir, name);
+  const now = current(name);
+  if (now && !now.ownerId) fail(`${name}.dash is not registered on ${network}; register it in DashPay first`);
   say(`Site: ${dir}`);
   say(`Name: ${name}.dash on ${network} -> ${siteUrl(name)}`);
+  say(`Now: ${now?.site?.content ? `serves a site (revision ${now.site.revision}, ${now.site.content}); publishing replaces it` : 'no site yet'}`);
   if (plan.size) say(`Size: ${plan.size}`);
   say(`Estimated cost: ${plan.cost ?? 'unknown (fee model did not load)'} (Platform storage fees, paid from the identity's credits)`);
   for (const warning of plan.warnings) say(warning);
 
-  const previous = json(existsSync(join(state, 'request.json')) ? readFileSync(join(state, 'request.json'), 'utf8') : '');
-  if (previous?.pid && alive(previous.pid)) process.kill(previous.pid, 'SIGINT');
+  const previous = readJson(join(state, 'request.json'));
+  if (ourLogin(previous)) {
+    process.kill(previous.pid, 'SIGINT');
+    const deadline = Date.now() + 5_000;
+    while (alive(previous.pid) && Date.now() < deadline) await sleep(100);
+  }
   rmSync(join(state, 'request.json'), { force: true });
 
   if (!values.fresh) {
-    const who = signedInFor(name);
+    const who = signedInFor(now?.ownerId);
     if (who) {
       say('');
-      say(`Already signed in as ${who.identityId}, which owns ${name}.dash. No QR code needed.`);
+      say(`Already signed in as ${who.identityId}, which owns ${name}.dash. No QR code needed: confirm with the user before publishing.`);
       say(`Next: node ${fileURLToPath(import.meta.url)} finish ${dir} --name ${name}${network === 'mainnet' ? '' : ` --network ${network}`}`);
       return;
     }
@@ -183,6 +217,7 @@ async function start() {
   const outFile = join(state, 'login.json');
   const svgFile = join(state, 'login-qr.svg');
   rmSync(outFile, { force: true });
+  rmSync(logFile, { force: true });
   const errFd = openSync(logFile, 'w', 0o600);
   const outFd = openSync(outFile, 'w', 0o600);
   const child = spawn(process.execPath, [cliPath(), 'login', '--name', name, '--qr', svgFile, '--network', network], {
@@ -193,10 +228,10 @@ async function start() {
   child.unref();
   closeSync(errFd);
   closeSync(outFd);
+  const expiresAt = Date.now() + REQUEST_AGE_MS;
+  writeFileSync(join(state, 'request.json'), `${JSON.stringify({ pid: child.pid, expiresAt, name, network, dir })}\n`, { mode: 0o600 });
 
   const { uri, qr } = await waitForRequest(logFile, child.pid);
-  const expiresAt = Date.now() + 10 * 60_000;
-  writeFileSync(join(state, 'request.json'), `${JSON.stringify({ pid: child.pid, expiresAt, name, network, dir })}\n`, { mode: 0o600 });
 
   say('');
   say('Scan with DashPay (More -> Tools -> Connections -> Scan QR):');
@@ -216,19 +251,21 @@ async function finish() {
   const dir = siteDir();
   const name = label();
   const state = stateDir(name);
-  const request = json(existsSync(join(state, 'request.json')) ? readFileSync(join(state, 'request.json'), 'utf8') : '');
+  const request = readJson(join(state, 'request.json'));
+  if (request?.dir && request.dir !== dir) fail(`the pending sign-in was started for ${request.dir}, not ${dir}`);
 
   if (request?.pid) {
-    if (alive(request.pid)) console.error(`waiting for wallet approval (code expires at ${clock(request.expiresAt)})…`);
-    while (alive(request.pid)) await new Promise((done) => setTimeout(done, 500));
-    const grant = json(readFileSync(join(state, 'login.json'), 'utf8'));
-    rmSync(join(state, 'request.json'), { force: true });
+    if (ourLogin(request)) console.error(`waiting for wallet approval (code expires at ${clock(request.expiresAt)})…`);
+    while (ourLogin(request)) await sleep(500);
+    const grant = readJson(join(state, 'login.json'));
     if (!grant?.identityId) {
-      const log = readFileSync(join(state, 'login.log'), 'utf8').split('\n').filter((line) => line && !/^[█▀▄ ]+$/.test(line) && !line.startsWith('dashpay://'));
-      fail(`sign-in did not finish: ${log.slice(-3).join(' / ')}\nRun start again for a new code.`);
+      const log = existsSync(join(state, 'login.log')) ? readFileSync(join(state, 'login.log'), 'utf8') : '';
+      const lines = log.split('\n').filter((line) => line && !/^[█▀▄ ]+$/.test(line) && !line.startsWith('dashpay://'));
+      fail(`sign-in did not finish: ${lines.slice(-3).join(' / ') || 'no answer'}\nRun start again for a new code.`);
     }
+    rmSync(join(state, 'request.json'), { force: true });
     say(`Signed in: ${grant.identityId} (${grant.names.join(', ') || 'no names'}), allowance ${grant.remainingBudget}`);
-  } else if (!signedInFor(name)) {
+  } else if (!signedInFor(current(name)?.ownerId)) {
     fail('not signed in; run start first');
   }
 
@@ -238,8 +275,14 @@ async function finish() {
   if (published.status !== 0 || !result?.content) fail('publish failed (see above)');
   say(`Published ${result.name} revision ${result.revision}: ${result.uploaded} chunks uploaded, ${result.reused} reused, spent ${result.spent}`);
 
-  const check = json(cli(['resolve', name]).stdout);
-  if (check?.site?.content !== result.content) fail(`published, but ${name}.dash does not resolve to the new content yet; try: dash-sites resolve ${name} --network ${network}`);
+  let check;
+  for (let attempt = 0; attempt < 6 && check?.site?.content !== result.content; attempt++) {
+    if (attempt > 0) await sleep(attempt * 3_000);
+    check = current(name);
+  }
+  if (check?.site?.content !== result.content) {
+    fail(`published (${result.content}), but ${name}.dash does not resolve to it yet. Do not publish again; check with: node ${cliPath()} resolve ${name} --network ${network}`);
+  }
   say('Verified on Platform with proofs.');
   say('');
   say(`LIVE: ${siteUrl(name)}`);
