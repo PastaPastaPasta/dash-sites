@@ -5,7 +5,7 @@ import { fromHex } from '../src/bytes.js';
 import { decodeCbor } from '../src/chain/cbor.js';
 import { fields } from '../src/chain/dapi.js';
 import { bitsFromTarget, extend, parseHeader, stateFromHeaders, targetFromBits, type ChainNetwork } from '../src/chain/header.js';
-import { asDiff, ipv6, PLATFORM_LLMQ, verifyDiff, type MnListDiff } from '../src/chain/mnlist.js';
+import { asDiff, ipv6, parseCoinbase, PLATFORM_LLMQ, verifyDiff, type MnListDiff } from '../src/chain/mnlist.js';
 import { answerQuorumRequest, LOCAL_QUORUM_URL, withLocalQuorums } from '../src/chain/quorums.js';
 import { agreed, nodeOrder, STORED_DEPTH, syncChain, type ChainSnapshot, type Checkpoint, type Dapi } from '../src/chain/sync.js';
 import { toDisplay } from '../src/chain/wire.js';
@@ -292,6 +292,31 @@ describe('syncing from several nodes', () => {
         random: () => 0.5,
       }),
     ).rejects.toThrow(/seed is on another branch/);
+  });
+
+  it('drops the list of a seed that is behind, rather than failing the sync', async () => {
+    // A list for a block below the headers this sync kept: there is no header to compare it with.
+    const behind = (): MnListDiff => {
+      const old = diff();
+      // The height field of the coinbase payload, found by the height the payload states.
+      const bytes = fromHex(old.cbTx);
+      const view = new DataView(bytes.buffer, bytes.byteOffset);
+      let at = -1;
+      for (let i = 0; i + 4 <= bytes.length; i++) if (view.getUint32(i, true) === tip) at = i;
+      expect(at).toBeGreaterThan(0);
+      view.setUint32(at, tip - 5000, true);
+      expect(parseCoinbase(bytes).height).toBe(tip - 5000);
+      return { ...old, cbTx: Buffer.from(bytes).toString('hex') };
+    };
+    const snapshot = await syncChain({
+      network: 'testnet',
+      checkpoint,
+      seeds: ['s1'],
+      previous: { ...(await sync({ a: {}, b: {} })), nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] },
+      dapi: dapi({ s1: { diff: behind }, a: {}, b: {} }),
+      random: () => 0.5,
+    });
+    expect(snapshot.listHeight).toBe(tip);
   });
 
   it('does not wait for a node that never sends its list', async () => {

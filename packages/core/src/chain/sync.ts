@@ -314,7 +314,9 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
       if (height > state.height) await extendTo(height);
       const header = recent.get(height);
       if (!header || toDisplay(header.hash) !== diff.blockHash.toLowerCase()) {
-        if (tip.seed) seedConflict = true;
+        // Another block at that height is a conflict; no header there only means the seed is behind
+        // the headers this sync kept, and its list is dropped like any other.
+        if (tip.seed && header) seedConflict = true;
         errors.push(`${tip.node}: its list's block ${diff.blockHash} is not at height ${height} of the verified chain`);
         return;
       }

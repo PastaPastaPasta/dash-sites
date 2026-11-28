@@ -114,6 +114,7 @@ export async function touchSite(key: string, resolution: Meta['resolution'], at:
         };
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error ?? new Error('site cache transaction failed'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('site cache transaction aborted'));
       }),
   );
 }
