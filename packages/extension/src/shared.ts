@@ -53,7 +53,7 @@ export const displayAddress = (target: Target): string => `${target.label}.dash$
 /** Where the extension keeps a network's chain snapshot. */
 export const chainKey = (network: Network): string => `chain:${network}`;
 
-export const RULE_IDS = { direct: 1, frame: 2, searchBase: 100 } as const;
+export const RULE_IDS = { direct: 1, frame: 2, subresources: 3, searchBase: 100 } as const;
 
 const LABEL = '([a-zA-Z0-9-]+)';
 /** `http(s)://<label>.dash[.][:port][/path?query]` and nothing longer: `alice.dash.site` is not a `.dash` address. */
@@ -89,6 +89,18 @@ export function redirectRules(base: string, settings: Settings, sandbox: boolean
       condition: { regexFilter: DIRECT, resourceTypes: ['main_frame'], isUrlFilterCaseSensitive: false },
     } as Rule,
   ];
+  // A site's own address that no file answered (a missing file, one kept outside Platform) must not
+  // reach DNS either: images, styles, media, fetches and the rest are blocked outright.
+  rules.push({
+    id: RULE_IDS.subresources,
+    priority: 2,
+    action: { type: 'block' },
+    condition: {
+      regexFilter: `^https?://[a-zA-Z0-9-]+\\.dash\\.?(?::[0-9]+)?(?:[/?#].*)?$`,
+      excludedResourceTypes: ['main_frame', 'sub_frame'],
+      isUrlFilterCaseSensitive: false,
+    },
+  } as Rule);
   if (sandbox) {
     // A site page that navigates its own frame lands back in the sandbox, which asks the viewer for that address.
     rules.push({
@@ -117,15 +129,12 @@ export function redirectRules(base: string, settings: Settings, sandbox: boolean
 
 const SEARCH_PARAMS = ['q', 'query', 'p', 'text', 'wd'];
 /** Other search engines whose results the fallback acts on. Only these: on other sites `?q=x.dash` is not a search the browser made. */
-const FALLBACK_SEARCH_HOSTS = /(^|\.)(yandex\.[a-z]{2,3}(\.[a-z]{2})?|baidu\.com|search\.naver\.com|search\.seznam\.cz|mojeek\.com|presearch\.com|you\.com|search\.aol\.com|ask\.com|metager\.org|swisscows\.com|search\.yahoo\.co\.jp|google\.[a-z]{2,3}(\.[a-z]{2})?)$/;
+const FALLBACK_SEARCH_HOSTS = /(^|\.)(yandex\.[a-z]{2,3}(\.[a-z]{2})?|baidu\.com|search\.naver\.com|search\.seznam\.cz|mojeek\.com|presearch\.com|you\.com|search\.aol\.com|ask\.com|metager\.org|swisscows\.com|search\.yahoo\.co\.jp)$/;
 
 /**
- * The target for a search URL whose query is exactly a `.dash` address, for engines the rules do
- * not list (for those, the rules have already redirected, and a second navigation would cancel theirs). By then the engine has the request; the rules are what keeps a search private.
- */
-/**
- * @param ruleActs Whether a redirect rule can act on this URL (the extension holds its host); then the
- * rule has redirected already, and a second navigation would cancel it.
+ * The target for a search URL whose query is exactly a `.dash` address, when no redirect rule acted
+ * on it: a fallback engine, or a listed engine whose host the extension cannot act on (`ruleActs`).
+ * By then the engine has the request; the rules are what keeps a search private.
  */
 export function targetForSearch(searchUrl: string, ruleActs: (url: URL) => boolean = () => true): Target | undefined {
   let url: URL;
@@ -134,8 +143,9 @@ export function targetForSearch(searchUrl: string, ruleActs: (url: URL) => boole
   } catch {
     return undefined;
   }
-  if (url.protocol !== 'https:' || !FALLBACK_SEARCH_HOSTS.test(url.hostname)) return undefined;
-  if (SEARCH_ENGINES.some((engine) => new RegExp(`^${engine.prefix}`, 'i').test(searchUrl)) && ruleActs(url)) return undefined;
+  if (url.protocol !== 'https:') return undefined;
+  const listed = SEARCH_ENGINES.some((engine) => new RegExp(`^${engine.prefix}`, 'i').test(searchUrl));
+  if (listed ? ruleActs(url) : !FALLBACK_SEARCH_HOSTS.test(url.hostname)) return undefined;
   for (const param of SEARCH_PARAMS) {
     const query = url.searchParams.get(param)?.trim();
     if (query && /^[a-z0-9-]+\.dash(\/\S*)?$/i.test(query)) return parseTarget(query);

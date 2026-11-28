@@ -128,9 +128,9 @@ const quorumId = (q: VerifiedQuorum): string => `${q.llmqType}:${q.quorumHash}:$
  * The order nodes are asked in: each round of `ASK` takes `SEEDS_PER_ROUND` from the bundled seeds
  * and the rest from the stored list, so a stale or captured stored list cannot lock a browser out.
  */
-function nodeOrder(options: SyncOptions, previous: ChainSnapshot | undefined): NodeAddress[] {
-  const stored = previous && previous.nodes.length >= 8 ? shuffle(previous.nodes, options.random) : [];
+export function nodeOrder(options: Pick<SyncOptions, 'seeds' | 'random'>, previous: Pick<ChainSnapshot, 'nodes'> | undefined): NodeAddress[] {
   const seeds = shuffle(options.seeds, options.random);
+  const stored = previous && previous.nodes.length >= 8 ? shuffle(previous.nodes.filter((node) => !options.seeds.includes(node)), options.random) : [];
   const out: NodeAddress[] = [];
   while (stored.length > 0 || seeds.length > 0) {
     out.push(...seeds.splice(0, stored.length > 0 ? SEEDS_PER_ROUND : ASK), ...stored.splice(0, ASK - SEEDS_PER_ROUND));
@@ -139,7 +139,7 @@ function nodeOrder(options: SyncOptions, previous: ChainSnapshot | undefined): N
 }
 
 /** Keeps what a majority of the lists, and at least `CORROBORATING_LISTS` of them, hold. */
-function agreed<T>(lists: T[][], id: (item: T) => string): T[] {
+export function agreed<T>(lists: T[][], id: (item: T) => string): T[] {
   const need = Math.max(CORROBORATING_LISTS, Math.floor(lists.length / 2) + 1);
   const counts = new Map<string, number>();
   for (const list of lists) for (const key of new Set(list.map(id))) counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -307,6 +307,7 @@ export async function syncChain(options: SyncOptions): Promise<ChainSnapshot> {
   } catch (error) {
     if (!(error instanceof LinkError)) throw error;
     options.onProgress?.(`Starting again from the checkpoint: ${error.message}`);
-    return fromCheckpoint();
+    // What the stranded chain proved belongs to a branch the network left: its keys and nodes go too.
+    return syncFrom(options, stateOf(options.network, options.checkpoint), { ...previous, quorums: [], nodes: [] });
   }
 }

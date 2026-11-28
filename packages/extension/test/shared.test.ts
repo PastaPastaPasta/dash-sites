@@ -8,7 +8,7 @@ const BASE = 'chrome-extension://abc/';
 function redirect(url: string, type: 'main_frame' | 'sub_frame' = 'main_frame', settings = DEFAULT_SETTINGS): string | undefined {
   const rules = redirectRules(BASE, settings, true).sort((a, b) => (b.priority ?? 1) - (a.priority ?? 1));
   for (const rule of rules) {
-    if (!rule.condition.resourceTypes?.includes(type as chrome.declarativeNetRequest.ResourceType)) continue;
+    if (rule.action.type !== 'redirect' || !rule.condition.resourceTypes?.includes(type as chrome.declarativeNetRequest.ResourceType)) continue;
     const pattern = new RegExp(rule.condition.regexFilter as string, rule.condition.isUrlFilterCaseSensitive === false ? 'i' : '');
     const match = pattern.exec(url);
     if (!match) continue;
@@ -62,6 +62,20 @@ describe('redirect rules', () => {
     expect(redirect('https://www.google.com/search?oq=alice.dash&q=cats')).toBeUndefined();
     expect(redirect('https://evil.example/search?q=alice.dash')).toBeUndefined();
     expect(redirect('https://www.google.com/search?q=alice.dash', 'main_frame', { ...DEFAULT_SETTINGS, catchSearches: false })).toBeUndefined();
+  });
+
+  it('block every other request to a .dash address', () => {
+    const block = redirectRules(BASE, DEFAULT_SETTINGS, true).find((rule) => rule.action.type === 'block');
+    const pattern = new RegExp(block?.condition.regexFilter as string, 'i');
+    expect(block?.condition.excludedResourceTypes).toEqual(['main_frame', 'sub_frame']);
+    expect(pattern.test('https://alice.dash/logo.png')).toBe(true);
+    expect(pattern.test('http://Alice.dash.:8080/?x')).toBe(true);
+    expect(pattern.test('https://alice.dash.site/logo.png')).toBe(false);
+  });
+
+  it('fall back for listed engines only when the rules cannot act there', () => {
+    expect(targetForSearch('https://www.bing.com/search?q=alice.dash', () => false)).toEqual({ label: 'alice', path: '/', search: '' });
+    expect(targetForSearch('https://www.bing.com/search?q=alice.dash', () => true)).toBeUndefined();
   });
 
   it('fall back only for engines the rules do not list', () => {

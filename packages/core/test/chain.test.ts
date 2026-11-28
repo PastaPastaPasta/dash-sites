@@ -7,7 +7,7 @@ import { fields } from '../src/chain/dapi.js';
 import { bitsFromTarget, extend, parseHeader, stateFromHeaders, targetFromBits, type ChainNetwork } from '../src/chain/header.js';
 import { asDiff, ipv6, PLATFORM_LLMQ, verifyDiff, type MnListDiff } from '../src/chain/mnlist.js';
 import { answerQuorumRequest, LOCAL_QUORUM_URL, withLocalQuorums } from '../src/chain/quorums.js';
-import { STORED_DEPTH, syncChain, type ChainSnapshot, type Checkpoint, type Dapi } from '../src/chain/sync.js';
+import { agreed, nodeOrder, STORED_DEPTH, syncChain, type ChainSnapshot, type Checkpoint, type Dapi } from '../src/chain/sync.js';
 import { toDisplay } from '../src/chain/wire.js';
 
 const fixture = (name: string): Buffer => readFileSync(new URL(`./fixtures/chain/${name}`, import.meta.url));
@@ -143,6 +143,27 @@ describe('local quorum service', () => {
     await hooked(`${LOCAL_QUORUM_URL}/quorums`);
     await hooked('https://1.2.3.4:443/x');
     expect(sent).toEqual(['https://1.2.3.4:443/x']);
+  });
+});
+
+describe('choosing nodes and agreeing lists', () => {
+  it('keeps what a majority, and at least two, of the lists hold', () => {
+    const id = (x: string): string => x;
+    expect(agreed([['a', 'b'], ['a', 'c']], id)).toEqual(['a']);
+    expect(agreed([['a', 'b'], ['a', 'b'], ['x', 'b']], id)).toEqual(['a', 'b']);
+    expect(agreed([['a'], ['a'], ['x'], ['x']], id)).toEqual([]);
+    expect(agreed([['a'], ['a'], ['a'], ['x']], id)).toEqual(['a']);
+    expect(agreed([['a', 'a'], ['b']], id)).toEqual([]);
+  });
+
+  it('puts two seeds in every round of six', () => {
+    const seeds = ['s1', 's2', 's3', 's4'];
+    const stored = Array.from({ length: 12 }, (_, i) => `n${i}`);
+    const order = nodeOrder({ seeds }, { nodes: [...stored, 's1'] });
+    expect(order.slice(0, 6).filter((node) => node.startsWith('s'))).toHaveLength(2);
+    expect(order.slice(6, 12).filter((node) => node.startsWith('s'))).toHaveLength(2);
+    expect(new Set(order).size).toBe(order.length);
+    expect(nodeOrder({ seeds }, { nodes: ['n1'] })).toEqual(expect.arrayContaining(seeds));
   });
 });
 

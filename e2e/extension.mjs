@@ -77,6 +77,20 @@ try {
     check(info.chrome === 'undefined', 'the site has no extension APIs');
     check(info.text.length > 0, `the site shows content: ${JSON.stringify(info.text.slice(0, 60))}`);
     check(info.storage === 'v', 'localStorage works (in memory)');
+    const failures = [];
+    const onFailed = (request) => {
+      if (new URL(request.url()).hostname.endsWith('.dash')) failures.push(request.failure()?.errorText);
+    };
+    context.on('requestfailed', onFailed);
+    await frame.evaluate(() => new Promise((resolve) => {
+      const img = document.createElement('img');
+      img.onerror = img.onload = () => resolve(undefined);
+      img.src = '/definitely-not-a-file.png';
+      document.body.append(img);
+    }));
+    await page.waitForTimeout(500);
+    context.off('requestfailed', onFailed);
+    check(failures.length > 0 && failures.every((text) => /BLOCKED_BY_CLIENT/.test(text ?? '')), `an image the site lacks is blocked before DNS: ${failures.join(', ') || 'no request seen'}`);
     const record = await frame.evaluate(async () => (await fetch('/.well-known/dash/site.json')).json());
     check(record.status === 'ok' && record.servedBy === 'browser', `the site reads the host API: ${record.name}, proved at block ${record.proof?.height}`);
   }
