@@ -6,15 +6,15 @@ How to go from nothing to a funded Dash Platform identity and a registered `.das
 
 Ask the user which option fits them best:
 
-1. **DashPay Mobile Wallet Login (`dash-sites login`)** — Best when the user already has a DashPay identity and `.dash` name on mobile. Least privilege: the wallet mints a contract-bound `AUTHENTICATION/HIGH` key scoped exclusively to `dash-sites`, with a spending cap and expiry chosen on the user's phone.
+1. **DashPay Wallet Login (`dash-sites login`)** — Best when the user already has a DashPay identity and `.dash` name, on a phone or the desktop wallet. Least privilege: the wallet mints a contract-bound `AUTHENTICATION/HIGH` key scoped exclusively to `dash-sites`, with a spending cap and expiry chosen in the user's wallet.
 2. **Direct L1 DASH Deposit (`scripts/fund-identity.mjs`)** — Best when starting from nothing (no DashPay wallet, no Platform identity, or needing to register a new `.dash` name) or topping up an existing identity. Lets the user send DASH from **any** wallet or exchange using their choice of a **plain Dash Core address** or a **scannable BIP21 QR code**.
 3. **Browser Self-Custody (`https://bridge.thepasta.org/`)** — Best when the user wants key generation to happen in their own browser. Dash Bridge displays both a deposit address and a QR code, creates/tops up the identity client-side, and exports `identity.json`.
 
 ---
 
-## Path A: DashPay Mobile Wallet Login
+## Path A: DashPay Wallet Login
 
-Requires DashPay for Android 11.9.2+, Dash Wallet for iOS 9.1.4+ or the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2+ (for testnet, use the `-testnet.apk` release from `dashpay/dash-wallet`).
+Requires DashPay for Android 11.9.2+, Dash Wallet for iOS 9.1.4+ or the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2+ (for testnet, use the `-testnet.apk` release from `dashpay/dash-wallet`, or switch the desktop wallet to Testnet).
 
 ```sh
 # Pin an existing name (recommended — skips interactive confirmation in non-TTY agent shells):

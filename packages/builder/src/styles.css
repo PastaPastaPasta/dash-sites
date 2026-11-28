@@ -56,7 +56,7 @@ button.quiet{background:none;color:var(--blue);font-weight:500;padding:6px 2px;f
 .applink{display:inline-block;margin-top:12px;font-weight:650;text-decoration:none;color:var(--blue-ink);background:var(--blue);border-radius:6px;padding:10px 18px}
 .applink:not([href]){display:none}
 @media (min-width:640px){.qr{order:-1}}
-@media (max-width:639px){.scan{flex-direction:column;gap:14px}.scan-text{min-width:0;width:100%}.applink{display:block;text-align:center;padding:14px 18px;font-size:17px}.qr{width:200px}}
+@media not all and (min-width:640px){.scan{flex-direction:column;gap:14px}.scan-text{min-width:0;width:100%}.applink{display:block;text-align:center;padding:14px 18px;font-size:17px}.qr{width:200px}}
 
 .inline{display:flex;gap:8px;align-items:center;margin-top:12px}
 .inline input{flex:1;min-width:0}

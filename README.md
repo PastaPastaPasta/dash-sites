@@ -87,9 +87,9 @@ operator denylist (`dash-sites-deny`) for names, owners and content
 
 **In the browser**: open https://dash.site/new for mainnet, or the
 [testnet builder](https://dash-sites.thepasta.org/). Choose **Sign in with
-DashPay**, scan the code with the DashPay app (More, Tools, Connections, Scan
-QR) and approve. On a phone, the button under the code opens the wallet
-instead. The wallet gives the page a key that can only write Dash Sites
+DashPay**, then press **Open in DashPay** to open the wallet on the same phone
+or computer, or scan the code with DashPay on another phone (More, Tools,
+Connections, Scan QR), and approve. The wallet gives the page a key that can only write Dash Sites
 documents, with a spending limit and an end date you set on the approval
 screen. The wallet's own keys never leave it. Then pick a name you own, write
 a page or upload a folder or zip, and publish. You see the fee before anything
@@ -99,7 +99,8 @@ is sent.
   later, and the desktop Dash Wallet (DashPay Desktop) 1.0.0-rc.2 or later. The
   sign-in step shows a QR code and an Open in DashPay button on every device.
   Testnet needs DashPay's testnet build, the `-testnet.apk` on the
-  [DashPay Wallet releases](https://github.com/dashpay/dash-wallet/releases/latest).
+  [DashPay Wallet releases](https://github.com/dashpay/dash-wallet/releases/latest),
+  or the desktop wallet switched to Testnet.
 - A wallet sign-in cannot register names, because its key is limited to Dash
   Sites. Register a name in the wallet, or use the key sign-in below.
 - **Sign in with a private key instead** takes an identity id (or name) and an
