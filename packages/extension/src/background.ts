@@ -42,7 +42,11 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
 
 // Viewers ask here to open a name: the chain proof, the SDK and each site's read are shared by all tabs.
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== SITE_PORT || port.sender?.id !== chrome.runtime.id || !port.sender.url?.startsWith(chrome.runtime.getURL('site.html'))) return;
+  if (port.name !== SITE_PORT) return;
+  if (port.sender?.id !== chrome.runtime.id || !port.sender.url?.startsWith(chrome.runtime.getURL('site.html'))) {
+    port.disconnect();
+    return;
+  }
   let open = true;
   port.onDisconnect.addListener(() => {
     open = false;
@@ -51,16 +55,15 @@ chrome.runtime.onConnect.addListener((port) => {
     if (open) port.postMessage(message);
   };
   port.onMessage.addListener((message: ViewerRequest) => {
-    const name = message?.type === 'open' && typeof message.label === 'string' ? parseName(message.label) : undefined;
-    if (!name) return reply({ type: 'error', message: 'not a .dash name' });
-    void loadSettings()
-      .then((settings) => serviceFor(settings.network).open(name.label, (progress) => reply({ type: 'progress', message: progress })))
+    if (message?.type !== 'open') return;
+    const name = typeof message.label === 'string' ? parseName(message.label) : undefined;
+    // The viewer names the network it keys its cache by, so both always mean the same one.
+    if (!name || (message.network !== 'mainnet' && message.network !== 'testnet')) return reply({ type: 'error', message: 'not a .dash name' });
+    serviceFor(message.network)
+      .open(name.label, (progress) => reply({ type: 'progress', message: progress }))
       .then(
         (result) => reply({ type: 'result', result }),
         (error: unknown) => reply({ type: 'error', message: (error as Error)?.message ?? String(error) }),
       );
   });
 });
-
-// A stored proof that is a while old is refreshed as the worker starts, before any tab needs it.
-void loadSettings().then((settings) => serviceFor(settings.network).keeper.warm()).catch(() => undefined);

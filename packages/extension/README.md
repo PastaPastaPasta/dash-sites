@@ -73,14 +73,18 @@ alice.dash ──DNR──▶ site.html#alice.dash/            (extension page, 
   and `platformHTTPPort` of version 2 entries. Version 1 entries hash neither
   the type nor the port, so they are not used. A list whose masternode root
   does not match still gives its quorums, but no nodes.
-- **Lists must agree.** Lists are asked from two nodes picked at random, not
-  by the tip they claim, plus one spare; the sync goes on once two lists check
-  out and cancels the slower request. Each list must be proven against a block of the
-  verified chain. At least two must check out. A quorum key (and a node) is used
-  only if a majority of the proven lists, and at least two, hold it. A node that
-  mines one block of its own, with a forged quorum in its coinbase, therefore
-  cannot get that quorum used by itself. Quorums proven by earlier syncs are kept as "previous"
-  quorums, so responses signed by a quorum that just rotated out still verify.
+- **Lists must agree.** Each round of tips waits for a bundled seed to answer
+  (or for 2.5 s), so a stored list that answers fastest cannot keep the seeds
+  out. Lists are then asked from one seed and from nodes picked at random, not
+  by speed, plus a spare. The round ends once two lists check out and the
+  seed's has arrived (or 5 s after that, if the seed is slow); slower requests
+  are cancelled. Each list must be proven against a block of the verified
+  chain, and a quorum key (or a node) is used only if **every** proven list
+  holds it. A node that mines one block of its own, with a forged quorum in its
+  coinbase, therefore cannot get that quorum used unless it also controls every
+  other list, the seed's included. Quorums proven by earlier syncs are kept as
+  "previous" quorums, so responses signed by a quorum that just rotated out
+  still verify.
 - **Into the SDK.** evo-sdk 5.1.0 in trusted mode is pointed at
   `https://quorums.dash-sites.invalid`. A `fetch` hook (`withLocalQuorums`)
   answers `/quorums` and `/previous` from the proven list, so that request
@@ -100,9 +104,14 @@ The background worker does all of this once, for every tab:
   masternode list only as a diff from genesis, so two lists of about 1.3 MB are
   read each time.
 - **One SDK**, with the verifier compiled once, connected to nodes of the proven
-  list that answered a probe within 2.5 s.
+  list that answered a probe within 2.5 s (probed again if all of them fail).
+- **Nothing runs for ordinary browsing.** The worker proves the chain only when
+  a viewer asks it to open a name. A viewer that waits pings the worker every
+  20 s, so Chrome does not stop it mid-read. "Forget the verified chain" in the
+  settings also stops work already running from storing anything.
 - **Sites** are read and checked once and kept in IndexedDB (up to 40, least
-  recently used dropped). A viewer shows a site Dash Platform proved current in
+  recently used dropped; a check that finds a site unchanged rewrites only its
+  small metadata record). A viewer shows a site Dash Platform proved current in
   the last 10 minutes at once, from that store, and asks the worker to check it
   again behind it ("checking for updates" in the badge). A newer revision is
   shown when it arrives; a site that is gone is removed. Opens of one name from
@@ -215,9 +224,10 @@ does. Search catching can be turned off in the settings.
 - **Trust model is SPV plus the coinbase commitment, from several nodes.** The
   extension checks proof of work, difficulty and every Merkle root. It does not
   check ChainLock signatures or the quorum commitments' BLS signatures. To
-  commit a fake quorum key, an attacker must control a majority, and at least
-  two, of the randomly picked nodes whose lists the extension uses, and mine a
-  block at full mainnet difficulty with the forged quorum in its coinbase. Fixing this fully takes
+  commit a fake quorum key, an attacker must control every node whose list the
+  extension uses, including a bundled seed (unless the seed does not answer
+  within 5 s), and mine a block at full mainnet difficulty with the forged
+  quorum in its coinbase. Fixing this fully takes
   ChainLock checks against quorums proven earlier, or Core's DIP 175 quorum
   proofs (`getquorumproofchain`) served by DAPI. The bundled verifier already
   checks those proofs (`WasmVerifiedContext`); DAPI does not serve them yet.

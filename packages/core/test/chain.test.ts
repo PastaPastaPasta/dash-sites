@@ -147,13 +147,13 @@ describe('local quorum service', () => {
 });
 
 describe('choosing nodes and agreeing lists', () => {
-  it('keeps what a majority, and at least two, of the lists hold', () => {
+  it('keeps only what every list holds, given at least two', () => {
     const id = (x: string): string => x;
     expect(agreed([['a', 'b'], ['a', 'c']], id)).toEqual(['a']);
-    expect(agreed([['a', 'b'], ['a', 'b'], ['x', 'b']], id)).toEqual(['a', 'b']);
-    expect(agreed([['a'], ['a'], ['x'], ['x']], id)).toEqual([]);
-    expect(agreed([['a'], ['a'], ['a'], ['x']], id)).toEqual(['a']);
-    expect(agreed([['a', 'a'], ['b']], id)).toEqual([]);
+    expect(agreed([['a', 'b'], ['a', 'b'], ['x', 'b']], id)).toEqual(['b']);
+    expect(agreed([['a'], ['a'], ['a'], ['x']], id)).toEqual([]);
+    expect(agreed([['a', 'a'], ['a']], id)).toEqual(['a']);
+    expect(agreed([['a']], id)).toEqual([]);
   });
 
   it('puts two seeds in every round of six', () => {
@@ -244,11 +244,48 @@ describe('syncing from several nodes', () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  it('waits for the seed list even when two other lists arrive first', async () => {
+    let seedAnswered = 0;
+    const delayed = (): Promise<MnListDiff> =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          seedAnswered = Date.now();
+          resolve(diff());
+        }, 1500),
+      );
+    let seedAsked = false;
+    const nodes = { s1: {}, a: {}, b: {} };
+    const base = dapi(nodes);
+    const snapshot = await syncChain({
+      network: 'testnet',
+      checkpoint,
+      seeds: ['s1'],
+      previous: { ...(await sync({ a: {}, b: {} })), nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] },
+      dapi: {
+        ...base,
+        masternodeListDiff: async (address, options) => {
+          if (address === 's1') {
+            seedAsked = true;
+            return delayed();
+          }
+          return base.masternodeListDiff(address, options);
+        },
+      },
+      random: () => 0.5,
+    });
+    const finished = Date.now();
+    expect(seedAsked).toBe(true);
+    expect(seedAnswered).toBeGreaterThan(0);
+    expect(finished).toBeGreaterThanOrEqual(seedAnswered);
+    expect(snapshot.listHeight).toBe(tip);
+  }, 30000);
+
   it('does not wait for a node that never sends its list', async () => {
     const started = Date.now();
     const snapshot = await sync({ slow: { hangs: true }, a: {}, b: {} });
     expect(snapshot.listHeight).toBe(tip);
-    expect(Date.now() - started).toBeLessThan(5000);
+    // At most the grace a seed's list gets, when the hung node is the seed picked.
+    expect(Date.now() - started).toBeLessThan(8000);
   });
 
   it('takes a list whose block arrived after the nodes reported their tips', async () => {

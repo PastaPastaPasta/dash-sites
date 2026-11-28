@@ -1,4 +1,4 @@
-import { decide, describeResolution, HOST_API, type Manifest, type Resolution } from '@dash-sites/core';
+import { decide, describeResolution, HOST_API, normalizeLabel, type Manifest, type Network, type Resolution } from '@dash-sites/core';
 import type { ChainSnapshot } from '@dash-sites/core/chain';
 import { getSite, siteKey, type CachedSite } from './cache.js';
 import { asFrameMessage, SITE_PORT, type OpenResult, type PageMessage, type WorkerReply } from './protocol.js';
@@ -73,14 +73,19 @@ function ago(ms: number): string {
   return minutes < 1 ? 'just now' : `${minutes} min ago`;
 }
 
+/** While a viewer waits, it pings the worker this often, so Chrome does not stop the worker mid-read. */
+const KEEPALIVE_MS = 20_000;
+
 /** Asks the background worker to open a name. Its progress messages go to `onProgress`. */
-function request(label: string, onProgress: (message: string) => void): Promise<OpenResult> {
+function request(label: string, network: Network, onProgress: (message: string) => void): Promise<OpenResult> {
   return new Promise<OpenResult>((resolve, reject) => {
     const port = chrome.runtime.connect({ name: SITE_PORT });
+    const keepalive = setInterval(() => port.postMessage({ type: 'ping' }), KEEPALIVE_MS);
     let settled = false;
     const settle = (finish: () => void): void => {
       if (settled) return;
       settled = true;
+      clearInterval(keepalive);
       port.disconnect();
       finish();
     };
@@ -89,8 +94,11 @@ function request(label: string, onProgress: (message: string) => void): Promise<
       else if (message.type === 'result') settle(() => resolve(message.result));
       else settle(() => reject(new Error(message.message)));
     });
-    port.onDisconnect.addListener(() => settle(() => reject(new WorkerStopped())));
-    port.postMessage({ type: 'open', label });
+    port.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError;
+      settle(() => reject(new WorkerStopped()));
+    });
+    port.postMessage({ type: 'open', label, network });
   });
 }
 
@@ -101,14 +109,17 @@ class WorkerStopped extends Error {
 }
 
 /** `request`, asked again once if the worker stopped mid-way (the browser may stop an idle worker). */
-async function open(label: string, onProgress: (message: string) => void): Promise<OpenResult> {
+async function open(label: string, network: Network, onProgress: (message: string) => void): Promise<OpenResult> {
   try {
-    return await request(label, onProgress);
+    return await request(label, network, onProgress);
   } catch (error) {
     if (!(error instanceof WorkerStopped)) throw error;
-    return request(label, onProgress);
+    return request(label, network, onProgress);
   }
 }
+
+/** Whether two spellings are the same DPNS name (`alice`, `Alice`, `a1ice`). */
+const sameName = (a: string, b: string): boolean => normalizeLabel(a) === normalizeLabel(b);
 
 class Viewer {
   private site?: LoadedSite;
@@ -132,7 +143,7 @@ class Viewer {
   }
 
   private async load(label: string, generation: number): Promise<LoadedSite | undefined> {
-    if (this.site?.label === label) return this.site;
+    if (this.site && sameName(this.site.label, label)) return this.site;
     const key = siteKey(this.settings.network, label);
     const cached = await getSite(key);
     if (generation !== this.generation) return undefined;
@@ -144,7 +155,7 @@ class Viewer {
     }
     status(`Opening ${label}.dash`, 'Asking the extension for the proven Dash chain state');
     badge('checking', 'Verifying…');
-    const result = await open(label, (message) => {
+    const result = await open(label, this.settings.network, (message) => {
       if (generation === this.generation && !this.site) $('status-detail').textContent = message;
     });
     if (generation !== this.generation) return undefined;
@@ -169,12 +180,12 @@ class Viewer {
   private async revalidate(label: string): Promise<void> {
     let result: OpenResult;
     try {
-      result = await open(label, () => undefined);
+      result = await open(label, this.settings.network, () => undefined);
     } catch {
-      if (this.site?.label === label && this.site.cached) badge(this.site.skipped.length ? 'partial' : 'ok', `Verified ${ago(this.site.checkedAt)} · could not check for updates`);
+      if (this.site && sameName(this.site.label, label) && this.site.cached) badge(this.site.skipped.length ? 'partial' : 'ok', `Verified ${ago(this.site.checkedAt)} · could not check for updates`);
       return;
     }
-    if (this.site?.label !== label || !this.target || this.target.label !== label) return;
+    if (!this.site || !sameName(this.site.label, label) || !this.target || !sameName(this.target.label, label)) return;
     if (result.kind === 'site' && !result.changed) {
       const fresh = await getSite(result.key);
       this.site.cached = false;

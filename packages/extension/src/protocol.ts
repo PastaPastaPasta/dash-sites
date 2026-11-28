@@ -47,6 +47,7 @@ export type OpenResult =
   | { kind: 'external'; content: string };
 
 /** Messages on a viewer's port to the background worker. */
-export type ViewerRequest = { type: 'open'; label: string };
+/** `ping` only keeps the worker running while a viewer waits: Chrome stops an idle worker after about 30 s. */
+export type ViewerRequest = { type: 'open'; label: string; network: 'mainnet' | 'testnet' } | { type: 'ping' };
 export type WorkerReply = { type: 'progress'; message: string } | { type: 'result'; result: OpenResult } | { type: 'error'; message: string };
 export const SITE_PORT = 'site';

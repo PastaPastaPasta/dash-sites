@@ -21,8 +21,14 @@ export class ChainKeeper {
   private snapshot?: ChainSnapshot;
   private running?: Promise<ChainSnapshot>;
   private readonly listeners = new Set<(message: string) => void>();
+  private disposed = false;
 
   constructor(private readonly network: Network) {}
+
+  /** After the user removed the stored proof: a sync still running does not store its result. */
+  dispose(): void {
+    this.disposed = true;
+  }
 
   private async current(): Promise<ChainSnapshot | undefined> {
     this.snapshot ??= await stored(this.network);
@@ -39,12 +45,6 @@ export class ChainKeeper {
     if (!current) return this.sync(progress);
     if (Date.now() - current.syncedAt > BACKGROUND_REFRESH_MS) this.sync().catch(() => undefined);
     return current;
-  }
-
-  /** Refreshes a stored proof that is a while old, in the background. Does nothing for a browser that never proved the chain. */
-  async warm(): Promise<void> {
-    const current = await this.current();
-    if (current && Date.now() - current.syncedAt > BACKGROUND_REFRESH_MS) await this.sync();
   }
 
   /** For the SDK when it meets a quorum it has no key for: a new proof, or the stored keys if that fails. */
@@ -77,7 +77,7 @@ export class ChainKeeper {
           },
         });
         this.snapshot = next;
-        await chrome.storage.local.set({ [chainKey(this.network)]: next });
+        if (!this.disposed) await chrome.storage.local.set({ [chainKey(this.network)]: next });
         return next;
       } finally {
         this.running = undefined;

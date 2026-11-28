@@ -67,8 +67,4 @@ describe('the chain keeper', () => {
     expect(syncChain).toHaveBeenCalledTimes(1);
   });
 
-  it('does nothing as the worker starts for a browser that never proved the chain', async () => {
-    await new ChainKeeper('mainnet').warm();
-    expect(syncChain).not.toHaveBeenCalled();
-  });
 });

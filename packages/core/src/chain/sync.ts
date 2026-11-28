@@ -59,13 +59,14 @@ const KEEP_QUORUMS = 64;
 const KEEP_HEADERS = 2048;
 /** How far below the verified tip the stored chain stays, so a reorg of the last blocks does not strand it. */
 export const STORED_DEPTH = 12;
-/** A quorum key or node is used only if at least this many proven lists, and a majority of them, hold it. */
+/** A quorum key or node is used only if every proven list holds it, and at least this many were proven. */
 export const CORROBORATING_LISTS = 2;
 /** Nodes asked for their tip in a round; two of them always come from the bundled seeds. */
 const ASK = 6;
 const SEEDS_PER_ROUND = 2;
 const LISTS_ASKED = 2;
 const SPARE_LISTS = 1;
+const SEED_LIST_GRACE_MS = 5000;
 const ROUNDS = 2;
 
 export const SNAPSHOT_VERSION = 1;
@@ -114,33 +115,47 @@ class Recent {
 const TIPS_WANTED = 4;
 const TIP_GRACE_MS = 2500;
 
-/** The tips of the first nodes to answer, so that one hung node does not hold the sync; the rest are cancelled. */
-async function firstTips(nodes: readonly NodeAddress[], dapi: Dapi, options: DapiOptions): Promise<Tip[]> {
+/**
+ * The tips of the first nodes to answer, so that one hung node does not hold the sync; the rest are
+ * cancelled. A seed's tip is waited for until the grace period ends, so that a stored list that
+ * answers fastest cannot keep the seeds out.
+ */
+async function firstTips(nodes: readonly NodeAddress[], seeds: ReadonlySet<NodeAddress>, dapi: Dapi, options: DapiOptions): Promise<Tip[]> {
   const cancel = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, cancel.signal]) : cancel.signal;
   const tips: Tip[] = [];
+  const seedAsked = nodes.some((node) => seeds.has(node));
   await new Promise<void>((done) => {
     let pending = nodes.length;
     let graceOver = false;
-    const enough = (): boolean => tips.length >= Math.min(TIPS_WANTED, nodes.length) || (graceOver && tips.length >= CORROBORATING_LISTS) || pending === 0;
+    let finished = false;
+    const finish = (): void => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      done();
+    };
+    const enough = (): boolean => {
+      if (pending === 0) return true;
+      const seedIn = !seedAsked || tips.some((tip) => tip.seed);
+      if (tips.length >= Math.min(TIPS_WANTED, nodes.length) && seedIn) return true;
+      return graceOver && tips.length >= CORROBORATING_LISTS;
+    };
     const timer = setTimeout(() => {
       graceOver = true;
-      if (enough()) done();
+      if (enough()) finish();
     }, TIP_GRACE_MS);
-    if (nodes.length === 0) done();
+    if (nodes.length === 0) finish();
     for (const node of nodes) {
       dapi
         .bestBlockHeight(node, { ...options, signal })
         .then((height) => {
-          if (!cancel.signal.aborted) tips.push({ node, height });
+          if (!finished) tips.push({ node, height, seed: seeds.has(node) });
         })
         .catch(() => undefined)
         .finally(() => {
           pending--;
-          if (enough()) {
-            clearTimeout(timer);
-            done();
-          }
+          if (!finished && enough()) finish();
         });
     }
   });
@@ -159,6 +174,8 @@ interface ProvenList {
 interface Tip {
   node: NodeAddress;
   height: number;
+  /** From the bundled seeds, not the stored list. */
+  seed: boolean;
 }
 
 const quorumId = (q: VerifiedQuorum): string => `${q.llmqType}:${q.quorumHash}:${q.publicKey}`;
@@ -177,15 +194,19 @@ export function nodeOrder(options: Pick<SyncOptions, 'seeds' | 'random'>, previo
   return [...new Set(out)];
 }
 
-/** Keeps what a majority of the lists, and at least `CORROBORATING_LISTS` of them, hold. */
+/**
+ * Keeps what every list holds, given at least `CORROBORATING_LISTS` of them. Unanimity: one honest
+ * list among them, such as the seed's, is enough to keep a forged quorum key out. Honest lists from
+ * nearby tips differ by at most a rotated quorum, so they still share almost all keys.
+ */
 export function agreed<T>(lists: T[][], id: (item: T) => string): T[] {
-  const need = Math.max(CORROBORATING_LISTS, Math.floor(lists.length / 2) + 1);
+  if (lists.length < CORROBORATING_LISTS) return [];
   const counts = new Map<string, number>();
   for (const list of lists) for (const key of new Set(list.map(id))) counts.set(key, (counts.get(key) ?? 0) + 1);
   const seen = new Set<string>();
   return lists.flat().filter((item) => {
     const key = id(item);
-    if ((counts.get(key) ?? 0) < need || seen.has(key)) return false;
+    if (counts.get(key) !== lists.length || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
@@ -205,6 +226,7 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
   const dapi = options.dapi ?? { bestBlockHeight, blockHeaders, masternodeListDiff };
   const progress = options.onProgress ?? (() => undefined);
   const pool = nodeOrder(options, previous);
+  const seeds = new Set(options.seeds);
   if (pool.length < CORROBORATING_LISTS) throw new ChainError('not enough nodes to ask');
   let state = start;
   const recent = new Recent(state);
@@ -259,14 +281,18 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
     const asked = pool.slice(round * ASK, (round + 1) * ASK);
     if (asked.length === 0) break;
     progress(`Asking ${asked.length} nodes for the chain tip`);
-    tips.push(...(await firstTips(asked, dapi, options)));
+    tips.push(...(await firstTips(asked, seeds, dapi, options)));
     if (tips.length === 0) continue;
     await extendTo(Math.max(...usable().map((tip) => tip.height), state.height));
 
     progress('Proving the masternode lists and quorum keys');
-    // One spare node is asked too, and the round ends once enough lists check out: a slow node
-    // does not hold the sync, and its request is cancelled.
-    const picked = shuffle(usable().filter((tip) => !listed.has(tip.node)), options.random).slice(0, LISTS_ASKED - lists.length + SPARE_LISTS);
+    // One list comes from a seed, the rest from nodes picked at random, not by speed, plus a spare.
+    // The round ends once enough lists check out and the seed's has arrived: a slow node does not
+    // hold the sync (its request is cancelled), and fast nodes cannot leave the seed out.
+    const fresh = shuffle(usable().filter((tip) => !listed.has(tip.node)), options.random);
+    const seedTip = fresh.find((tip) => tip.seed);
+    const picked = [...(seedTip ? [seedTip] : []), ...fresh.filter((tip) => tip !== seedTip)].slice(0, LISTS_ASKED - lists.length + SPARE_LISTS);
+    let seedWaiting = seedTip !== undefined;
     const listing = new AbortController();
     const roundOptions: DapiOptions = { ...options, signal: options.signal ? AbortSignal.any([options.signal, listing.signal]) : listing.signal };
     const check = async (tip: Tip, diff: MnListDiff): Promise<void> => {
@@ -298,23 +324,34 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
     await new Promise<void>((done) => {
       let pending = picked.length;
       if (pending === 0) return done();
+      let finished = false;
+      let seedTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (): void => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(seedTimer);
+        done();
+      };
       // Lists are checked one at a time, as they arrive: checking can extend the shared chain state.
       let checking = Promise.resolve();
-      const arrive = (work: () => Promise<void>): void => {
+      const arrive = (tip: Tip, work: () => Promise<void>): void => {
         checking = checking
-          .then(() => (listing.signal.aborted ? undefined : work()))
+          .then(() => (finished ? undefined : work()))
           .catch(() => undefined)
           .then(() => {
             pending--;
-            if (pending === 0 || lists.length >= CORROBORATING_LISTS) done();
+            if (tip === seedTip) seedWaiting = false;
+            if (pending === 0 || (lists.length >= CORROBORATING_LISTS && !seedWaiting)) finish();
+            // A seed that does not answer holds the round only so long.
+            else if (lists.length >= CORROBORATING_LISTS && !seedTimer) seedTimer = setTimeout(finish, SEED_LIST_GRACE_MS);
           });
       };
       for (const tip of picked) {
         listed.add(tip.node);
         dapi.masternodeListDiff(tip.node, roundOptions).then(
-          (diff) => arrive(() => (lists.length < CORROBORATING_LISTS ? check(tip, diff) : Promise.resolve())),
+          (diff) => arrive(tip, () => check(tip, diff)),
           (error: unknown) =>
-            arrive(async () => {
+            arrive(tip, async () => {
               demote(tip);
               errors.push(`${tip.node}: ${(error as Error).message}`);
             }),

@@ -1,7 +1,7 @@
 // Runs in the background worker: one chain proof, one SDK and one read of each site for every tab.
 import { loadManifest, readerConfig, readFile, resolveName, siteChunks, type Network, type PlatformReader } from '@dash-sites/core';
 import { EvoReader } from '@dash-sites/core/evo';
-import { deleteSite, getSite, putSite, siteKey } from './cache.js';
+import { deleteSite, getMeta, putSite, siteKey, touchSite } from './cache.js';
 import { ChainKeeper } from './chain.js';
 import { respondingNodes } from './nodes.js';
 import type { OpenResult } from './protocol.js';
@@ -27,11 +27,18 @@ function compileVerifier(): Promise<WebAssembly.Module> {
 
 class NetworkService {
   readonly keeper: ChainKeeper;
+  /** Set once the user removed what was proven: work still running then writes nothing. */
+  private disposed = false;
   private reader?: Promise<PlatformReader>;
   private readonly inflight = new Map<string, { result: Promise<OpenResult>; listeners: Set<Progress> }>();
 
   constructor(private readonly network: Network) {
     this.keeper = new ChainKeeper(network);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.keeper.dispose();
   }
 
   private connect(progress: Progress): Promise<PlatformReader> {
@@ -76,28 +83,32 @@ class NetworkService {
   }
 
   private async load(label: string, key: string, progress: Progress): Promise<OpenResult> {
-    let reader: PlatformReader;
+    const reader = await this.connect(progress);
     try {
-      reader = await this.connect(progress);
+      return await this.read(reader, label, key, progress);
     } catch (error) {
-      this.reader = undefined;
+      // Every node the SDK holds failed: probe again on the next open rather than keep them.
+      if (/no available addresses/i.test((error as Error)?.message ?? '')) this.reader = undefined;
       throw error;
     }
+  }
+
+  private async read(reader: PlatformReader, label: string, key: string, progress: Progress): Promise<OpenResult> {
     progress('Reading the name and its site from Dash Platform, with proofs');
     const resolution = await resolveName(reader, label, { preload: true });
     // A name with no site here any more (taken down, moved, or changed hands) leaves nothing cached to show.
     if (resolution.status !== 'ok') {
-      await deleteSite(key);
+      if (!this.disposed) await deleteSite(key);
       return { kind: 'unavailable', resolution };
     }
     if (resolution.content.scheme !== 'dash-manifest') {
-      await deleteSite(key);
+      if (!this.disposed) await deleteSite(key);
       return { kind: 'external', content: resolution.site.content };
     }
     const now = Date.now();
-    const cached = await getSite(key);
+    const cached = await getMeta(key);
     if (cached && cached.resolution.ownerId === resolution.ownerId && cached.resolution.site.content === resolution.site.content) {
-      await putSite({ ...cached, resolution, checkedAt: now, usedAt: now });
+      if (!this.disposed) await touchSite(key, resolution, now);
       return { kind: 'site', key, changed: false };
     }
     const source = siteChunks(reader, resolution);
@@ -108,8 +119,9 @@ class NetworkService {
     let total = 0;
     let done = 0;
     const queue = [...paths];
+    let failed = false;
     const worker = async (): Promise<void> => {
-      for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
+      for (let path = queue.shift(); path !== undefined && !failed; path = queue.shift()) {
         const entry = manifest.files[path];
         if (!entry || entry.ext || entry.src || entry.unread) {
           skipped.push(path);
@@ -122,7 +134,12 @@ class NetworkService {
         progress(`Checking files against their published hashes: ${++done} of ${paths.length}`);
       }
     };
-    await Promise.all(Array.from({ length: 4 }, worker));
+    // One failed file fails the site; the other readers stop rather than read on into nothing.
+    await Promise.all(Array.from({ length: 4 }, () => worker().catch((error: unknown) => {
+      failed = true;
+      throw error;
+    })));
+    if (this.disposed) return { kind: 'site', key, changed: false };
     await putSite({ key, network: this.network, resolution, manifest, files, skipped, checkedAt: now, usedAt: now });
     return { kind: 'site', key, changed: Boolean(cached) };
   }
@@ -138,5 +155,8 @@ export const serviceFor = (network: Network): NetworkService => {
   return service;
 };
 
-/** Forgets everything proven in memory, after the stored proof was removed. */
-export const resetServices = (): void => services.clear();
+/** Forgets everything proven in memory, after the stored proof was removed. Work still running writes nothing. */
+export const resetServices = (): void => {
+  for (const service of services.values()) service.dispose();
+  services.clear();
+};
