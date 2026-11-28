@@ -1,6 +1,8 @@
 import {
   DataContract,
   Document,
+  documentCreateCost,
+  ensureInitialized,
   EvoSDK,
   IdentityPublicKey,
   IdentitySigner,
@@ -10,6 +12,7 @@ import {
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { base58 } from '@scure/base';
 import { concat, fromHex, sha256, toHex } from './bytes.js';
+import type { FeeModel } from './cost.js';
 import { DPNS_CONTRACT_ID, type NetworkConfig } from './config.js';
 import { FORMATS, formatVersion, isNewer, refuseNewer } from './formats.js';
 import { KNOWN_CONTRACTS } from './known-contracts.js';
@@ -88,6 +91,47 @@ export interface ConnectOptions {
 }
 
 export const knownContract = (bytes: string): DataContract => DataContract.fromBase64(bytes, false, PROTOCOL_VERSION);
+
+function bundledContract(config: NetworkConfig, id: string): DataContract {
+  const known = KNOWN_CONTRACTS[config.network]?.[id];
+  if (!known) throw new Error(`no bundled copy of contract ${id} for ${config.network}`);
+  return knownContract(known.bytes);
+}
+
+/** Drive's price for creating one document of `type`: storage when every index value is new, plus processing. */
+function createCost(contract: DataContract, type: string, fields?: Record<string, { present?: boolean; length?: number }>): bigint {
+  return BigInt(documentCreateCost(contract, type, fields && { fields }, PROTOCOL_VERSION).totalCredits.newValues);
+}
+
+/** Platform's fees for what a publish writes, computed by the SDK from the bundled dash-sites contract. */
+export async function loadFeeModel(config: NetworkConfig): Promise<FeeModel> {
+  await ensureInitialized();
+  const contract = bundledContract(config, config.contractId);
+  const chunks = new Map<number, bigint>();
+  return {
+    chunk(bytes) {
+      let credits = chunks.get(bytes);
+      if (credits === undefined) {
+        const fields: Record<string, { present: boolean; length?: number }> = {};
+        for (const index of [0, 1, 2]) {
+          const length = Math.min(CHUNK_FIELD_SIZE, bytes - index * CHUNK_FIELD_SIZE);
+          fields[`d${index}`] = length > 0 ? { present: true, length } : { present: false };
+        }
+        credits = createCost(contract, 'chunk', fields);
+        chunks.set(bytes, credits);
+      }
+      return credits;
+    },
+    siteRecord: (contentLength) => createCost(contract, 'site', { content: { length: contentLength } }),
+  };
+}
+
+/** What registering a name that needs no vote costs: its DPNS preorder and domain documents. */
+export async function nameRegistrationCredits(config: NetworkConfig): Promise<bigint> {
+  await ensureInitialized();
+  const dpns = bundledContract(config, DPNS_CONTRACT_ID);
+  return createCost(dpns, 'preorder') + createCost(dpns, 'domain');
+}
 
 /**
  * Seeds the SDK with the bundled DPNS and dash-sites contracts, so the first queries need no contract

@@ -4,7 +4,7 @@ import {
   collectGarbage,
   describeLinkProblem,
   DEPLOYMENTS,
-  estimateCredits,
+  formatCredits,
   formatDash,
   isValidLabel,
   networkConfig,
@@ -26,7 +26,7 @@ import { normalizeUpload, previewHtml, unzip, type RawFile } from './files.js';
 import { browserFetchers } from './elsewhere.js';
 import { keepOutside, loadOutside, onOutsideChange } from './outside.js';
 import { mountOutsidePanel } from './outside-panel.js';
-import { platformPrice, sizeText } from './page/cost.js';
+import { onFeesChange, platformPrice, setFees, siteCost, sizeText } from './page/cost.js';
 import { mountPageTab, pageFiles, suggestReopen } from './page-tab.js';
 
 declare const __GATEWAY_DOMAIN__: string;
@@ -71,6 +71,7 @@ let publishing = false;
 let wantedName: string | undefined;
 let working = 0;
 let leftSignedIn = false;
+let feesFailed = false;
 const autoSignOut = new AutoSignOut({ idleMs: IDLE_SIGN_OUT_MS, signOut: (reason) => signOut(SIGNED_OUT[reason]), busy: () => publishing || working > 0 });
 
 const label = (): string => chosen?.label.toLowerCase() ?? 'yourname';
@@ -117,17 +118,18 @@ function refresh(): void {
       return item;
     }),
   );
+  const estimate = bundle && costText(bundle);
+  $('upload-cost').textContent = mode === 'upload' && estimate ? estimate : '';
   const cost = $('cost');
   if (!bundle) {
     cost.textContent = mode === 'write' ? 'Build a page in step 3 first.' : 'Add your site in step 3 first.';
-  } else if (!writer || !chosen) {
-    cost.textContent = writer ? 'Pick a name in step 2 to publish this.' : 'Sign in and pick a name to publish this. Your draft is kept.';
   } else {
     const kb = Math.max(1, Math.round(bundle.stats.storedBytes / 1024));
     const noIndex = bundle.manifest.files['/index.html'] ? '' : ' There is no index.html at the top, so the home page will be empty.';
     const { elsewhere } = bundle.stats;
     const outside = elsewhere.files === 0 ? '' : ` ${elsewhere.files === 1 ? 'One file' : `${elsewhere.files} files`} (${sizeText(elsewhere.bytes)}) ${elsewhere.files === 1 ? 'is' : 'are'} kept outside Platform.`;
-    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. This costs about ${formatDash(estimateCredits(bundle))}; parts already stored are not paid for again.${outside}${noIndex}`;
+    const next = writer && chosen ? '' : writer ? ' Pick a name in step 2 to publish this.' : ' Sign in and pick a name to publish this. Your draft is kept.';
+    cost.textContent = `${bundle.stats.files} ${bundle.stats.files === 1 ? 'file' : 'files'}, ${kb} KB to store. ${estimate}${outside}${noIndex}${next}`;
   }
   const button = $<HTMLButtonElement>('publish');
   button.disabled = !bundle || !chosen || publishing || working > 0;
@@ -135,6 +137,14 @@ function refresh(): void {
 
   clearTimeout(previewTimer);
   previewTimer = setTimeout(renderPreview, 150);
+}
+
+/** The estimate for publishing `site` from scratch, with what goes into it. */
+function costText(site: SiteBundle): string {
+  const cost = siteCost(site);
+  if (!cost) return feesFailed ? 'This browser could not work out what publishing costs.' : 'Working out what publishing costs…';
+  const parts = `${cost.chunkCount} ${cost.chunkCount === 1 ? 'part' : 'parts'}`;
+  return `Estimated cost to publish: about ${formatDash(cost.total)} (${formatCredits(cost.total)} credits). Storing the files in ${parts} is about ${formatDash(cost.chunks)}, and the site record about ${formatDash(cost.siteRecord)}. Parts this name already stores are not paid for again.`;
 }
 
 function renderPreview(): void {
@@ -762,7 +772,19 @@ function start(): void {
   if (__REMEMBER_WALLET__) void resumeWallet();
   takeHandoff();
   const idle = (window as { requestIdleCallback?: (fn: () => void) => void }).requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 1500));
-  idle(() => void Promise.all([loadEvo(), loadConnect()]).catch(() => {}));
+  onFeesChange(refresh);
+  idle(() => {
+    const evo = loadEvo();
+    void evo.then((module) => module.loadFeeModel(networkConfig(NETWORK))).then(setFees, () => {
+      feesFailed = true;
+      refresh();
+    });
+    void evo.then((module) => module.nameRegistrationCredits(networkConfig(NETWORK))).then(
+      (credits) => ($('register-cost').textContent = ` Registering one costs about ${formatDash(credits)}.`),
+      () => {},
+    );
+    void loadConnect().catch(() => {});
+  });
 }
 
 if (location.protocol === 'http:' && location.hostname === GATEWAY) location.replace(`https:${location.href.slice(5)}`);

@@ -1,6 +1,6 @@
 import { parseContentUri } from './content.js';
 import { isNewer, refuseNewer } from './formats.js';
-import { estimateCredits, formatDash } from './cost.js';
+import { estimateCredits, formatDash, type FeeModel } from './cost.js';
 import { parseName } from './names.js';
 import type { SiteBundle } from './pack.js';
 import type { DomainRecord, PlatformWriter, Proved, SiteRecord, StoredChunk } from './platform.js';
@@ -60,13 +60,14 @@ export async function publishSite(
   name: string,
   bundle: SiteBundle,
   onProgress: (progress: PublishProgress) => void = () => {},
-  options: { prune?: PruneOptions & PruneRunOptions } = {},
+  options: { prune?: PruneOptions & PruneRunOptions; fees?: FeeModel } = {},
 ): Promise<PublishResult> {
   onProgress({ step: 'check' });
   const domain = await requireOwnedName(writer, name);
   const before = await writer.balance();
   const existing = (await writer.listSites()).find((site) => site.normalizedLabel === domain.normalizedLabel);
-  if (!existing && before < estimateCredits(bundle)) throw new Error(`the identity holds ${formatDash(before)}, and this site costs about ${formatDash(estimateCredits(bundle))} to store`);
+  const needed = !existing && options.fees ? estimateCredits(bundle, options.fees) : 0n;
+  if (before < needed) throw new Error(`the identity holds ${formatDash(before)}, and this site costs about ${formatDash(needed)} to store`);
   const record = existing ?? (await writer.ensureSite(domain));
   // An older writer must not rewrite a newer record, which would drop what it cannot read; refuse before paying for chunks.
   refuseNewer('site', record.v);

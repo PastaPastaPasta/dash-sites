@@ -1,15 +1,34 @@
-import { buildSite, estimateCredits, formatDash, MAX_SITE_BYTES, PackError, type SiteFile } from '@dash-sites/core';
+import { buildSite, estimateCost, estimateCredits, formatDash, MAX_SITE_BYTES, PackError, type CostEstimate, type FeeModel, type SiteBundle, type SiteFile } from '@dash-sites/core';
+
+let fees: FeeModel | undefined;
+const listeners = new Set<() => void>();
+
+/** Platform's fees, once the SDK has computed them; every price here is unknown until then. */
+export function setFees(model: FeeModel): void {
+  fees = model;
+  for (const listener of listeners) listener();
+}
+
+export function onFeesChange(listener: () => void): void {
+  listeners.add(listener);
+}
+
+export const feesKnown = (): boolean => fees !== undefined;
+
+/** The upper estimate for publishing `bundle` when nothing of it is stored yet. */
+export const siteCost = (bundle: SiteBundle): CostEstimate | undefined => fees && estimateCost(bundle, fees);
 
 const known = new WeakMap<Uint8Array, bigint>();
 
 /** What storing one file costs on its own: its chunks, without the site record or the manifest. */
-export function fileCredits(file: SiteFile): bigint {
+export function fileCredits(file: SiteFile): bigint | undefined {
   if (file.src) return 0n;
+  if (!fees) return undefined;
   const cached = known.get(file.bytes);
   if (cached !== undefined) return cached;
   const bundle = buildSite([{ path: '/f', bytes: file.bytes, type: file.type ?? 'application/octet-stream' }]);
   const own = [...bundle.chunks.keys()].filter((hash) => !bundle.manifestChunks.includes(hash));
-  const credits = estimateCredits(bundle, own) - estimateCredits(bundle, []);
+  const credits = estimateCost(bundle, fees, own).chunks;
   known.set(file.bytes, credits);
   return credits;
 }
@@ -18,7 +37,8 @@ export function fileCredits(file: SiteFile): bigint {
 export function platformPrice(file: SiteFile): string | undefined {
   if (file.bytes.length > MAX_SITE_BYTES) return undefined;
   try {
-    return formatDash(fileCredits(file));
+    const credits = fileCredits(file);
+    return credits === undefined ? undefined : formatDash(credits);
   } catch (error) {
     if (error instanceof PackError) return undefined;
     throw error;
@@ -40,17 +60,17 @@ const isImage = (file: SiteFile): boolean => (file.type ?? '').startsWith('image
 
 /** The upper estimate for publishing `files` from scratch, split into images and everything else. */
 export function costSplit(files: SiteFile[]): CostSplit | undefined {
-  if (files.length === 0) return undefined;
+  if (files.length === 0 || !fees) return undefined;
   let total: bigint;
   try {
-    total = estimateCredits(buildSite(files));
+    total = estimateCredits(buildSite(files), fees);
   } catch (error) {
     if (error instanceof PackError) return undefined;
     throw error;
   }
   const all = files.filter(isImage);
   const pictures = all.filter((file) => !file.src);
-  const images = pictures.reduce((sum, file) => sum + fileCredits(file), 0n);
+  const images = pictures.reduce((sum, file) => sum + (fileCredits(file) ?? 0n), 0n);
   return {
     total,
     images,

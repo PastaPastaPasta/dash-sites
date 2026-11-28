@@ -1,11 +1,9 @@
 import { sha256Hex } from '@dash-sites/core';
 import type { SiteAsset } from '../assets.js';
-import { fileCredits } from './cost.js';
 
 export interface ImageVariant extends SiteAsset {
   width: number;
   height: number;
-  credits: bigint;
 }
 
 /** Longest side, in pixels, of the sizes offered: a profile picture shows at 96 px, an image at up to 600. */
@@ -38,7 +36,7 @@ async function encode(bitmap: ImageBitmap, side: number): Promise<ImageVariant> 
   const ext = webp ? 'webp' : 'jpg';
   const type = webp ? 'image/webp' : 'image/jpeg';
   const path = `/images/${sha256Hex(bytes).slice(0, 16)}.${ext}`;
-  return { path, type, bytes, width, height, credits: fileCredits({ path, bytes, type }) };
+  return { path, type, bytes, width, height };
 }
 
 /**
@@ -59,7 +57,7 @@ export async function makeVariants(source: Blob, sides: number[], current?: Site
     const wanted = [...new Set(sides.map((side) => Math.min(side, longest)))].filter((side) => !current || side < longest).sort((a, b) => a - b);
     const made: ImageVariant[] = [];
     for (const side of wanted) made.push(await encode(bitmap, side));
-    if (current) made.push({ ...current, width: bitmap.width, height: bitmap.height, credits: fileCredits(current) });
+    if (current) made.push({ ...current, width: bitmap.width, height: bitmap.height });
     const unique = made.filter((variant, index) => made.findIndex((other) => other.path === variant.path) === index);
     for (const variant of unique) variants.set(variant.path, unique);
     return unique;

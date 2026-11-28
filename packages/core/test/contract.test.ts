@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import { base58 } from '@scure/base';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { DEPLOYMENTS, DPNS_CONTRACT_ID } from '../src/config.js';
-import { knownContract, parseContract } from '../src/evo.js';
+import { DEPLOYMENTS, DPNS_CONTRACT_ID, readerConfig } from '../src/config.js';
+import { knownContract, loadFeeModel, parseContract } from '../src/evo.js';
 import { KNOWN_CONTRACTS } from '../src/known-contracts.js';
 import {
   CHUNK_FIELD_SIZE,
@@ -159,11 +159,12 @@ describe('the contract to register', () => {
     for (const key of ['normalizedLabel', 'normalizedParentDomainName']) expect(site.properties[key]?.maxLength).toBe(63);
   });
 
-  it('costs what the publisher is quoted, and a delete refunds most of the storage', () => {
+  it('costs what the publisher is quoted, and a delete refunds most of the storage', async () => {
     const contract = registered();
     const chunk = documentCreateCost(contract, 'chunk', { fields: { site: { length: 32 }, d0: { length: CHUNK_FIELD_SIZE }, d1: { length: CHUNK_FIELD_SIZE }, d2: { length: CHUNK_FIELD_SIZE } } }, PROTOCOL_VERSION);
     const site = documentCreateCost(contract, 'site', { fields: { normalizedParentDomainName: { length: 4 }, normalizedLabel: { length: 63 }, content: { length: 81 } } }, PROTOCOL_VERSION);
-    const quoted = estimateCredits({ chunks: new Map([['', new Uint8Array(CHUNK_SIZE)]]) } as SiteBundle);
+    const fees = await loadFeeModel(readerConfig('mainnet'));
+    const quoted = estimateCredits({ contentUri: 'x'.repeat(81), chunks: new Map([['', new Uint8Array(CHUNK_SIZE)]]) } as SiteBundle, fees);
     expect(BigInt(chunk.storage.credits.newValues + site.storage.credits.newValues)).toBeLessThanOrEqual(quoted);
     expect(chunk.refund.afterOneYear.knownValues / chunk.storage.credits.knownValues).toBeGreaterThan(0.9);
   });

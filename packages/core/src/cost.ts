@@ -2,26 +2,40 @@ import type { SiteBundle } from './pack.js';
 
 export const CREDITS_PER_DASH = 100_000_000_000n;
 
-/**
- * Measured on testnet, protocol 14: a chunk of 100 bytes cost 60 to 72 M credits as the first under
- * its record, and one of 14,700 bytes 452 to 458 M; a first publish writes the site record twice,
- * 61 M and 7 M. A one-page site cost 138 M and a 440 KB site 13,522 M, against 217 M and 14,247 M
- * from the constants. That schema had no `v` and no chunk `$createdAt`; those add a few bytes per
- * document, well inside the margin.
- */
-const CREDITS_PER_BYTE = 28_500n;
-const CREDITS_PER_CHUNK = 50_000_000n;
-const CREDITS_PER_SITE_RECORD = 110_000_000n;
+/** What Platform charges, in credits, to create each document a publish writes. */
+export interface FeeModel {
+  /** A chunk document holding `bytes` bytes of data. */
+  chunk(bytes: number): bigint;
+  /** A site record whose content URI has `contentLength` characters. */
+  siteRecord(contentLength: number): bigint;
+}
 
-/** Upper estimate, in credits, of publishing `hashes` (the chunks not stored yet) and the site record. */
-export function estimateCredits(bundle: SiteBundle, missing: Iterable<string> = bundle.chunks.keys()): bigint {
-  let total = CREDITS_PER_SITE_RECORD;
+export interface CostEstimate {
+  total: bigint;
+  siteRecord: bigint;
+  chunks: bigint;
+  chunkCount: number;
+}
+
+/** Upper estimate of publishing the chunks in `missing` (the ones not stored yet) and the site record. */
+export function estimateCost(bundle: SiteBundle, fees: FeeModel, missing: Iterable<string> = bundle.chunks.keys()): CostEstimate {
+  const siteRecord = fees.siteRecord(bundle.contentUri.length);
+  let chunks = 0n;
+  let chunkCount = 0;
   for (const hash of missing) {
     const chunk = bundle.chunks.get(hash);
-    if (chunk) total += CREDITS_PER_CHUNK + CREDITS_PER_BYTE * BigInt(chunk.length);
+    if (!chunk) continue;
+    chunks += fees.chunk(chunk.length);
+    chunkCount++;
   }
-  return total;
+  return { total: siteRecord + chunks, siteRecord, chunks, chunkCount };
 }
+
+export function estimateCredits(bundle: SiteBundle, fees: FeeModel, missing?: Iterable<string>): bigint {
+  return estimateCost(bundle, fees, missing).total;
+}
+
+export const formatCredits = (credits: bigint): string => credits.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 export function formatDash(credits: bigint): string {
   const negative = credits < 0n;

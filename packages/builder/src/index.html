@@ -97,7 +97,7 @@
       <span class="suffix">.dash</span>
       <button class="second">Register</button>
     </form>
-    <p class="hint" id="register-hint">Names with a digit from 2 to 9, or 20 characters or more, register at once. Shorter all-letter names go to a masternode vote, which this builder does not start.</p>
+    <p class="hint" id="register-hint">Names with a digit from 2 to 9, or 20 characters or more, register at once. Shorter all-letter names go to a masternode vote, which this builder does not start.<span id="register-cost"></span></p>
     <p class="hint" id="wallet-names" hidden>A wallet sign-in can publish sites but cannot register names. Register a new name in DashPay, then choose it here.</p>
     <details>
       <summary>A name is missing from the list</summary>
@@ -151,6 +151,7 @@
       </div>
       <p class="status" id="upload-status"></p>
       <ul id="upload-files" class="files"></ul>
+      <p class="status" id="upload-cost" aria-live="polite"></p>
     </div>
     <p class="error" id="content-error" role="alert"></p>
     <ul class="warnings" id="link-warnings" aria-live="polite"></ul>
