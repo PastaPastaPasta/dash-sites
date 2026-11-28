@@ -54,6 +54,8 @@ button.quiet{background:none;color:var(--blue);font-weight:500;padding:6px 2px;f
 .qr{flex:none;width:232px;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:10px;padding:6px;line-height:0}
 .qr svg{display:block;width:100%;height:auto}
 .applink{display:inline-block;margin-top:12px;font-weight:650;text-decoration:none;color:var(--blue-ink);background:var(--blue);border-radius:6px;padding:10px 18px}
+@media not all and (pointer:coarse){.on-phone{display:none!important}}
+@media (pointer:coarse){.on-desk{display:none!important}.scan-text p.on-phone{margin:0}.scan{flex-direction:column;gap:12px}.scan-text{min-width:0;width:100%}.applink{display:block;text-align:center;margin-top:12px;padding:14px 18px;font-size:17px}.scan-alt{order:1;margin:12px 0 0}.qr{order:2;width:180px}}
 
 .inline{display:flex;gap:8px;align-items:center;margin-top:12px}
 .inline input{flex:1;min-width:0}

@@ -333,7 +333,6 @@ async function signInWithWallet(): Promise<void> {
     drawCode(pending.uri);
     const link = $<HTMLAnchorElement>('wallet-link');
     link.href = pending.uri;
-    link.hidden = !matchMedia('(pointer: coarse)').matches;
     progress.textContent = '';
     showWallet('request');
 

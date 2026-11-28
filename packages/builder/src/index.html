@@ -40,12 +40,15 @@
       <div id="wallet-request" class="scan" hidden>
         <div id="wallet-qr" class="qr" role="img" aria-label="Sign-in code for DashPay"></div>
         <div class="scan-text">
-          <p><b>Scan this code with DashPay</b></p>
-          <p class="hint">In the wallet: More, Tools, Connections, then Scan QR. Approve only a code shown on <b id="wallet-origin"></b>, and keep it private: anyone who scans it can answer it.</p>
-          <a id="wallet-link" class="applink" hidden>Open DashPay on this device</a>
+          <p class="on-desk"><b>Scan this code with DashPay</b></p>
+          <p class="hint on-desk">In the wallet: More, Tools, Connections, then Scan QR.</p>
+          <p class="on-phone"><b>Approve in DashPay on this phone</b></p>
+          <a id="wallet-link" class="applink on-phone">Open in DashPay</a>
+          <p class="hint">Approve only a request shown on or opened from <b id="wallet-origin"></b>, and keep it private: anyone who scans or opens it can answer it.</p>
           <p class="status"><span id="wallet-status" aria-live="polite"></span> <span id="wallet-countdown"></span></p>
           <button type="button" class="quiet" id="wallet-cancel">Cancel</button>
         </div>
+        <p class="hint scan-alt on-phone">DashPay on another phone? Scan this code there: More, Tools, Connections, then Scan QR.</p>
       </div>
       <div id="wallet-confirm" hidden>
         <p>A wallet answered as <b id="wallet-name"></b></p>
