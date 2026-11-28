@@ -206,6 +206,12 @@ minimization (`--brotli`, `--external`, `--elsewhere`), updates, and storage
 refunds (`--prune`, `gc`) — lives in
 [skills/dash-sites/SKILL.md](skills/dash-sites/SKILL.md).
 
+For the short path, [skills/quick-dash-site](skills/quick-dash-site/SKILL.md)
+turns a one-line description into a live `https://<name>.dash.site/`. The
+agent writes the page, shows the publish cost, prints a QR code and an Open in
+DashPay link for sign-in, then publishes to mainnet and prints the URL. It
+needs a `.dash` name your DashPay identity already owns.
+
 ## Install the extension
 
 1. Download `dash-sites-extension-chrome-<version>.zip` from the releases
@@ -233,6 +239,7 @@ listings yet. The steps are in [packages/extension](packages/extension/README.md
 | `deploy/` | dash.site Workers (`deploy/cloudflare`) and the testnet droplet |
 | `e2e/` | Browser tests against live names |
 | `skills/dash-sites` | Portable agent skill (`SKILL.md`, references, and `fund-identity.mjs`) |
+| `skills/quick-dash-site` | Agent skill: one line to a live site, with DashPay sign-in (`quick-dash-site.mjs`) |
 
 ```sh
 npm ci
