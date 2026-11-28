@@ -24,7 +24,8 @@
     "check:pins": "node scripts/check-pins.mjs",
     "e2e:extension-static": "node e2e/extension-static.mjs",
     "e2e:resolve": "node e2e/resolve.mjs",
-    "chain:checkpoint": "node scripts/chain-checkpoint.mjs"
+    "chain:checkpoint": "node scripts/chain-checkpoint.mjs",
+    "e2e:extension-errors": "node e2e/extension-errors.mjs packages/extension/build/chrome"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
