@@ -236,6 +236,8 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
   const lists: ProvenList[] = [];
   const errors: string[] = [];
   let unlinked = 0;
+  /** A seed's headers or list did not fit the chain the other nodes served: someone is on another branch. */
+  let seedConflict = false;
   const usable = (): Tip[] => tips.filter((tip) => !invalid.has(tip.node));
   const demote = (tip: Tip): void => {
     tips.splice(tips.indexOf(tip), 1);
@@ -270,6 +272,9 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
         } catch (error) {
           invalid.add(tip.node);
           if (error instanceof LinkError && from === start.height + 1) unlinked++;
+          // Past the stored chain's start, a seed whose headers do not link is on another branch than
+          // the nodes that served the chain so far. At the start it is the stored chain that is stale.
+          if (error instanceof LinkError && tip.seed && from !== start.height + 1) seedConflict = true;
           progress(`${tip.node} sent invalid headers: ${(error as Error).message}`);
         }
       }
@@ -309,6 +314,7 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
       if (height > state.height) await extendTo(height);
       const header = recent.get(height);
       if (!header || toDisplay(header.hash) !== diff.blockHash.toLowerCase()) {
+        if (tip.seed) seedConflict = true;
         errors.push(`${tip.node}: its list's block ${diff.blockHash} is not at height ${height} of the verified chain`);
         return;
       }
@@ -341,7 +347,8 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
           .then(() => {
             pending--;
             if (tip === seedTip) seedWaiting = false;
-            if (pending === 0 || (lists.length >= CORROBORATING_LISTS && !seedWaiting)) finish();
+            if (finished) return;
+            if (seedConflict || pending === 0 || (lists.length >= CORROBORATING_LISTS && !seedWaiting)) finish();
             // A seed that does not answer holds the round only so long.
             else if (lists.length >= CORROBORATING_LISTS && !seedTimer) seedTimer = setTimeout(finish, SEED_LIST_GRACE_MS);
           });
@@ -359,6 +366,9 @@ async function syncFrom(options: SyncOptions, start: ChainState, previous: Chain
       }
     });
     listing.abort();
+    // The seed's list is what keeps fast nodes from deciding the keys alone. If it does not fit the
+    // chain they served, nothing is proven this time; the stored keys stay in use.
+    if (seedConflict) throw new ChainError(`a bundled seed is on another branch than the nodes that answered first: ${errors.join('; ')}`);
   }
   if (lists.length < CORROBORATING_LISTS) {
     const message = `${lists.length} of the ${CORROBORATING_LISTS} masternode lists needed checked out${errors.length ? `: ${errors.join('; ')}` : ''}`;

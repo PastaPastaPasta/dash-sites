@@ -102,9 +102,20 @@ export async function putSite(site: CachedSite): Promise<void> {
 
 /** Records a new proof that the stored site is still current, without rewriting its files. */
 export async function touchSite(key: string, resolution: Meta['resolution'], at: number): Promise<void> {
-  const meta = await getMeta(key);
-  if (!meta) return;
-  await run('readwrite', (metaStore) => metaStore.put({ ...meta, resolution, checkedAt: at, usedAt: at }));
+  await open().then(
+    (database) =>
+      new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction(META, 'readwrite');
+        const store = transaction.objectStore(META);
+        const request = store.get(key);
+        request.onsuccess = () => {
+          const meta = request.result as Meta | undefined;
+          if (meta) store.put({ ...meta, resolution, checkedAt: at, usedAt: at });
+        };
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('site cache transaction failed'));
+      }),
+  );
 }
 
 export async function deleteSite(key: string): Promise<void> {

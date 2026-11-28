@@ -139,7 +139,7 @@ class NetworkService {
       failed = true;
       throw error;
     })));
-    if (this.disposed) return { kind: 'site', key, changed: false };
+    if (this.disposed) throw new Error('The verified chain was just forgotten. Open the site again.');
     await putSite({ key, network: this.network, resolution, manifest, files, skipped, checkedAt: now, usedAt: now });
     return { kind: 'site', key, changed: Boolean(cached) };
   }

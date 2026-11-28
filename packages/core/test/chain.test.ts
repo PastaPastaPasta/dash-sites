@@ -280,6 +280,20 @@ describe('syncing from several nodes', () => {
     expect(snapshot.listHeight).toBe(tip);
   }, 30000);
 
+  it('fails rather than leave out a seed whose list is not on the chain the others served', async () => {
+    const elsewhere = (): MnListDiff => ({ ...diff(), blockHash: '11'.repeat(32) });
+    await expect(
+      syncChain({
+        network: 'testnet',
+        checkpoint,
+        seeds: ['s1'],
+        previous: { ...(await sync({ a: {}, b: {} })), nodes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] },
+        dapi: dapi({ s1: { diff: elsewhere }, a: {}, b: {} }),
+        random: () => 0.5,
+      }),
+    ).rejects.toThrow(/seed is on another branch/);
+  });
+
   it('does not wait for a node that never sends its list', async () => {
     const started = Date.now();
     const snapshot = await sync({ slow: { hangs: true }, a: {}, b: {} });
